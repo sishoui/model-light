@@ -116,6 +116,23 @@ function createBleClient(wxApi) {
   }
 
   /**
+   * §2.5：订阅命令通道（...0001）notify——令牌 GRANT / PROBE 下行。
+   * 回调收原始 Uint8Array（cmd + seq(2) + payload）。
+   */
+  function onCommandNotify(callback) {
+    const handler = (res) => callback(new Uint8Array(res.value));
+    wxApi.onBLECharacteristicValueChange(handler);
+    return call(wxApi, 'notifyBLECharacteristicValueChange', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_COMMAND,
+      state: true,
+    }).then(() => () => {
+      wxApi.offBLECharacteristicValueChange(handler);
+    });
+  }
+
+  /**
    * 订阅编排 ACK/NAK 通知（...0003），返回解绑函数。
    * 回调收 parseAck 后的原始 Uint8Array，由调用方解析。
    */
@@ -129,6 +146,18 @@ function createBleClient(wxApi) {
       state: true,
     }).then(() => () => {
       wxApi.offBLECharacteristicValueChange(handler);
+    });
+  }
+
+  /** §2.3：实时参数包写 ...0002（writeNoResponse，单帧 ≤ 9 B，无 ACK） */
+  function writeRealtime(bytes) {
+    return call(wxApi, 'writeBLECharacteristicValue', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      value: bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      writeType: 'writeNoResponse',
     });
   }
 
@@ -178,8 +207,10 @@ function createBleClient(wxApi) {
     scan,
     connect,
     onStatusFrame,
+    onCommandNotify,
     onSequenceNotify,
     writeSequence,
+    writeRealtime,
     negotiateChunkSize,
     readDeviceInfo,
     disconnect,
