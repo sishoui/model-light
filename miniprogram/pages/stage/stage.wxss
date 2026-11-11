@@ -1,0 +1,28 @@
+.page { padding: 24rpx; }
+.panel { background: #1f2937; border-radius: 16rpx; padding: 24rpx; border: 1rpx solid #374151; margin-bottom: 24rpx; }
+.panel-title { color: #f9fafb; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; }
+.head-btns { display: flex; gap: 12rpx; }
+.stage-row { display: flex; align-items: center; justify-content: space-between; padding: 16rpx 0; border-bottom: 1rpx solid #374151; }
+.stage-main { display: flex; flex-direction: column; gap: 4rpx; flex: 1; }
+.stage-name { color: #f9fafb; font-size: 28rpx; font-weight: 600; }
+.stage-meta { color: #9ca3af; font-size: 22rpx; }
+.stage-layers { color: #d1d5db; font-size: 24rpx; }
+.stage-btns { display: flex; gap: 8rpx; }
+.mini-btn { background: #374151; color: #e5e7eb; font-size: 22rpx; padding: 0 16rpx; line-height: 2; }
+.mini-btn.del { background: #7f1d1d; color: #fecaca; }
+.mini-btn[disabled] { opacity: 0.4; }
+.add-btn { margin-top: 16rpx; background: #1d4ed8; color: #fff; font-size: 26rpx; }
+.field-row { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; }
+.field-row .k { color: #9ca3af; font-size: 24rpx; }
+.inp { background: #111827; border: 1rpx solid #374151; border-radius: 8rpx; color: #f9fafb; font-size: 26rpx; padding: 8rpx 16rpx; width: 200rpx; text-align: right; }
+.inp.small { width: 160rpx; }
+.param-row { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; border-top: 1rpx solid #374151; }
+.param-row .k { color: #9ca3af; font-size: 24rpx; }
+.color-chip { width: 80rpx; height: 48rpx; border-radius: 8rpx; border: 1rpx solid #4b5563; }
+.enum-value { color: #f9fafb; font-size: 26rpx; padding: 8rpx 16rpx; background: #111827; border-radius: 8rpx; border: 1rpx solid #374151; }
+.choices { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 12rpx; }
+.choice { background: #111827; border: 1rpx solid #374151; border-radius: 12rpx; padding: 12rpx 20rpx; color: #e5e7eb; font-size: 24rpx; display: flex; flex-direction: column; }
+.choice.disabled { opacity: 0.4; }
+.choice-warn { color: #fbbf24; font-size: 20rpx; }
+.error { color: #f87171; font-size: 24rpx; display: block; margin-top: 12rpx; }

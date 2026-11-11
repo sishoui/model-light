@@ -13,3 +13,12 @@
 .stat { flex: 1; background: #1f2937; border-radius: 16rpx; padding: 24rpx; border: 1rpx solid #374151; }
 .k { color: #9ca3af; font-size: 24rpx; display: block; }
 .v { color: #f9fafb; font-size: 32rpx; margin-top: 8rpx; display: block; }
+
+.panel .debug-btn { margin-top: 12rpx; }
+.transfer-msg { font-size: 24rpx; color: #9ca3af; margin-top: 8rpx; }
+.panel-title { color: #f9fafb; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
+.pin-row { display: flex; align-items: center; gap: 16rpx; padding: 16rpx 0; border-bottom: 1rpx solid #374151; }
+.pin-label { color: #9ca3af; font-size: 26rpx; width: 110rpx; }
+.pin-name { color: #f9fafb; font-size: 28rpx; flex: 1; }
+.pin-meta { color: #9ca3af; font-size: 24rpx; }
+.push-btn { background: #2563eb; color: #fff; font-size: 28rpx; }

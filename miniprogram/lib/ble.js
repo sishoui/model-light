@@ -83,6 +83,72 @@ function createBleClient(wxApi) {
     });
   }
 
+  /**
+   * §2.1 chunkSize 每次连接现算：iOS 固定 20；Android 请求 247 → 185 → 20 逐级降，
+   * 取 getBLEMTU() 实测 ATT_MTU − 3。返回 { chunkSize, mtu }。
+   */
+  async function negotiateChunkSize(platform) {
+    const { computeChunkSize, MTU_REQUEST_LADDER } = require('./chunk-size');
+    let mtu = null;
+    if (platform !== 'ios') {
+      for (const mtuValue of MTU_REQUEST_LADDER) {
+        try {
+          await call(wxApi, 'setBLEMTU', { deviceId, mtu: mtuValue });
+        } catch (e) { /* 逐级降级，继续 */ }
+        try {
+          const r = await call(wxApi, 'getBLEMTU', { deviceId });
+          if (r && r.mtu) { mtu = r.mtu; break; }
+        } catch (e) { /* fallthrough */ }
+      }
+    }
+    return { chunkSize: computeChunkSize(platform, mtu), mtu };
+  }
+
+  /** 读设备信息特征 ...0005（§2.8：协议版本 + 能力位图） */
+  async function readDeviceInfo() {
+    const r = await call(wxApi, 'readBLECharacteristicValue', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_INFO,
+    });
+    const { parseDeviceInfo } = require('./device-info');
+    return parseDeviceInfo(r.value ?? r);
+  }
+
+  /**
+   * 订阅编排 ACK/NAK 通知（...0003），返回解绑函数。
+   * 回调收 parseAck 后的原始 Uint8Array，由调用方解析。
+   */
+  function onSequenceNotify(callback) {
+    const handler = (res) => callback(new Uint8Array(res.value));
+    wxApi.onBLECharacteristicValueChange(handler);
+    return call(wxApi, 'notifyBLECharacteristicValueChange', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_SEQUENCE,
+      state: true,
+    }).then(() => () => {
+      wxApi.offBLECharacteristicValueChange(handler);
+    });
+  }
+
+  /**
+   * §2.2/§4：编排帧一律 writeNoResponse，串行不并行。
+   * writeChain 保证任意时刻只有一个 write 在飞。
+   */
+  let writeChain = Promise.resolve();
+  function writeSequence(bytes) {
+    writeChain = writeChain.then(() => call(wxApi, 'writeBLECharacteristicValue', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_SEQUENCE,
+      value: bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      writeType: 'writeNoResponse',
+    }));
+    return writeChain;
+  }
+
   /** 订阅状态帧回调；返回解绑函数 */
   function onStatusFrame(callback) {
     const handler = (res) => {
@@ -112,6 +178,10 @@ function createBleClient(wxApi) {
     scan,
     connect,
     onStatusFrame,
+    onSequenceNotify,
+    writeSequence,
+    negotiateChunkSize,
+    readDeviceInfo,
     disconnect,
     get isConnected() { return connected; },
     get deviceId() { return deviceId; },

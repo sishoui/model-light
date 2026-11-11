@@ -1,9 +1,14 @@
+/* Arrangement model, TLV parser, renderer (F3) + CRC32, wire validation and
+ * chunked rx transfer state machine (F2). docs/spec.md §2.2/§2.10/§2.11.
+ * Pure C: also compiled into host tests (no ESP-IDF headers).
+ * The wire layout below is byte-aligned with the miniprogram encoder
+ * (miniprogram/lib/arrangement.js), which is authoritative. */
 #include "mlarr.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-/* ---------------- CRC32 (IEEE, reflected 0xEDB88320) ---------------- */
+/* ---- CRC32 (IEEE, reflected 0xEDB88320; same as miniprogram crc32.js) ---- */
 
 static uint32_t crc_table[256];
 static int crc_table_ready;
@@ -32,190 +37,289 @@ uint32_t mlarr_crc32(const uint8_t *data, size_t len)
     return c ^ 0xFFFFFFFFu;
 }
 
-/* ---------------- TLV reader ---------------- */
+/* ---- TLV wire layout ----
+ * Arrangement := version(u16) payloadVersion(u16) pinCount(u8) Pin[pinCount]
+ * Pin         := length(u8) name(16B) groupCount(u8) Group[groupCount]
+ * Group       := rangeCount(u8) stageCount(u8) Range[...] Stage[...]
+ * Range       := start(u8) end(u8) reverse(u8)
+ * Stage       := durationMs(u16) fadeInMs(u8) layerCount(u8) Layer[...]
+ * Layer       := role(u8) effectId(u16) paramLen(u8) paramBytes[...]
+ * All integers little-endian. */
 
-typedef struct {
-    const uint8_t *p;
-    size_t len;
-    size_t off;
-} rd_t;
-
-static int rd_bytes(rd_t *r, const uint8_t **out, size_t n)
+static int rd_u8(const uint8_t *b, size_t len, size_t *o, uint8_t *v)
 {
-    if (r->off + n > r->len) {
-        return -1;
-    }
-    *out = r->p + r->off;
-    r->off += n;
+    if (*o + 1 > len) return -1;
+    *v = b[(*o)++];
     return 0;
 }
 
-static int rd_u8(rd_t *r, uint8_t *v)
+static int rd_u16(const uint8_t *b, size_t len, size_t *o, uint16_t *v)
 {
-    const uint8_t *b;
-    if (rd_bytes(r, &b, 1) != 0) {
-        return -1;
-    }
-    *v = b[0];
+    if (*o + 2 > len) return -1;
+    *v = (uint16_t)(b[*o] | (b[*o + 1] << 8));
+    *o += 2;
     return 0;
 }
 
-static int rd_u16(rd_t *r, uint16_t *v)
+static int rd_bytes(const uint8_t *b, size_t len, size_t *o, size_t n, uint8_t *dst)
 {
-    const uint8_t *b;
-    if (rd_bytes(r, &b, 2) != 0) {
-        return -1;
-    }
-    *v = (uint16_t)(b[0] | ((uint16_t)b[1] << 8));
+    if (*o + n > len) return -1;
+    if (dst) memcpy(dst, b + *o, n);
+    *o += n;
     return 0;
 }
 
-/* Validate-only walk: same bounds as decode but stores nothing. Checks
- * payload version, per-pin range bounds, and pixel exclusivity per pin. */
-static mlarr_err_t validate_walk(const uint8_t *buf, size_t len)
+static uint16_t range_len(const ml_range_t *r)
 {
-    rd_t r = { buf, len, 0 };
-    uint16_t version, pver;
-    if (rd_u16(&r, &version) != 0) {
-        return MLARR_ERR_TRUNCATED;
-    }
-    if (rd_u16(&r, &pver) != 0) {
-        return MLARR_ERR_TRUNCATED;
-    }
-    if (pver != MLARR_PAYLOAD_VERSION) {
-        return MLARR_ERR_VERSION;
-    }
-    (void)version;
-    for (int pin = 0; pin < MLARR_PINS; pin++) {
-        uint8_t length, name_len, group_count;
-        const uint8_t *name;
-        if (rd_u8(&r, &length) != 0 ||
-            rd_u8(&r, &name_len) != 0 ||
-            rd_bytes(&r, &name, name_len) != 0 ||
-            rd_u8(&r, &group_count) != 0) {
-            return MLARR_ERR_TRUNCATED;
+    return (uint16_t)(r->end > r->start ? r->end - r->start : 0);
+}
+
+uint16_t mlarr_group_len(const ml_group_t *g)
+{
+    uint16_t n = 0;
+    for (uint8_t i = 0; i < g->range_count; i++)
+        n += range_len(&g->ranges[i]);
+    return n;
+}
+
+uint16_t mlarr_pixel_at(const ml_group_t *g, uint16_t i)
+{
+    for (uint8_t k = 0; k < g->range_count; k++) {
+        uint16_t rl = range_len(&g->ranges[k]);
+        if (i < rl) {
+            const ml_range_t *r = &g->ranges[k];
+            return (uint16_t)(r->reverse ? r->end - 1 - i : r->start + i);
         }
-        /* occupancy bitmap for pixel exclusivity (§2.10) */
-        uint32_t used[8]; /* 256 bits for 256 possible pixels */
+        i -= rl;
+    }
+    return 0; /* out of bounds: caller must not */
+}
+
+/* ---- validate-only walk: same bounds as parse but stores nothing.
+ * Checks payload version, pin counts, range bounds and pixel exclusivity,
+ * and that the buffer is consumed exactly (no trailing bytes). */
+int mlarr_validate(const uint8_t *buf, size_t len)
+{
+    size_t o = 0;
+    uint16_t version, pver;
+    uint8_t pin_count;
+    if (rd_u16(buf, len, &o, &version) ||
+        rd_u16(buf, len, &o, &pver) ||
+        rd_u8(buf, len, &o, &pin_count))
+        return MLARR_ERR_TRUNCATED;
+    if (pver != MLARR_PAYLOAD_VERSION) return MLARR_ERR_VERSION;
+    if (pin_count > MLARR_PIN_COUNT) return MLARR_ERR_LIMITS;
+    (void)version;
+    for (uint8_t p = 0; p < pin_count; p++) {
+        uint8_t length, group_count;
+        if (rd_u8(buf, len, &o, &length) ||
+            rd_bytes(buf, len, &o, MLARR_NAME_LEN, NULL) ||
+            rd_u8(buf, len, &o, &group_count))
+            return MLARR_ERR_TRUNCATED;
+        if (group_count > MLARR_MAX_GROUPS) return MLARR_ERR_LIMITS;
+
+        /* pixel exclusivity is per-pin across all its groups (§2.10) */
+        uint32_t used[8]; /* 256 bits */
         memset(used, 0, sizeof used);
-        for (uint8_t g = 0; g < group_count; g++) {
+
+        for (uint8_t gi = 0; gi < group_count; gi++) {
             uint8_t range_count, stage_count;
-            if (rd_u8(&r, &range_count) != 0 || rd_u8(&r, &stage_count) != 0) {
+            if (rd_u8(buf, len, &o, &range_count) ||
+                rd_u8(buf, len, &o, &stage_count))
                 return MLARR_ERR_TRUNCATED;
-            }
-            for (uint8_t i = 0; i < range_count; i++) {
+            if (range_count > MLARR_MAX_RANGES ||
+                stage_count > MLARR_MAX_STAGES)
+                return MLARR_ERR_LIMITS;
+
+            for (uint8_t ri = 0; ri < range_count; ri++) {
                 uint8_t s, e, rev;
-                if (rd_u8(&r, &s) != 0 || rd_u8(&r, &e) != 0 || rd_u8(&r, &rev) != 0) {
+                if (rd_u8(buf, len, &o, &s) ||
+                    rd_u8(buf, len, &o, &e) ||
+                    rd_u8(buf, len, &o, &rev))
                     return MLARR_ERR_TRUNCATED;
-                }
-                if (s >= e) {
-                    return MLARR_ERR_RANGE;
-                }
-                if (e > length) {
-                    return MLARR_ERR_RANGE;
-                }
-                for (int px = s; px < e; px++) {
-                    if (used[px >> 5] & (1u << (px & 31))) {
+                if (e < s) return MLARR_ERR_RANGE;
+                if (e > length) return MLARR_ERR_RANGE;
+                for (uint16_t px = s; px < e; px++) {
+                    if (used[px >> 5] & (1u << (px & 31)))
                         return MLARR_ERR_OVERLAP;
-                    }
                     used[px >> 5] |= 1u << (px & 31);
                 }
             }
-            for (uint8_t i = 0; i < stage_count; i++) {
-                uint8_t dur_hi, dur_lo, fade, layer_count;
-                if (rd_u8(&r, &dur_lo) != 0 || rd_u8(&r, &dur_hi) != 0 ||
-                    rd_u8(&r, &fade) != 0 || rd_u8(&r, &layer_count) != 0) {
+
+            for (uint8_t si = 0; si < stage_count; si++) {
+                uint16_t dur;
+                uint8_t fade, layer_count;
+                if (rd_u16(buf, len, &o, &dur) ||
+                    rd_u8(buf, len, &o, &fade) ||
+                    rd_u8(buf, len, &o, &layer_count))
                     return MLARR_ERR_TRUNCATED;
-                }
-                if (layer_count > MLARR_LAYER_MAX) {
-                    return MLARR_ERR_RANGE;
-                }
-                for (uint8_t l = 0; l < layer_count; l++) {
+                if (layer_count > MLARR_MAX_LAYERS) return MLARR_ERR_LIMITS;
+                for (uint8_t li = 0; li < layer_count; li++) {
                     uint8_t role, plen;
                     uint16_t eid;
-                    const uint8_t *params;
-                    if (rd_u8(&r, &role) != 0 || rd_u16(&r, &eid) != 0 ||
-                        rd_u8(&r, &plen) != 0 || rd_bytes(&r, &params, plen) != 0) {
+                    if (rd_u8(buf, len, &o, &role) ||
+                        rd_u16(buf, len, &o, &eid) ||
+                        rd_u8(buf, len, &o, &plen))
                         return MLARR_ERR_TRUNCATED;
-                    }
-                    if (role != MLARR_ROLE_BACKGROUND && role != MLARR_ROLE_DYNAMIC) {
-                        return MLARR_ERR_RANGE;
-                    }
+                    if (plen > MLARR_MAX_PARAMS) return MLARR_ERR_LIMITS;
+                    if (rd_bytes(buf, len, &o, plen, NULL))
+                        return MLARR_ERR_TRUNCATED;
                 }
             }
         }
     }
-    if (r.off != r.len) {
-        return MLARR_ERR_TRAILING;
-    }
-    return MLARR_ERR_OK;
+    if (o != len) return MLARR_ERR_TRAILING;
+    return MLARR_OK;
 }
 
-mlarr_err_t mlarr_validate(const uint8_t *buf, size_t len)
-{
-    return validate_walk(buf, len);
-}
+/* ---- parse ---- */
 
-mlarr_err_t mlarr_decode(const uint8_t *buf, size_t len, mlarr_arrangement_t *out)
+int mlarr_parse(const uint8_t *buf, size_t len, ml_arrangement_t *out)
 {
-    mlarr_err_t err = validate_walk(buf, len);
-    if (err != MLARR_ERR_OK) {
-        return err;
+    int vrc = mlarr_validate(buf, len);
+    if (vrc != MLARR_OK) {
+        memset(out, 0, sizeof *out);
+        return vrc;
     }
-    rd_t r = { buf, len, 0 };
-    if (rd_u16(&r, &out->version) != 0 ||
-        rd_u16(&r, &out->payload_version) != 0) {
-        return MLARR_ERR_TRUNCATED;
-    }
-    memset(out->pins, 0, sizeof out->pins);
-    for (int pin = 0; pin < MLARR_PINS; pin++) {
-        uint8_t name_len;
-        const uint8_t *name;
-        rd_u8(&r, &out->pins[pin].length);
-        rd_u8(&r, &name_len);
-        rd_bytes(&r, &name, name_len);
-        rd_u8(&r, &out->pins[pin].group_count);
-        out->pins[pin].name_len = name_len;
-        uint8_t copy = name_len > MLARR_NAME_MAX ? MLARR_NAME_MAX : name_len;
-        memcpy(out->pins[pin].name, name, copy);
-        out->pins[pin].name[copy] = '\0';
-        for (uint8_t g = 0; g < out->pins[pin].group_count; g++) {
-            mlarr_group_t *grp = &out->pins[pin].groups[g];
-            rd_u8(&r, &grp->range_count);
-            rd_u8(&r, &grp->stage_count);
-            for (uint8_t i = 0; i < grp->range_count; i++) {
-                mlarr_range_t *rg = &grp->ranges[i];
-                rd_u8(&r, &rg->start);
-                rd_u8(&r, &rg->end);
-                rd_u8(&r, &rg->reverse);
+    size_t o = 0;
+    uint8_t pin_count = 0;
+
+    memset(out, 0, sizeof *out);
+    rd_u16(buf, len, &o, &out->version);
+    rd_u16(buf, len, &o, &out->payload_version);
+    rd_u8(buf, len, &o, &pin_count);
+
+    for (uint8_t p = 0; p < pin_count; p++) {
+        ml_pin_t *pin = &out->pins[p];
+        uint8_t group_count = 0;
+        rd_u8(buf, len, &o, &pin->length);
+        rd_bytes(buf, len, &o, MLARR_NAME_LEN, pin->name);
+        rd_u8(buf, len, &o, &group_count);
+        pin->group_count = group_count;
+
+        for (uint8_t gi = 0; gi < group_count; gi++) {
+            ml_group_t *g = &pin->groups[gi];
+            rd_u8(buf, len, &o, &g->range_count);
+            rd_u8(buf, len, &o, &g->stage_count);
+
+            for (uint8_t ri = 0; ri < g->range_count; ri++) {
+                ml_range_t *r = &g->ranges[ri];
+                rd_u8(buf, len, &o, &r->start);
+                rd_u8(buf, len, &o, &r->end);
+                rd_u8(buf, len, &o, &r->reverse);
             }
-            for (uint8_t i = 0; i < grp->stage_count; i++) {
-                mlarr_stage_t *st = &grp->stages[i];
-                uint8_t dur_lo, dur_hi;
-                rd_u8(&r, &dur_lo);
-                rd_u8(&r, &dur_hi);
-                st->duration_ms = (uint16_t)(dur_lo | ((uint16_t)dur_hi << 8));
-                rd_u8(&r, &st->fade_in_ms);
-                rd_u8(&r, &st->layer_count);
-                for (uint8_t l = 0; l < st->layer_count; l++) {
-                    mlarr_layer_t *ly = &st->layers[l];
-                    rd_u8(&r, &ly->role);
-                    rd_u16(&r, &ly->effect_id);
-                    rd_u8(&r, &ly->param_len);
-                    const uint8_t *params;
-                    rd_bytes(&r, &params, ly->param_len);
-                    memcpy(ly->params, params, ly->param_len);
+
+            for (uint8_t si = 0; si < g->stage_count; si++) {
+                ml_stage_t *st = &g->stages[si];
+                rd_u16(buf, len, &o, &st->duration_ms);
+                rd_u8(buf, len, &o, &st->fade_in_ms);
+                rd_u8(buf, len, &o, &st->layer_count);
+
+                for (uint8_t li = 0; li < st->layer_count; li++) {
+                    ml_layer_t *l = &st->layers[li];
+                    rd_u8(buf, len, &o, &l->role);
+                    rd_u16(buf, len, &o, &l->effect_id);
+                    rd_u8(buf, len, &o, &l->param_len);
+                    rd_bytes(buf, len, &o, l->param_len, l->param);
                 }
             }
         }
     }
-    /* validated above: no truncation/trailing possible here */
-    return MLARR_ERR_OK;
+    return MLARR_OK;
 }
 
-/* ---------------- rx transfer state machine ---------------- */
+/* ---- effects (spec §2.11; F3 implements bg.solid, rest fall back) ---- */
 
-#define SEQ_SPACE 65536
+static void apply_effect(const ml_layer_t *l, uint16_t stage_offset_ms,
+                         uint16_t stage_duration_ms, uint8_t fade_ms,
+                         uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    switch (l->effect_id) {
+    case MLARR_FX_BG_SOLID:
+        if (l->param_len >= 3) {
+            *r = l->param[0];
+            *g = l->param[1];
+            *b = l->param[2];
+        }
+        break;
+    default:
+        /* Unknown id → static color: primaryColor if present, else white
+         * (spec §2.11). */
+        if (l->param_len >= 3) {
+            *r = l->param[0];
+            *g = l->param[1];
+            *b = l->param[2];
+        } else {
+            *r = *g = *b = 255;
+        }
+        break;
+    }
+
+    /* Fade-in: linear over fade_ms from black (spec §2.10: 0 = hard cut). */
+    if (fade_ms > 0 && stage_offset_ms < fade_ms) {
+        uint32_t k = (uint32_t)stage_offset_ms * 255 / fade_ms;
+        *r = (uint8_t)((uint16_t)*r * k / 255);
+        *g = (uint8_t)((uint16_t)*g * k / 255);
+        *b = (uint8_t)((uint16_t)*b * k / 255);
+    }
+    (void)stage_duration_ms;
+}
+
+int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
+                 uint8_t *rgb, uint16_t pixels)
+{
+    if (pin >= MLARR_PIN_COUNT) return MLARR_ERR_RANGE;
+
+    /* Everything black first: uncovered pixels are black, never residue. */
+    memset(rgb, 0, (size_t)pixels * 3);
+
+    const ml_pin_t *p = &arr->pins[pin];
+    for (uint8_t gi = 0; gi < p->group_count; gi++) {
+        const ml_group_t *g = &p->groups[gi];
+        if (g->stage_count == 0) continue;
+
+        /* clockMs % groupTotalMs positions stage and offset (spec §2.10). */
+        uint32_t total = 0;
+        for (uint8_t si = 0; si < g->stage_count; si++)
+            total += g->stages[si].duration_ms;
+        uint32_t t = total ? clock_ms % total : 0;
+
+        uint8_t si = 0;
+        while (si + 1 < g->stage_count && t >= g->stages[si].duration_ms) {
+            t -= g->stages[si].duration_ms;
+            si++;
+        }
+        const ml_stage_t *st = &g->stages[si];
+
+        uint8_t r = 0, gc = 0, b = 0;
+        /* Overlay composition: dynamic layers paint over background layers. */
+        static const uint8_t role_order[MLARR_MAX_LAYERS] = {MLARR_ROLE_BG, MLARR_ROLE_DY};
+        for (uint8_t pass = 0; pass < MLARR_MAX_LAYERS; pass++) {
+            for (uint8_t li = 0; li < st->layer_count; li++) {
+                const ml_layer_t *l = &st->layers[li];
+                if (l->role != role_order[pass]) continue;
+                apply_effect(l, (uint16_t)t, st->duration_ms, st->fade_in_ms,
+                             &r, &gc, &b);
+            }
+        }
+
+        /* Map logical group pixel i to physical pixel. */
+        uint16_t glen = mlarr_group_len(g);
+        for (uint16_t i = 0; i < glen && i < pixels; i++) {
+            uint16_t phys = mlarr_pixel_at(g, i);
+            if (phys >= pixels) continue;
+            uint8_t *px = rgb + (size_t)phys * 3;
+            px[0] = r;
+            px[1] = gc;
+            px[2] = b;
+        }
+    }
+    return MLARR_OK;
+}
+
+/* ---------------- rx transfer state machine (F2, §2.2) ----------------
+ * FIN → 校验链：长度 → CRC32 → TLV validate（含像素互斥、payload version）。
+ * 任一失败回 NAK 并整体丢弃；全过才经 commit 回调整体写 NVS。 */
 
 static inline uint16_t seq_ahead(uint16_t a, uint16_t b)
 {
@@ -232,16 +336,15 @@ struct mlarr_rx {
     /* session state */
     int      active;
     uint16_t total_len;
-    uint16_t payload_version;
     uint32_t crc32;
 
-    uint8_t  *buf;        /* arrangement bytes under assembly */
-    uint16_t  bytes_have; /* contiguous byte count */
+    uint8_t  buf[MLARR_ARR_MAX_BYTES];
+    uint16_t bytes_have; /* contiguous byte count */
 
-    /* reassembly: extra[i] holds out-of-order chunk (bytes_have + 1 + i) */
-    uint8_t  extra[MLARR_NAK_LOOKBACK][64];
+    /* reassembly: extra[i] holds out-of-order chunk (chunks_have + 1 + i) */
+    uint8_t  extra[MLARR_NAK_LOOKBACK][MLARR_CHUNK_MAX];
     uint16_t extra_len[MLARR_NAK_LOOKBACK];
-    uint16_t have_mask;                 /* bit i = chunk bytes_have+1+i present */
+    uint16_t have_mask;                 /* bit i = chunk chunks_have+1+i present */
 
     uint16_t last_acked_seq;
     uint32_t last_ack_ms;
@@ -302,11 +405,6 @@ mlarr_rx_t *mlarr_rx_new(mlarr_commit_fn commit, mlarr_send_fn send,
     if (rx == NULL) {
         return NULL;
     }
-    rx->buf = malloc(MLARR_ARR_MAX_BYTES);
-    if (rx->buf == NULL) {
-        free(rx);
-        return NULL;
-    }
     rx->commit = commit;
     rx->send = send;
     rx->user = user;
@@ -317,10 +415,7 @@ mlarr_rx_t *mlarr_rx_new(mlarr_commit_fn commit, mlarr_send_fn send,
 
 void mlarr_rx_free(mlarr_rx_t *rx)
 {
-    if (rx) {
-        free(rx->buf);
-        free(rx);
-    }
+    free(rx);
 }
 
 int mlarr_rx_active(const mlarr_rx_t *rx)
@@ -356,13 +451,9 @@ static void send_ack(mlarr_rx_t *rx, uint32_t now_ms)
 
 static void finish(mlarr_rx_t *rx, uint32_t now_ms)
 {
-    /* FIN → 校验链：长度 → CRC32 → TLV 编解码 → 像素互斥（decode 内）→ 版本 */
+    (void)now_ms;
+    /* FIN → 校验链：长度 → CRC32 → TLV validate → 像素互斥（validate 内）→ 版本 */
     uint8_t status;
-    mlarr_arrangement_t *a = malloc(sizeof *a);
-    if (a == NULL) {
-        status = MLARR_STATUS_STORE;
-        goto fail;
-    }
     if (rx->bytes_have != rx->total_len) {
         status = MLARR_STATUS_GAP; /* 收到的半份编排：分片缺口 */
         goto fail;
@@ -371,7 +462,7 @@ static void finish(mlarr_rx_t *rx, uint32_t now_ms)
         status = MLARR_STATUS_LENGTH_OR_CRC;
         goto fail;
     }
-    mlarr_err_t err = mlarr_decode(rx->buf, rx->bytes_have, a);
+    int err = mlarr_validate(rx->buf, rx->bytes_have);
     if (err == MLARR_ERR_OVERLAP) {
         status = MLARR_STATUS_OVERLAP;
         goto fail;
@@ -380,24 +471,22 @@ static void finish(mlarr_rx_t *rx, uint32_t now_ms)
         status = MLARR_STATUS_VERSION;
         goto fail;
     }
-    if (err != MLARR_ERR_OK) {
+    if (err != MLARR_OK) {
         status = MLARR_STATUS_LENGTH_OR_CRC;
         goto fail;
     }
-    /* 版本兼容已在 START 阶段拦截 protoMajor；payload version 在 decode 拦。 */
-    if (rx->commit(rx->user, rx->buf, rx->bytes_have, a->version) != 0) {
+    uint16_t version = (uint16_t)(rx->buf[0] | (rx->buf[1] << 8));
+    if (rx->commit(rx->user, rx->buf, rx->bytes_have, version) != 0) {
         status = MLARR_STATUS_STORE;
         goto fail;
     }
-    rx->arrangement_version = a->version;
+    rx->arrangement_version = version;
     rx->arrangement_crc32 = rx->crc32;
     rx->send(rx->user, MLARR_CMD_ACK, rx->last_acked_seq, 0, MLARR_STATUS_OK);
-    free(a);
     reset_session(rx);
     return;
 
 fail:
-    free(a);
     rx->send(rx->user, MLARR_CMD_NAK, rx->last_acked_seq, 0, status);
     reset_session(rx); /* 半份编排立即丢弃，不写 NVS */
 }
@@ -409,7 +498,6 @@ static void handle_start(mlarr_rx_t *rx, const uint8_t *f, uint16_t len,
         return; /* malformed START, ignore */
     }
     uint16_t total = (uint16_t)(f[3] | ((uint16_t)f[4] << 8));
-    uint16_t pver  = (uint16_t)(f[5] | ((uint16_t)f[6] << 8));
     uint8_t major = f[7];
     uint8_t minor = f[8];
     uint32_t crc   = (uint32_t)f[9] | ((uint32_t)f[10] << 8) |
@@ -430,7 +518,6 @@ static void handle_start(mlarr_rx_t *rx, const uint8_t *f, uint16_t len,
     reset_session(rx);
     rx->active = 1;
     rx->total_len = total;
-    rx->payload_version = pver;
     rx->crc32 = crc;
     rx->last_ack_ms = now_ms;
 }
@@ -440,6 +527,9 @@ static void handle_data(mlarr_rx_t *rx, const uint16_t seq, const uint8_t *paylo
 {
     if (!rx->active) {
         return; /* DATA before START ignored */
+    }
+    if (plen > MLARR_CHUNK_MAX) {
+        return; /* oversized chunk: malformed frame */
     }
     uint16_t idx = seq_ahead(rx->chunks_have, seq); /* chunk offset from next expected */
     if (idx >= MLARR_NAK_LOOKBACK) {

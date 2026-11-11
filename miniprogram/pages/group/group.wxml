@@ -1,0 +1,44 @@
+<view class="page">
+  <view class="panel">
+    <view class="panel-title">像素示意（引脚 {{pinIndex}} · 灯组 {{groupIndex + 1}}）</view>
+    <view class="legend">
+      <view class="legend-item"><view class="dot mine"></view><text>本灯组</text></view>
+      <view class="legend-item"><view class="dot occupied"></view><text>已占用（不可选）</text></view>
+      <view class="legend-item"><view class="dot free"></view><text>未覆盖（黑）</text></view>
+      <view class="legend-item"><view class="dot draft"></view><text>正在选</text></view>
+    </view>
+    <view class="strip">
+      <view wx:for="{{pixels}}" wx:key="index"
+        class="px {{item.css}} {{item.inDraft}}"
+        data-index="{{item.index}}" bindtap="onPixelTap">
+        <text class="px-i">{{item.index}}</text>
+      </view>
+    </view>
+    <text wx:if="{{selectingStart !== null}}" class="hint">已选起点 {{selectingStart}}，再点一个灯珠成区间</text>
+    <text wx:if="{{errorMessage}}" class="error">{{errorMessage}}</text>
+    <text wx:if="{{savedMessage}}" class="saved">{{savedMessage}}</text>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">区间（{{ranges.length}}）</view>
+    <view wx:for="{{ranges}}" wx:key="index" class="range-row">
+      <text class="range-label">{{item.label}}</text>
+      <view class="range-switch">
+        <text class="k">反向</text>
+        <switch checked="{{item.reverse}}" data-range="{{item.index}}" bindchange="toggleReverse" />
+      </view>
+      <button class="del-btn" size="mini" bindtap="removeRange" data-range="{{item.index}}">删除</button>
+    </view>
+    <view wx:if="{{ranges.length === 0}}" class="empty">在上方像素条点两个灯珠来加区间</view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">阶段（{{stages.length}}）· 合计 {{totalLabel}}</view>
+    <view wx:for="{{stages}}" wx:key="index" class="stage-row" data-stage="{{item.index}}" bindtap="openStageEditor">
+      <text class="stage-label">#{{item.index + 1}} · {{item.durationMs}} ms · {{item.layersLabel}}</text>
+      <text class="stage-go">编辑 ›</text>
+    </view>
+    <view wx:if="{{stages.length === 0}}" class="empty">灯组还没有阶段，去阶段页加一个</view>
+    <button class="stages-btn" bindtap="openStagePage">编辑阶段与灯效</button>
+  </view>
+</view>

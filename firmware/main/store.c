@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_timer.h"
 
 static const char *TAG = "store";
 #define NVS_NAMESPACE "mlarr"
@@ -32,10 +33,10 @@ int ml_store_init(void)
         esp_err_t err = nvs_get_blob(h, NVS_KEY, s_buf, &len);
         nvs_close(h);
         if (err == ESP_OK && len >= 4 &&
-            mlarr_validate(s_buf, len) == MLARR_ERR_OK) {
-            s_len = (uint16_t)len;
-            mlarr_arrangement_t a;
-            if (mlarr_decode(s_buf, s_len, &a) == MLARR_ERR_OK) {
+            mlarr_validate(s_buf, (uint16_t)len) == MLARR_OK) {
+            ml_arrangement_t a;
+            if (mlarr_parse(s_buf, (uint16_t)len, &a) == MLARR_OK) {
+                s_len = (uint16_t)len;
                 s_version = a.version;
                 s_crc32 = mlarr_crc32(s_buf, s_len);
                 ESP_LOGI(TAG, "restored arrangement v%u, %u B, crc %08" PRIx32,
