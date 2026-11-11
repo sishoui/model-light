@@ -144,6 +144,14 @@ static void xfer_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak,
     ble_notify_seqblock(f, sizeof f);
 }
 
+/* Item 9: 编排传输 NAK（校验失败/缺口/版本不符等）→ 状态帧 errorCode
+ * （§2.9，mlt_set_error 内 30 s 保持）。 */
+static void xfer_error(void *user, uint8_t status)
+{
+    (void)user;
+    ble_raise_error(status);
+}
+
 static void token_reset(void *user)
 {
     (void)user;
@@ -494,11 +502,13 @@ int ble_start(void)
         ESP_LOGE(TAG, "token state machine alloc failed");
         return -1;
     }
-    s_rx = mlarr_rx_new(xfer_commit, xfer_send, NULL, MLARR_PROTO_MAJOR);
-    if (s_rx == NULL) {
+    mlarr_rx_t *rx = mlarr_rx_new_full(xfer_commit, xfer_send, xfer_error,
+                                       NULL, MLARR_PROTO_MAJOR);
+    if (rx == NULL) {
         ESP_LOGE(TAG, "rx state machine alloc failed");
         return -1;
     }
+    s_rx = rx;
     s_ota = ota_start(ota_send, ota_change, ota_reboot, NULL);
     if (s_ota == NULL) {
         ESP_LOGE(TAG, "ota state machine alloc failed");

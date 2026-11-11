@@ -189,6 +189,10 @@ typedef int (*mlarr_commit_fn)(void *user, const uint8_t *buf, uint16_t len,
                                uint16_t version);
 typedef void (*mlarr_send_fn)(void *user, uint8_t cmd, uint16_t ack_up_to,
                               uint16_t nak_mask, uint8_t status);
+/* Fired on every NAK failure path (checksum/gap/overlap/version/store) with
+ * the §2.9 status byte, so the host can latch it into the status frame
+ * errorCode (30 s hold). Not fired on success paths. */
+typedef void (*mlarr_error_fn)(void *user, uint8_t status);
 
 typedef struct mlarr_rx mlarr_rx_t;
 
@@ -196,6 +200,10 @@ typedef struct mlarr_rx mlarr_rx_t;
  * mismatch). Returns NULL on allocation failure. */
 mlarr_rx_t *mlarr_rx_new(mlarr_commit_fn commit, mlarr_send_fn send,
                          void *user, uint8_t proto_major);
+/* Same, with an error callback for §2.9 errorCode wiring (may be NULL). */
+mlarr_rx_t *mlarr_rx_new_full(mlarr_commit_fn commit, mlarr_send_fn send,
+                              mlarr_error_fn error, void *user,
+                              uint8_t proto_major);
 void        mlarr_rx_free(mlarr_rx_t *rx);
 
 /* Feed one frame: buf[0]=cmd, buf[1..2]=seq LE, payload follows.
