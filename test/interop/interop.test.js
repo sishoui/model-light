@@ -14,9 +14,17 @@ const src = path.join(root, 'firmware', 'components', 'mlarr');
 const here = __dirname;
 
 function hasCompiler() {
-  try { execFileSync('gcc', ['--version'], { stdio: 'pipe' }); return true; }
-  catch { return false; }
+  const candidates = [
+    'gcc',
+    'C:\\Users\\13092\\AppData\\Local\\Microsoft\\WinGet\\Packages\\MartinStorsjo.LLVM-MinGW.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\\llvm-mingw-20261020-ucrt-x86_64\\bin\\gcc.exe',
+  ];
+  for (const c of candidates) {
+    try { execFileSync(c, ['--version'], { stdio: 'pipe' }); GCC = c; return true; }
+    catch { /* next */ }
+  }
+  return false;
 }
+let GCC = 'gcc';
 
 function buildSample() {
   const arr = createArrangement({ version: 9 });
@@ -46,7 +54,7 @@ function buildSample() {
 
 test('固件 mlarr_parse 能解析 JS encode 的编排字节（互操作）', { skip: !hasCompiler() && 'no gcc on PATH' }, () => {
   const exe = path.join(here, 'interop_interop_main.exe');
-  execFileSync('gcc', [
+  execFileSync(GCC, [
     '-I', path.join(src, 'include'),
     path.join(src, 'mlarr.c'), path.join(here, 'interop_main.c'),
     '-o', exe,
