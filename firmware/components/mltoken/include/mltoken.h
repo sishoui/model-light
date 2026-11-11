@@ -94,6 +94,10 @@ uint8_t mlt_error_code(const mlt_t *t, uint32_t now_ms);
 void mlt_set_guest(mlt_t *t, int on);
 int  mlt_factory_reset_allowed(const mlt_t *t, uint16_t conn);
 
+/* F7 §6: OTA in progress → REQ_TOKEN answers GRANT_BUSY, no handover.
+ * `on` is 0 or 1; ble.c drives it from mlota_active(). */
+void mlt_set_ota_busy(mlt_t *t, int on);
+
 #ifdef __cplusplus
 }
 #endif

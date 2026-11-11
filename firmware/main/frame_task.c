@@ -144,8 +144,33 @@ void frame_task(void *arg)
 {
     TickType_t last_wake = xTaskGetTickCount();
     static uint8_t frame[ML_PIN0_LED_COUNT * 3];
+    /* F7 §7.2: while OTA is active the 40 FPS arrangement render pauses
+     * and the strip shows a 5 FPS low-brightness blue breath (#1A3FCC,
+     * peak 15% of the brightness limit). */
+    static const uint8_t OTA_R = 0x1A, OTA_G = 0x3F, OTA_B = 0xCC;
+    uint32_t ota_frame = 0;
 
     while (1) {
+        /* F7 §7.2: OTA transfer pauses the arrangement render. */
+        if (ble_ota_active()) {
+            ota_frame++;
+            /* 5 FPS (200 ms period), triangle wave 0..255..0 */
+            uint32_t ph = (ota_frame % 10) * 51;    /* 10 frames = 2 s */
+            uint8_t w = (uint8_t)(ph <= 255 ? ph : 510 - ph);
+            /* peak 15% of the brightness limit, scaled per channel */
+            uint8_t lim = (uint8_t)(ML_BRIGHTNESS_LIMIT_DEFAULT * 15 / 100);
+            uint8_t r = (uint8_t)((OTA_R * w * lim) / (255 * 100));
+            uint8_t g = (uint8_t)((OTA_G * w * lim) / (255 * 100));
+            uint8_t b = (uint8_t)((OTA_B * w * lim) / (255 * 100));
+            for (uint16_t i = 0; i < ML_PIN0_LED_COUNT; i++) {
+                out_layer_set_pixel(0, i, r, g, b);
+            }
+            out_layer_commit();
+            out_layer_wait_done();
+            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(200));
+            continue;
+        }
+        ota_frame = 0;
         /* Hot-swap: BLE commit stages into the store; reload once version
          * changes (parse is cheap relative to a frame, and only fires on
          * change). */

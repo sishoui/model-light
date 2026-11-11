@@ -30,6 +30,7 @@ struct mlt {
     uint8_t  error_code;
     uint32_t error_since;
     int      guest;
+    int      ota_busy;   /* F7: OTA in progress → handover refused */
 };
 
 static void notify_change(mlt_t *t)
@@ -75,6 +76,8 @@ void mlt_free(mlt_t *t) { free(t); }
 
 void mlt_set_guest(mlt_t *t, int on) { t->guest = on ? 1 : 0; }
 
+void mlt_set_ota_busy(mlt_t *t, int on) { t->ota_busy = on ? 1 : 0; }
+
 int mlt_factory_reset_allowed(const mlt_t *t, uint16_t conn)
 {
     /* spec §2.5: 来访模式开启后，已适配（持令牌）的连接不能工厂重置。
@@ -103,6 +106,11 @@ void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
     }
     switch (buf[0]) {
     case MLT_CMD_REQ_TOKEN:
+        if (t->ota_busy) {
+            /* §6 (F7): OTA 期间令牌交接拒 BUSY (0x05 GRANT_BUSY). */
+            send_grant(t, conn, MLT_GRANT_BUSY);
+            break;
+        }
         switch (t->state) {
         case MLT_STATE_FREE:
             /* §2.5: 无持有者时第一个 REQ_TOKEN 直接获得，不走 PROBE. */

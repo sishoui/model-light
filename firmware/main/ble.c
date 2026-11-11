@@ -17,6 +17,7 @@
 #include "mltoken.h"
 #include "mlrt.h"
 #include "frame_task.h"
+#include "ota.h"
 #include "app_config.h"
 
 #include <stdio.h>
@@ -24,7 +25,10 @@
 #include <inttypes.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -66,6 +70,9 @@ static const ble_uuid128_t chr_realtime_uuid = UUID128_INIT(
 static const ble_uuid128_t chr_seqblock_uuid = UUID128_INIT(
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8f, 0x9e,
     0x3d, 0x4c, 0x2a, 0x1b, 0x03, 0x00, 0x9f, 0x7c);
+static const ble_uuid128_t chr_ota_uuid = UUID128_INIT(
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8f, 0x9e,
+    0x3d, 0x4c, 0x2a, 0x1b, 0x06, 0x00, 0x9f, 0x7c);
 
 /* ---- state ---- */
 static uint16_t s_conn_handles[ML_CONN_MAX];
@@ -75,6 +82,11 @@ static uint8_t  s_devinfo[10];
 static uint16_t s_status_attr_val;
 static uint16_t s_seqblock_attr_val;
 static uint16_t s_command_attr_val;
+static uint16_t s_ota_attr_val;
+
+/* OTA session (F7): the parallel transfer on ...0006 — separate from the
+ * F2 arrangement rx on ...0003. */
+static mlota_t *s_ota;
 
 /* Control token state machine (F5, spec §2.5). */
 static mlt_t *s_mlt;
@@ -157,6 +169,11 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
         ble_raise_error(MLT_ERR_NOT_TOKEN);
         return 0;
     }
+    if (mlota_active(s_ota)) {
+        /* §7.3: 编排写在 OTA 期间任何写都回 0x05 BUSY */
+        ble_raise_error(MLOTA_ERR_BUSY);
+        return 0;
+    }
     uint8_t frame[MLARR_ARR_MAX_BYTES + 3 > 512 ? 512 : 259];
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
     if (s_rx != NULL) {
@@ -170,7 +187,70 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
 /* Pull the whole frame out of the mbuf chain. */
 static uint16_t om_flat(struct os_mbuf *om, uint8_t *out, uint16_t cap);
 
-/* ---- characteristic accessors ---- */
+static void build_status_frame(uint8_t frame[MLPROTO_STATE_LEN], uint16_t conn);
+int ble_ota_progress_changed(void);
+
+/* ---- OTA callbacks (F7) ---- */
+
+static void ota_send(void *user, const uint8_t *frame, uint16_t len)
+{
+    (void)user;
+    ble_notify_ota(frame, len);
+}
+
+static void ota_change(void *user)
+{
+    (void)user;
+    /* §6: OTA 开始/结束会改变令牌语义 — 交接请求在 OTA 期间拒 BUSY。 */
+    mlt_set_ota_busy(s_mlt, mlota_active(s_ota));
+    /* §7.1: 1% throttle — only repaint when the percentage moved. */
+    if (ble_ota_progress_changed()) {
+        ble_push_status();
+        ble_update_adv();
+    }
+}
+
+static void ota_reboot(void *user)
+{
+    (void)user;
+    /* §5.1: wait ~500 ms so the OTA_EVENT notify gets out, then restart. */
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+}
+
+static void ota_poll_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        uint8_t st = mlota_state(s_ota);
+        mlota_poll(s_ota, (uint32_t)(esp_timer_get_time() / 1000));
+        /* PAUSED (stall / disconnect) leaves the transfer — mode=2 clears
+         * and playback resumes (§7.2). Signal through the same throttle. */
+        if (st != mlota_state(s_ota) && !mlota_active(s_ota)) {
+            ble_ota_progress_changed(); /* reset the 1% throttle */
+            ble_push_status();
+            ble_update_adv();
+        }
+    }
+}
+
+/* ...0006 OTA channel: WRITE + WRITE_NR + NOTIFY (§1). Every write is one
+ * frame cmd(1)+seq(2)+payload; token gating happens inside mlota via the
+ * caller-supplied mlt_can_write result (§6). */
+static int chr_ota_access(uint16_t conn, uint16_t attr,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    (void)attr; (void)arg;
+    uint8_t frame[MLOTA_BEGIN_PAYLOAD + 3];
+    uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
+    mlota_on_frame(s_ota, frame, len,
+                   mlt_can_write(s_mlt, conn),
+                   (uint32_t)(esp_timer_get_time() / 1000));
+    return 0;
+}
+
+
 
 /* ...0001 command channel: token request/grant/heartbeat, factory reset. */
 static int chr_command_access(uint16_t conn, uint16_t attr,
@@ -189,7 +269,8 @@ static int chr_command_access(uint16_t conn, uint16_t attr,
 /* ...0002 realtime channel: token-gated (§2.4 — reject 0x01). Payload is
  * one leaf-parameter frame (7..9 B, never fragmented); it feeds the mlrt
  * engine which patches the live render copy. Addressing misses are silent
- * (§2.3); non-token writers get the status-frame error path. */
+ * (§2.3); non-token writers get the status-frame error path.
+ * §7.2/§7.3: OTA 进行中拒收并明回 BUSY (0x05). */
 static int chr_realtime_access(uint16_t conn, uint16_t attr,
                                struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -198,6 +279,10 @@ static int chr_realtime_access(uint16_t conn, uint16_t attr,
         ble_raise_error(MLT_ERR_NOT_TOKEN);
         return 0; /* writeNoResponse has no ATT error path; error goes via
                      the status frame (§2.9). */
+    }
+    if (mlota_active(s_ota)) {
+        ble_raise_error(MLOTA_ERR_BUSY);
+        return 0;
     }
     uint8_t frame[16];
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
@@ -213,13 +298,7 @@ static int chr_status_access(uint16_t conn, uint16_t attr,
                              struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     uint8_t frame[MLPROTO_STATE_LEN];
-    mlproto_state_frame(frame, frame_run_mode(),
-                        ml_store_version(), ml_store_crc32(),
-                        ML_BRIGHTNESS_LIMIT_DEFAULT,
-                        mlt_perspective(s_mlt, conn),
-                        mlt_error_code(s_mlt,
-                                       (uint32_t)(esp_timer_get_time() / 1000)),
-                        0, ble_flags());
+    build_status_frame(frame, conn);
     return os_mbuf_append(ctxt->om, frame, sizeof frame) == 0 ? 0
            : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
@@ -257,6 +336,11 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
             { .uuid = (const ble_uuid_t *)&chr_devinfo_uuid,
               .access_cb = chr_devinfo_access,
               .flags = BLE_GATT_CHR_F_READ },
+            { .uuid = (const ble_uuid_t *)&chr_ota_uuid,
+              .access_cb = chr_ota_access,
+              .val_handle = &s_ota_attr_val,
+              .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP |
+                       BLE_GATT_CHR_F_NOTIFY },
             { 0 },
         },
     },
@@ -290,6 +374,8 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (s_rx != NULL) {
             mlarr_rx_on_disconnect(s_rx);
         }
+        /* F7: OTA 中持有者断连 → PAUSED，已写字节保留 (§6)。 */
+        mlota_on_disconnect(s_ota);
         /* §2.5: 持有者断连 → 令牌挂起 60 s；§2.6: 断连即回放，不保留最后一帧。 */
         mlt_on_disconnect(s_mlt, event->disconnect.conn.conn_handle,
                           (uint32_t)(esp_timer_get_time() / 1000));
@@ -405,6 +491,13 @@ int ble_start(void)
         ESP_LOGE(TAG, "rx state machine alloc failed");
         return -1;
     }
+    s_ota = ota_start(ota_send, ota_change, ota_reboot, NULL);
+    if (s_ota == NULL) {
+        ESP_LOGE(TAG, "ota state machine alloc failed");
+        return -1;
+    }
+    xTaskCreatePinnedToCore(ota_poll_task, "otapoll", 2048, NULL,
+                            tskIDLE_PRIORITY + 2, NULL, 0);
 
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
@@ -476,6 +569,29 @@ int ble_notify_seqblock(const uint8_t *frame, uint16_t len)
     return sent;
 }
 
+int ble_notify_ota(const uint8_t *frame, uint16_t len)
+{
+    int sent = 0;
+    for (size_t i = 0; i < s_conn_count; i++) {
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, len);
+        if (om == NULL) {
+            continue;
+        }
+        int rc = ble_gatts_notify_custom(s_conn_handles[i], s_ota_attr_val, om);
+        if (rc == 0) {
+            sent++;
+        }
+    }
+    return sent;
+}
+
+int ble_ota_active(void) { return mlota_active(s_ota); }
+
+uint8_t ble_ota_progress(void)
+{
+    return mlota_progress(s_ota);
+}
+
 void ble_build_device_info(uint8_t out[10])
 {
     mlproto_device_info(out, ML_FW_MAJOR, ML_FW_MINOR, ble_device_id());
@@ -492,26 +608,50 @@ void ble_notify_command_to(uint16_t conn, const uint8_t *frame, uint16_t len)
 void ble_push_status(void)
 {
     /* tokenHolder is per-connection perspective (§2.9), so build one frame
-     * per connection. Frame is 12 B: mode + arrVersion + arrCrc32 +
-     * brightnessLimit + tokenHolder + errorCode + temperature + flags. */
+     * per connection. Frame is 13 B: mode + arrVersion + arrCrc32 +
+     * brightnessLimit + tokenHolder + errorCode + temperature + flags +
+     * OTA progress (§7.1). */
     for (size_t i = 0; i < s_conn_count; i++) {
-        uint16_t conn = s_conn_handles[i];
         uint8_t frame[MLPROTO_STATE_LEN];
-        mlproto_state_frame(frame, frame_run_mode(),
-                            ml_store_version(), ml_store_crc32(),
-                            ML_BRIGHTNESS_LIMIT_DEFAULT,
-                            mlt_perspective(s_mlt, conn),
-                            mlt_error_code(s_mlt,
-                                           (uint32_t)(esp_timer_get_time() / 1000)),
-                            0, ble_flags());
+        build_status_frame(frame, s_conn_handles[i]);
         struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, sizeof frame);
         if (om != NULL) {
-            ble_gatts_notify_custom(conn, s_status_attr_val, om);
+            ble_gatts_notify_custom(s_conn_handles[i], s_status_attr_val, om);
         }
     }
 }
 
-void ble_raise_error(uint8_t code)
+/* Build one per-connection status frame. OTA 进行中: mode=2 + progress
+ * (§7.1); the 1% throttle is applied by the caller that decides to send. */
+static void build_status_frame(uint8_t frame[MLPROTO_STATE_LEN], uint16_t conn)
+{
+    uint8_t mode = frame_run_mode();
+    if (mlota_active(s_ota)) {
+        mode = MLPROTO_MODE_TRANSFER;
+    }
+    mlproto_state_frame(frame, mode,
+                        ml_store_version(), ml_store_crc32(),
+                        ML_BRIGHTNESS_LIMIT_DEFAULT,
+                        mlt_perspective(s_mlt, conn),
+                        mlt_error_code(s_mlt,
+                                       (uint32_t)(esp_timer_get_time() / 1000)),
+                        0, ble_flags(),
+                        mlota_active(s_ota) ? mlota_progress(s_ota) : 0);
+}
+
+/* F7 §7.1: OTA 期间进度按 1% 节流——只有百分比变化时才发状态帧。
+ * Called from the ota change callback path; returns 1 if a push is due. */
+static uint8_t s_last_pushed_progress = 0xFF;
+
+int ble_ota_progress_changed(void)
+{
+    uint8_t p = mlota_active(s_ota) ? mlota_progress(s_ota) : 0;
+    if (p != s_last_pushed_progress) {
+        s_last_pushed_progress = p;
+        return 1;
+    }
+    return 0;
+}void ble_raise_error(uint8_t code)
 {
     mlt_set_error(s_mlt, code, (uint32_t)(esp_timer_get_time() / 1000));
     /* change callback (ble_push_status via token_change) fires inside

@@ -341,6 +341,31 @@ static void test_holder_rerequest_idempotent(void)
     mlt_free(t);
 }
 
+/* ---- F7 §6: OTA 进行中令牌交接拒 BUSY，结束后恢复 ---- */
+static void test_ota_busy_refuses_handover(void)
+{
+    mlt_t *t = new_mlt();
+    req(t, 1, 100);                       /* conn 1 holds the token */
+    assert(find_ev(MLT_CMD_GRANT, 1)->payload[0] == MLT_GRANT_OK);
+    mlt_set_ota_busy(t, 1);
+    req(t, 2, 200);                       /* OTA 期间的交接请求 */
+    const ev_t *g = find_ev(MLT_CMD_GRANT, 2);
+    assert(g != NULL);
+    assert(g->len == 1 && g->payload[0] == MLT_GRANT_BUSY);
+    /* holder unchanged — no PROBE was sent */
+    assert(find_ev(MLT_CMD_PROBE, 1) == NULL);
+    assert(mlt_perspective(t, 1) == 1);
+    /* OTA 结束 → 交接恢复正常 */
+    mlt_set_ota_busy(t, 0);
+    req(t, 2, 300);
+    /* PROBE went out to the holder; holder answers YES → handover */
+    const ev_t *p = find_ev(MLT_CMD_PROBE, 1);
+    assert(p != NULL);
+    probe_reply(t, 1, MLT_CMD_PROBE_YES, 400);
+    assert(mlt_perspective(t, 2) == 1);
+    mlt_free(t);
+}
+
 int main(void)
 {
     test_first_request_granted_without_probe();
@@ -358,6 +383,7 @@ int main(void)
     test_factory_reset_command_dispatches();
     test_grant_clears_latched_error();
     test_holder_rerequest_idempotent();
+    test_ota_busy_refuses_handover();
     printf("all mltoken tests passed\n");
     return 0;
 }

@@ -30,6 +30,15 @@ int ble_notify_seqblock(const uint8_t *frame, uint16_t len);
 /* Token-module → one connection notify on ...0001 (PROBE / GRANT). */
 void ble_notify_command_to(uint16_t conn, const uint8_t *frame, uint16_t len);
 
+/* OTA ACK/SESSION/EVENT notify on ...0006 (F7); returns connections
+ * notified. */
+int ble_notify_ota(const uint8_t *frame, uint16_t len);
+
+/* F7: OTA session activity — drives status-frame mode=2 + progress byte,
+ * the 5 FPS blue-breathing effect, and the BUSY gates. */
+int      ble_ota_active(void);
+uint8_t  ble_ota_progress(void);
+
 /* Build a per-connection 12 B status frame (tokenHolder is per-connection
  * perspective, §2.9) and notify it to every subscribed connection. Called
  * on token/error changes and by the 5 s periodic heartbeat. */
