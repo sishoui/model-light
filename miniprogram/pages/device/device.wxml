@@ -49,5 +49,10 @@
       {{transferring ? '推送中…' : '推送'}}
     </button>
     <text wx:if="{{pushVersion}}" class="transfer-msg">本机编排版本 v{{pushVersion}}</text>
+    <button class="push-btn restore-btn" bindtap="restoreFromCloud"
+      disabled="{{!connected || transferring}}">
+      从云端恢复
+    </button>
+    <text class="transfer-msg muted">恢复是手动操作：只在设备与云端不一致时写回设备</text>
   </view>
 </view>
