@@ -66,7 +66,7 @@ export class PrismaDeviceStore implements DeviceStore {
 }
 
 // Prisma: JSON null must be Prisma.DbNull, not JS null.
-const PrismaDbNull = Prisma.JsonNull;
+const PrismaDbNull = Prisma.DbNull;
 
 function toRow(row: {
   mlId: string;
