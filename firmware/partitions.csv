@@ -1,0 +1,7 @@
+# Partition table per docs/spec.md §3.4: no factory, dual 1.5 MiB OTA slots.
+# Partition table and bootloader cannot be changed via OTA — v1 first flash is final.
+# Name,   Type, SubType, Offset,   Size,  Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+ota_0,    app,  ota_0,   0x10000,  0x190000,
+ota_1,    app,  ota_1,   0x1a0000, 0x190000,

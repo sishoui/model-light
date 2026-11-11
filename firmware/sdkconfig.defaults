@@ -1,0 +1,23 @@
+## IDF project for model-light firmware (ESP32-C3FH4).
+## See docs/spec.md §3.
+
+CONFIG_IDF_TARGET="esp32c3"
+
+# NimBLE host-only stack (§3.2 基座).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=4
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
+# FreeRTOS tick 100 Hz → 25 ms budget per frame at 40 FPS (§2.10 帧时钟).
+CONFIG_FREERTOS_HZ=1000
+
+# Disable WiFi entirely — BLE-only device (§8 明确不做).
+CONFIG_ESP_WIFI_ENABLED=n
+
+# Log level.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# Compiler optimization for frame task headroom.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
