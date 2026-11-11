@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { WxGateway } from '../auth/auth.service';
 
 const CODE2SESSION_URL = 'https://api.weixin.qq.com/sns/jscode2session';
@@ -9,7 +9,8 @@ export class WxHttpGateway implements WxGateway {
   constructor(
     @Inject('WX_APPID') private readonly appid: string,
     @Inject('WX_SECRET') private readonly secret: string,
-    private readonly fetchImpl: typeof fetch = fetch,
+    // DI-injectable seam for tests; production uses global fetch.
+    @Optional() private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
   async code2session(code: string): Promise<{ openid: string }> {
