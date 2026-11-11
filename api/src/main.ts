@@ -8,7 +8,8 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { logger: ['error', 'warn', 'log'] });
   app.use(express.json({ limit: '1mb' }));
-  app.use(new RequestIdMiddleware());
+  const requestId = new RequestIdMiddleware();
+  app.use(requestId.use.bind(requestId));
   await app.listen(process.env.PORT ? Number(process.env.PORT) : 8080);
 }
 
