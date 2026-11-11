@@ -160,10 +160,7 @@ function createArrangementSender(transport, { chunkSize, now = () => Date.now(),
       }
     }, Math.max(50, Math.min(1000, totalTimeoutMs / 4)));
 
-    const session = {
-      promise: null,
-      _state: state,
-    };
+    const session = {};
 
     session.promise = new Promise((resolve) => {
       resolveOutcome = resolve;
@@ -181,13 +178,14 @@ function createArrangementSender(transport, { chunkSize, now = () => Date.now(),
     session.promise.then(() => clearInterval(watchdog));
 
     session.then = (onFulfilled, onRejected) => session.promise.then(onFulfilled, onRejected);
-    session.catch = (onRejected) => session.promise.catch(onRejected);
     session.waitUntilSettled = () => session.promise;
 
     session.waitUntilWindowFull = () => new Promise((resolve) => {
       windowFullResolvers.push(resolve);
     });
     session.cancel = () => finish({ ok: false, reason: 'cancelled' });
+    /** 只读快照：当前窗口内未确认的片序号（升序），供测试与 UI 进度展示 */
+    session.pendingSeqs = () => [...state.pending];
 
     active = session;
     return session;
@@ -196,9 +194,6 @@ function createArrangementSender(transport, { chunkSize, now = () => Date.now(),
   return {
     send,
     get isBusy() { return active !== null; },
-    pendingSeqs() {
-      return active ? [...active._state.pending] : [];
-    },
   };
 }
 

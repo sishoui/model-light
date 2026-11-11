@@ -33,6 +33,7 @@ test('parses a full 12 B status frame', () => {
     flags: 0x03,
     transferring: true,
     visitorMode: true,
+    otaProgress: null,
   });
 });
 
@@ -64,9 +65,14 @@ test('flags: bit0 正在传输, bit1 来访模式', () => {
   assert.equal(s2.transferring, true);
 });
 
-test('smaller frames (OTA progress mode=2 carries 1 B extra) still parse first 12 B', () => {
-  // OTA 进度帧走 0006 通道；状态帧本体仍是 12 B。超长只取前 12 B。
+test('13 B OTA status frame: byte 12 carries otaProgress (§7.1), 12 B frames report null', () => {
+  const short = parseStatusFrame(frame());
+  assert.equal(short.otaProgress, null);
+
   const long = new Uint8Array(13);
-  long.set(frame(), 0);
-  assert.equal(parseStatusFrame(long).mode, 0);
+  long.set(frame({ mode: 2, flags: 0b1 }), 0);
+  long[12] = 37;
+  const s = parseStatusFrame(long);
+  assert.equal(s.mode, 2);
+  assert.equal(s.otaProgress, 37);
 });

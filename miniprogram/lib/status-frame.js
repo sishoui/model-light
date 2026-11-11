@@ -22,6 +22,8 @@ function parseStatusFrame(data) {
     flags,
     transferring: (flags & 0b1) !== 0,
     visitorMode: (flags & 0b10) !== 0,
+    // §7.1 / §2.9: OTA 期间固件发 13 B，第 13 B 是进度（0–100）；平时 12 B → null。
+    otaProgress: bytes.length >= 13 ? bytes[12] : null,
   };
 }
 

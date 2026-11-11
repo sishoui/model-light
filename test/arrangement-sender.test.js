@@ -38,7 +38,7 @@ test('sends START then fills an 8-packet window', async () => {
   assert.equal(t.sent[1][0], 0x02);
   assert.equal(t.sent[1][1], 0); assert.equal(t.sent[1][2], 0); // seq 0
   assert.equal(t.sent[8][1], 7); // seq 7
-  const pending = s.pendingSeqs();
+  const pending = run.pendingSeqs();
   assert.deepEqual(pending, [0, 1, 2, 3, 4, 5, 6, 7]);
   run.cancel();
 });
@@ -53,7 +53,7 @@ test('cumulative ACK slides window forward and fills next packets', async () => 
   const wait2 = run.waitUntilWindowFull();
   t.deliverAck(3); // ackUpTo=3 且 nakMask=0 → 0..7 全部已写入 flash
   await wait2;
-  assert.deepEqual(s.pendingSeqs(), [8, 9, 10, 11, 12, 13, 14, 15]);
+  assert.deepEqual(run.pendingSeqs(), [8, 9, 10, 11, 12, 13, 14, 15]);
   // 新发 8 片（seq 8..15）
   assert.equal(t.sent.length, n0 + 8);
   assert.equal(t.sent[n0][1], 8);
@@ -74,7 +74,7 @@ test('nakMask retransmits missing chunks first, then refills window', async () =
   await wait2;
   const resend = t.sent.slice(n0);
   assert.deepEqual(resend.map((f) => f[1] | (f[2] << 8)), [4, 6, 8, 9, 10, 11, 12, 13]);
-  assert.deepEqual(s.pendingSeqs(), [4, 6, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(run.pendingSeqs(), [4, 6, 8, 9, 10, 11, 12, 13]);
   run.cancel();
 });
 
@@ -97,12 +97,12 @@ test('3 consecutive timeouts without ACK → RESET + failure, old arrangement un
   let now = 0;
   const s = createArrangementSender(t, { chunkSize: 20, now: () => now, setTimeoutMs: (fn, ms) => { now += ms; fn(); } });
   const outcome = s.send({ payloadVersion: 1, protoMajor: 1, protoMinor: 0, data: new Uint8Array(40) });
-  const result = await outcome;
+  const result = await outcome.promise;
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'no-ack');
   const last = t.sent[t.sent.length - 1];
   assert.equal(last[0], 0x04); // RESET
-  assert.deepEqual(s.pendingSeqs(), []); // 会话已清
+  assert.equal(s.isBusy, false); // 会话已清
 });
 
 test('NAK status maps to failure reason and stops without wiping silently', async () => {
@@ -116,7 +116,7 @@ test('NAK status maps to failure reason and stops without wiping silently', asyn
   const run2 = s2.send({ payloadVersion: 1, protoMajor: 1, protoMinor: 0, data: new Uint8Array(40) });
   await run2.waitUntilWindowFull();
   t2.deliverAck(0, 0, 0x06, 0x06); // NAK 0x06 像素重叠（FIN 后才会发，但客户端见到 NAK 即停）
-  const r2 = await run2;
+  const r2 = await run2.promise;
   assert.equal(r2.ok, false);
   assert.equal(r2.reason, 'nak');
   assert.equal(r2.status, 0x06);
@@ -133,7 +133,7 @@ test('FIN sent after last chunk ACKed; success outcome', async () => {
   const chunks = Math.ceil(40 / (20 - 3));
   assert.equal(chunks, 3);
   t.deliverAck(2);
-  const result = await run;
+  const result = await run.promise;
   assert.equal(result.ok, true);
   const last = t.sent[t.sent.length - 1];
   assert.equal(last[0], 0x03); // FIN
