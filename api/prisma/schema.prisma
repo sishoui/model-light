@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          BigInt   @id @default(autoincrement())
+  openid      String   @unique @db.VarChar(64)
+  nickname    String?  @db.VarChar(32)
+  avatarUrl   String?  @db.VarChar(512)
+  createdAt   DateTime @default(now()) @db.DateTime(3)
+  lastLoginAt DateTime @default(now()) @db.DateTime(3)
+
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model Device {
+  mlId           String    @id @db.Char(7)
+  displayName    String?   @db.VarChar(32)
+  fwVersion      String?   @db.VarChar(16)
+  payloadVersion Int?
+  pinsJson       Json?
+  previewJson    Json?
+  rev            Int       @default(0)
+  lastPushedBy   BigInt?
+  pushedAt       DateTime?
+  createdAt      DateTime  @default(now()) @db.DateTime(3)
+
+  backup DeviceBackup?
+
+  @@map("devices")
+}
+
+model DeviceBackup {
+  mlId            String   @id @db.Char(7)
+  arrangement     Bytes    @db.MediumBlob
+  arrangementCrc32 Int
+  arrangementLen  Int
+  lastGood        Bytes?   @db.MediumBlob
+  lastGoodRev     Int?
+  updatedAt       DateTime @default(now()) @db.DateTime(3)
+
+  device Device @relation(fields: [mlId], references: [mlId])
+
+  @@map("device_backups")
+}
+
+model RefreshToken {
+  id        BigInt    @id @default(autoincrement())
+  userId    BigInt
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime  @db.DateTime(3)
+  revokedAt DateTime?
+  createdAt DateTime  @default(now()) @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("refresh_tokens")
+}

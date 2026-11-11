@@ -1,0 +1,5 @@
+# Replace with your real domain. Caddy automatically obtains and renews
+# the TLS certificate (ACME / Let's Encrypt) for this host.
+api.example.com {
+	reverse_proxy api:8080
+}

@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="toolbar">
+    <button class="scan-btn" type="primary" loading="{{scanning}}" bindtap="{{scanning ? 'stopScan' : 'startScan'}}">
+      {{scanning ? '扫描中…' : '扫描设备'}}
+    </button>
+  </view>
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <view wx:if="{{devices.length === 0 && !scanning}}" class="empty">
+    <text>未发现设备。确认设备已上电并在广播 ML-XXXX。</text>
+  </view>
+
+  <view class="list">
+    <view
+      wx:for="{{devices}}"
+      wx:key="name"
+      class="device-card {{knownNames.indexOf(item.name) >= 0 ? 'known' : ''}}"
+      data-name="{{item.name}}"
+      bindtap="onTapDevice"
+    >
+      <view class="device-name">{{item.name}}</view>
+      <view class="device-meta">
+        <text class="fw">固件 v{{item.major}}.{{item.minor === null ? '?' : item.minor}}</text>
+        <text class="state state-{{item.runState}}">{{item.runStateLabel}}</text>
+      </view>
+    </view>
+  </view>
+</view>

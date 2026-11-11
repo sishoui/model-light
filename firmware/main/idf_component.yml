@@ -1,0 +1,6 @@
+## Managed component dependencies.
+## led_strip v3.1.1 per spec §3.1 — one handle per logical strip, refresh_async().
+## Double-buffering and round-robin scheduling are ours (spec §3.1 必须自研).
+dependencies:
+  espressif/led_strip: "^3.1.1"
+  idf: ">=5.4"
