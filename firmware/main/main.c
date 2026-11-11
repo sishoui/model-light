@@ -42,6 +42,8 @@ void app_main(void)
                             tskIDLE_PRIORITY + 3, NULL, 0);
     xTaskCreatePinnedToCore(status_task, "status", 3072, NULL,
                             tskIDLE_PRIORITY + 2, NULL, 0);
+    xTaskCreatePinnedToCore(store_task, "store", 3072, NULL,
+                            tskIDLE_PRIORITY + 1, NULL, 0);
 
     /* §3.2 budget check: log free internal RAM once at idle. */
     ESP_LOGI(TAG, "free internal RAM after init: %u bytes (budget floor 150 KB)",

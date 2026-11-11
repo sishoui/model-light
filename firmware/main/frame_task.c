@@ -6,6 +6,7 @@
 #include "ble.h"
 #include "mlproto.h"
 #include "mlarr.h"
+#include "store.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -48,14 +49,28 @@ static const uint8_t default_arrangement[] = {
 };
 
 static ml_arrangement_t s_arr;
+static int s_have_arr;
 
 int frame_arrangement_init(void)
 {
+    /* Prefer the arrangement persisted in NVS (survives reboot); fall back
+     * to the built-in default while nothing has been received. */
+    ml_store_init();
+    const uint8_t *bytes = ml_store_bytes();
+    uint16_t len = ml_store_len();
+    if (bytes != NULL && len > 0 &&
+        mlarr_parse(bytes, len, &s_arr) == MLARR_OK) {
+        s_have_arr = 1;
+        ESP_LOGI(TAG, "loaded arrangement from NVS: version %u len %u",
+                 (unsigned)ml_store_version(), (unsigned)len);
+        return MLARR_OK;
+    }
     int rc = mlarr_parse(default_arrangement, sizeof default_arrangement, &s_arr);
     if (rc != MLARR_OK) {
         ESP_LOGE(TAG, "default arrangement parse failed: %d", rc);
         return rc;
     }
+    s_have_arr = 1;
     return MLARR_OK;
 }
 
@@ -70,6 +85,23 @@ void frame_task(void *arg)
     static uint8_t frame[ML_PIN0_LED_COUNT * 3];
 
     while (1) {
+        /* Hot-swap: BLE commit stages into the store; reload once version
+         * changes (parse is cheap relative to a frame, and only fires on
+         * change). */
+        static uint16_t s_loaded_version;
+        uint16_t cur_ver = ml_store_version();
+        if (!s_have_arr || cur_ver != s_loaded_version) {
+            const uint8_t *bytes = ml_store_bytes();
+            uint16_t len = ml_store_len();
+            if (bytes != NULL && len > 0 &&
+                mlarr_parse(bytes, len, &s_arr) == MLARR_OK) {
+                s_loaded_version = cur_ver;
+                s_have_arr = 1;
+            } else if (!s_have_arr) {
+                s_have_arr = 1; /* already fell back to default in init */
+                s_loaded_version = cur_ver;
+            }
+        }
         /* F3: render the arrangement through mlarr — per-group clock % total
          * stage positioning, ranges+reverse mapping, uncovered pixels black.
          * Ble tinting comes free: colors come from the arrangement. */
@@ -91,13 +123,23 @@ void frame_task(void *arg)
 
 void status_task(void *arg)
 {
-    /* §2.9: 5 s heartbeat full frame; changes are pushed immediately by the
-     * modules that cause them (F1 has none). */
+    /* §2.9: 5 s heartbeat full frame with real arrangement identity;
+     * changes are pushed immediately by the modules that cause them. */
     uint8_t frame[MLPROTO_STATE_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK, 0, 0,
+        mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK,
+                            ml_store_version(), ml_store_crc32(),
                             ML_BRIGHTNESS_LIMIT_DEFAULT, 0, 0x00, 0, 0);
         ble_notify_state(frame);
+    }
+}
+
+void store_task(void *arg)
+{
+    /* 2 s NVS debounce: check 10× per debounce period. */
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        ml_store_tick((uint32_t)(esp_timer_get_time() / 1000));
     }
 }

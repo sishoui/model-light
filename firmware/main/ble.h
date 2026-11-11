@@ -22,6 +22,10 @@ uint32_t ble_device_id(void);
  * of connections notified. Used by the 5 s heartbeat (§2.9). */
 int ble_notify_state(const uint8_t frame[12]);
 
+/* ACK/NAK (or later OTA event) notify on ...0003 to all subscribed
+ * connections; returns the number of connections notified. */
+int ble_notify_seqblock(const uint8_t *frame, uint16_t len);
+
 /* Device info characteristic payload (rebuilds on demand). */
 void ble_build_device_info(uint8_t out[10]);
 
