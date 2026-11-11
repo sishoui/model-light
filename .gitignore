@@ -4,3 +4,6 @@ dist/
 *.log
 
 build/
+
+# server-only: rebinding caddy ports when host 80/443 are taken (docs/deploy.md)
+docker-compose.override.yml

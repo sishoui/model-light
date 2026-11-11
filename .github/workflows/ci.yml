@@ -22,6 +22,24 @@ jobs:
       - name: Miniprogram libs (node:test)
         run: npm run test:mini
 
+  bootstrap-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --workspaces --include-workspace-root
+      - name: Prisma generate (client types)
+        run: npx prisma generate --schema api/prisma/schema.prisma
+      - name: Build api
+        run: npm run build --workspace api
+      - name: DI bootstrap smoke (real Nest container)
+        env:
+          DATABASE_URL: mysql://smoke:smoke@127.0.0.1:1/smoke
+        run: BOOTSTRAP_ONLY=1 node api/dist/main.js
+
   firmware-host-tests:
     runs-on: ubuntu-latest
     steps:

@@ -6,7 +6,21 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 API_TAG="${API_TAG:-latest}"
-HEALTH_URL="${HEALTH_URL:-https://api.example.com/v1/health}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8082/v1/health}"
+
+echo "== 0. ensure db up (idempotent; first deploy has no db yet) =="
+docker compose up -d db
+for i in $(seq 1 30); do
+  if docker compose exec -T db mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; then
+    echo "db healthy"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "db did not become healthy" >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 echo "== 1. mysqldump snapshot =="
 ./deploy/backup.sh
