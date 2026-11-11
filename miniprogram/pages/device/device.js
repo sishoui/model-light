@@ -104,6 +104,8 @@ Page({
         protoLabel: `v${info.protoMajor}.${info.protoMinor}`,
         readOnly,
       });
+      // stage 编辑页据此禁用固件缺位的灯效（§2.8 能力位图）
+      try { wx.setStorageSync(`capabilities:${this._deviceName}`, info.capabilities); } catch (e) { /* 缓存失败不阻塞 */ }
       // §2.1：chunkSize 每次连接现算
       const sys = wx.getSystemInfoSync();
       const { chunkSize } = await this.ble.negotiateChunkSize(sys.platform);

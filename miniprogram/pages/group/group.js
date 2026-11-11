@@ -4,6 +4,7 @@
 
 const { getPixelStates, addRange, removeRange, setRangeReverse } = require('../../lib/pin-editor');
 const { createArrangementStore } = require('../../lib/arrangement-store');
+const { listStages, groupTotalMs } = require('../../lib/stage-editor');
 
 const store = createArrangementStore(wx);
 
@@ -15,6 +16,8 @@ Page({
     pixels: [],       // { index, mine, occupied, selectable, css }
     ranges: [],       // { index, label, reverse }
     selectingStart: null,
+    stages: [],
+    totalLabel: '0 ms',
     errorMessage: '',
     savedMessage: '',
   },
@@ -40,8 +43,11 @@ Page({
         && s.selectable ? 'draft' : '',
     }));
     const g = arr.pins[this.data.pinIndex].groups[this.data.groupIndex];
+    const stages = g ? listStages(g) : [];
     this.setData({
       pixels,
+      stages,
+      totalLabel: `${g ? groupTotalMs(g) : 0} ms`,
       ranges: (g ? g.ranges : []).map((r, i) => ({
         index: i,
         label: `[${r.start}, ${r.end})`,
@@ -93,5 +99,11 @@ Page({
     setRangeReverse(arr, this.data.pinIndex, this.data.groupIndex, range, value);
     store.save(this.deviceName, arr);
     this.reload();
+  },
+
+  openStagePage() {
+    wx.navigateTo({
+      url: `../stage/stage?name=${encodeURIComponent(this.deviceName)}&pin=${this.data.pinIndex}&group=${this.data.groupIndex}`,
+    });
   },
 });
