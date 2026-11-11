@@ -7,7 +7,11 @@
 
 const { putBackup, getBackup } = require('./cloud-backup');
 
-const DEFAULT_BASE_URL = 'https://api.model-light.example.com'; // 部署后替换为已备案域名
+// 联调后端（ICP 未备案，caddy HTTP 入口 8082）。备案后换正式域名。
+// 可用构建期全局 BASE_URL 覆盖（project.config.json 定义 / 开发者工具「编译模式-自定义编译条件」注入）。
+const DEFAULT_BASE_URL = typeof BASE_URL !== 'undefined' && BASE_URL
+  ? BASE_URL
+  : 'http://117.72.163.247:8082';
 
 /**
  * @param {object} deps { wxApi, auth, baseUrl }
