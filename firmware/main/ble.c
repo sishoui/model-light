@@ -15,6 +15,7 @@
 #include "mlarr.h"
 #include "store.h"
 #include "mltoken.h"
+#include "mlrt.h"
 #include "frame_task.h"
 #include "app_config.h"
 
@@ -185,8 +186,10 @@ static int chr_command_access(uint16_t conn, uint16_t attr,
     return 0;
 }
 
-/* ...0002 realtime channel: token-gated (§2.4 — reject 0x01). The realtime
- * parameter engine itself lands in F6; this ticket enforces the gate. */
+/* ...0002 realtime channel: token-gated (§2.4 — reject 0x01). Payload is
+ * one leaf-parameter frame (7..9 B, never fragmented); it feeds the mlrt
+ * engine which patches the live render copy. Addressing misses are silent
+ * (§2.3); non-token writers get the status-frame error path. */
 static int chr_realtime_access(uint16_t conn, uint16_t attr,
                                struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -195,6 +198,13 @@ static int chr_realtime_access(uint16_t conn, uint16_t attr,
         ble_raise_error(MLT_ERR_NOT_TOKEN);
         return 0; /* writeNoResponse has no ATT error path; error goes via
                      the status frame (§2.9). */
+    }
+    uint8_t frame[16];
+    uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
+    if (len >= 7) {
+        frame_realtime_packet(frame, len);
+        /* mode 0→1 must be visible to the phone right away (§2.9). */
+        ble_push_status();
     }
     return 0;
 }

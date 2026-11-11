@@ -13,3 +13,7 @@ target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 # Control-token state machine (F5, host-compilable, no ESP-IDF).
 target_sources(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mltoken/mltoken.c")
 target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mltoken/include")
+
+# Realtime parameter channel (F6, host-compilable, no ESP-IDF).
+target_sources(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mlrt/mlrt.c")
+target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mlrt/include")
