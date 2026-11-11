@@ -13,6 +13,10 @@
 #include "ble_adv.h"
 #include "mlproto.h"
 #include "mlarr.h"
+
+/* §2.2 seqblock write frame cap: ATT_MTU-3 ceiling 512, clamped to the
+ * arrangement transfer's own 255 B frame limit (cmd + seq + 252 B chunk). */
+#define SEQ_WRITE_FRAME_MAX 259
 #include "store.h"
 #include "mltoken.h"
 #include "mlrt.h"
@@ -35,7 +39,7 @@
 #include "host/ble_gap.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
-#include "services/deviceinfo/ble_svc_dis.h"
+#include "services/dis/ble_svc_dis.h"
 
 static const char *TAG = "ble";
 
@@ -183,7 +187,9 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
         ble_raise_error(MLOTA_ERR_BUSY);
         return 0;
     }
-    uint8_t frame[MLARR_ARR_MAX_BYTES + 3 > 512 ? 512 : 259];
+    /* §2.2 frame cap: cmd(1)+seq(2)+payload — ATT 写上限 512，编排分片
+     * 有效载荷上限 259（255 帧 − 3 头部，MLARR_CHUNK_MAX 内取整）。 */
+    uint8_t frame[SEQ_WRITE_FRAME_MAX];
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
     if (s_rx != NULL) {
         mlarr_rx_on_frame(s_rx, frame, len,
@@ -192,9 +198,6 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
     }
     return 0;
 }
-
-/* Pull the whole frame out of the mbuf chain. */
-static uint16_t om_flat(struct os_mbuf *om, uint8_t *out, uint16_t cap);
 
 static void build_status_frame(uint8_t frame[MLPROTO_STATE_LEN], uint16_t conn);
 int ble_ota_progress_changed(void);
