@@ -35,6 +35,7 @@
 #include "host/ble_gap.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
+#include "services/deviceinfo/ble_svc_dis.h"
 
 static const char *TAG = "ble";
 
@@ -347,6 +348,13 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
     { 0 },
 };
 
+/* ---- Device Information Service (0x180A, §2.1: 设备信息镜像到标准 DIS，
+ * 供非小程序调试工具读) ---- */
+static const char *DIS_MANUFACTURER = "model-light";
+static const char *DIS_MODEL = "ML-ESP32C3";
+/* Firmware/software revision mirrors ML_FW_MAJOR.MINOR from app_config.h. */
+static char s_dis_firmware_rev[8];
+
 /* ---- GAP events ---- */
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
@@ -516,6 +524,14 @@ int ble_start(void)
         return rc;
     }
     ble_svc_gap_init();
+    /* §2.1: standard DIS 0x180A — manufacturer / model / firmware revision
+     * mirror the vendor ...0005 device info for desktop BLE tools. */
+    ble_svc_dis_init();
+    ble_svc_dis_manufacturer_name_set(DIS_MANUFACTURER);
+    ble_svc_dis_model_number_set(DIS_MODEL);
+    snprintf(s_dis_firmware_rev, sizeof s_dis_firmware_rev, "%u.%u",
+             (unsigned)ML_FW_MAJOR, (unsigned)ML_FW_MINOR);
+    ble_svc_dis_firmware_revision_set(s_dis_firmware_rev);
 
     nimble_port_freertos_init(host_task);
     return 0;

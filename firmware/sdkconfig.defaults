@@ -10,6 +10,13 @@ CONFIG_BT_NIMBLE_MAX_CONNECTIONS=4
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 
+# Standard Device Information Service (0x180A, §2.1) — NimBLE DIS
+# is compiled out unless this Kconfig is set, and each characteristic
+# needs its own enable (maps to BLE_SVC_DIS_*_READ_PERM).
+CONFIG_BT_NIMBLE_DIS_SERVICE=y
+CONFIG_BT_NIMBLE_SVC_DIS_MANUFACTURER_NAME=y
+CONFIG_BT_NIMBLE_SVC_DIS_FIRMWARE_REVISION=y
+
 # FreeRTOS tick 100 Hz → 25 ms budget per frame at 40 FPS (§2.10 帧时钟).
 CONFIG_FREERTOS_HZ=1000
 
