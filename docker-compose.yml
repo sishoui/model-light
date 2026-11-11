@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: mysql:8.4
@@ -7,24 +5,39 @@ services:
     environment:
       MYSQL_DATABASE: modellight
       MYSQL_USER: ml
-      MYSQL_PASSWORD: ${DB_PASSWORD:-mlpassword}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
     volumes: [dbdata:/var/lib/mysql]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "7" } }
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
       interval: 10s
       retries: 6
+    restart: unless-stopped
 
   api:
     build: .
+    image: model-light-api:latest
     environment:
-      DATABASE_URL: mysql://ml:${DB_PASSWORD:-mlpassword}@db:3306/modellight
-      WX_APPID: ${WX_APPID:-}
-      WX_SECRET: ${WX_SECRET:-}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret}
+      DATABASE_URL: mysql://ml:${DB_PASSWORD}@db:3306/modellight
+      WX_APPID: ${WX_APPID}
+      WX_SECRET: ${WX_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
       PORT: "8080"
     depends_on:
       db: { condition: service_healthy }
-    ports: ["8080:8080"]
+    expose: ["8080"]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "7" } }
+    restart: unless-stopped
 
-volumes: { dbdata: {} }
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    depends_on: [api]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "7" } }
+    restart: unless-stopped
+
+volumes: { dbdata: {}, caddydata: {} }
