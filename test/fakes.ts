@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { WxGateway } from '../src/auth/auth.service';
+import { crc32 } from '../src/devices/devices.service';
 
 export interface FakeUser {
   id: bigint;
@@ -79,10 +80,40 @@ export interface FakeDevice {
   hasBackup: boolean;
 }
 
+export interface FakeBackupRow {
+  mlId: string;
+  arrangement: Buffer;
+  arrangementCrc32: number;
+  arrangementLen: number;
+  lastGood: Buffer | null;
+  lastGoodRev: number | null;
+  updatedAt: Date;
+}
+
 export function fakeDeviceStore() {
   const devices: FakeDevice[] = [];
+  const backups = new Map<string, FakeBackupRow>();
   return {
     devices,
+    backups,
+    rateLimiter() {
+      const hits = new Map<string, { count: number; resetAt: number }>();
+      return {
+        consume(key: string, limit: number, windowMs: number): { allowed: boolean; retryAfterSeconds: number } {
+          const now = Date.now();
+          const hit = hits.get(key);
+          if (!hit || hit.resetAt <= now) {
+            hits.set(key, { count: 1, resetAt: now + windowMs });
+            return { allowed: true, retryAfterSeconds: 0 };
+          }
+          if (hit.count < limit) {
+            hit.count += 1;
+            return { allowed: true, retryAfterSeconds: 0 };
+          }
+          return { allowed: false, retryAfterSeconds: Math.ceil((hit.resetAt - now) / 1000) };
+        },
+      };
+    },
     async listDevices(
       userId: bigint,
       cursor: { pushedAt: Date; mlId: string } | null,
@@ -110,6 +141,70 @@ export function fakeDeviceStore() {
     async findDevice(mlId: string): Promise<FakeDevice | null> {
       return devices.find((d) => d.mlId === mlId) ?? null;
     },
+    async findBackup(mlId: string): Promise<FakeBackupRow | null> {
+      return backups.get(mlId) ?? null;
+    },
+    async putBackup(
+      mlId: string,
+      arrangement: Buffer,
+      crc32: number,
+      pushedBy: bigint,
+      fwVersion: string | null,
+      payloadVersion: number,
+      now: Date,
+    ): Promise<{ rev: number; pushedAt: Date; previousRev: number }> {
+      let d = devices.find((x) => x.mlId === mlId);
+      if (!d) {
+        d = {
+          mlId,
+          displayName: null,
+          fwVersion,
+          payloadVersion,
+          pinsJson: null,
+          previewJson: null,
+          rev: 0,
+          lastPushedBy: pushedBy,
+          pushedAt: now,
+          createdAt: now,
+          hasBackup: true,
+        };
+        devices.push(d);
+      }
+      const previousRev = d.rev;
+      const prev = backups.get(mlId);
+      d.rev = previousRev + 1;
+      d.fwVersion = fwVersion;
+      d.payloadVersion = payloadVersion;
+      d.lastPushedBy = pushedBy;
+      d.pushedAt = now;
+      d.hasBackup = true;
+      backups.set(mlId, {
+        mlId,
+        arrangement,
+        arrangementCrc32: crc32,
+        arrangementLen: arrangement.length,
+        lastGood: prev ? Buffer.from(prev.arrangement) : null,
+        lastGoodRev: prev ? previousRev : null,
+        updatedAt: now,
+      });
+      return { rev: d.rev, pushedAt: now, previousRev };
+    },
+    async restoreLastGood(mlId: string, now: Date): Promise<{ rev: number; pushedAt: Date; previousRev: number }> {
+      const row = backups.get(mlId);
+      if (!row || row.lastGood === null || row.lastGoodRev === null) throw new Error('NOT_FOUND');
+      const d = devices.find((x) => x.mlId === mlId)!;
+      const previousRev = d.rev;
+      const currentArrangement = Buffer.from(row.arrangement);
+      row.arrangement = Buffer.from(row.lastGood);
+      row.arrangementCrc32 = crc32(row.arrangement);
+      row.arrangementLen = row.arrangement.length;
+      row.lastGood = currentArrangement;
+      row.lastGoodRev = previousRev;
+      row.updatedAt = now;
+      d.rev = previousRev + 1;
+      d.pushedAt = now;
+      return { rev: d.rev, pushedAt: now, previousRev };
+    },
     async updateMeta(mlId: string, meta: {
       displayName: string | null;
       fwVersion: string | null;
@@ -129,6 +224,7 @@ export function fakeDeviceStore() {
     async deleteDevice(mlId: string): Promise<void> {
       const i = devices.findIndex((d) => d.mlId === mlId);
       if (i !== -1) devices.splice(i, 1);
+      backups.delete(mlId);
     },
   };
 }

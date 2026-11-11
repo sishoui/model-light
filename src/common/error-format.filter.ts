@@ -45,9 +45,14 @@ export class ErrorFormatFilter implements ExceptionFilter {
       // Domain errors thrown as AuthError with a spec code.
       const mapped = HTTP_BY_CODE[exception.message];
       if (mapped) {
-        status = mapped;
+        const domainStatus = (exception as { status?: number }).status;
+        status = domainStatus && domainStatus !== mapped ? domainStatus : mapped;
         code = exception.message;
         message = code === 'AUTH_INVALID' ? 'invalid or expired token' : code;
+      }
+      const retryAfter = (exception as { retryAfterSeconds?: number }).retryAfterSeconds;
+      if (code === 'RATE_LIMITED' && typeof retryAfter === 'number' && retryAfter > 0) {
+        res.header('Retry-After', String(Math.max(1, Math.ceil(retryAfter))));
       }
     }
 
