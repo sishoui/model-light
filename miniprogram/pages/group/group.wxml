@@ -40,5 +40,6 @@
     </view>
     <view wx:if="{{stages.length === 0}}" class="empty">灯组还没有阶段，去阶段页加一个</view>
     <button class="stages-btn" bindtap="openStagePage">编辑阶段与灯效</button>
+    <button class="stages-btn preview-btn" bindtap="openPreview">3D 灯板预览</button>
   </view>
 </view>
