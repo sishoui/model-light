@@ -88,6 +88,8 @@ Page({
       getApp().rememberDevice(this._deviceName, this.deviceId);
       this.reloadPins();
       await this.probeDeviceCapabilities();
+      this.maybeAutoPushBackup(); // M7：连上即自动上推（不阻塞 BLE）
+      this.maybeEmptyDeviceHint(); // M7：空编排提示（仅提示一次）
     } catch (e) {
       this.scheduleReconnect();
     }
@@ -98,6 +100,8 @@ Page({
     try {
       const info = await this.ble.readDeviceInfo();
       if (!info) return;
+      // M7：fwVersion 来自 0005 固件版本字段；当前 parseDeviceInfo 未暴露（协议布局分歧未定），
+      // 暂缺时 restore/autoPush 传 null → 服务端 stale 恒 false，恢复提示不受影响。
       const local = { major: TEST_PROTO_MAJOR, minor: TEST_PROTO_MINOR };
       const readOnly = isReadOnlyProtocol(local, info);
       this.setData({
@@ -213,6 +217,111 @@ Page({
       this._senderActive = false;
       this.setData({ transferring: false });
     }
+  },
+
+  // ===== M7 云端同步（spec-backend.md §8）=====
+  // 硬规则：备份失败永不阻塞编辑与 BLE 写入——所有方法 catch 一切，只改提示文案。
+
+  /** 设备固件版本字符串（0005 附加字段）；读不到返回 null */
+  deviceFirmwareVersion() {
+    return this._fwVersion || null;
+  },
+
+  /** 连上设备（令牌握手完成）且已登录 → 自动 PUT backup，带状态帧版本与 CRC32 */
+  maybeAutoPushBackup() {
+    const app = getApp();
+    if (!app || !app.cloudSync || !app.cloudAuth.isLoggedIn()) return;
+    try {
+      const arr = this.store.loadOrCreate(this._deviceName);
+      const payloadBytes = new Uint8Array(encode(arr));
+      const frame = this._lastStatusFrame;
+      app.cloudSync.autoPush({
+        mlId: this._deviceName,
+        bytes: payloadBytes,
+        crc32Value: crc32(payloadBytes),
+        payloadVersion: 1,
+        fwVersion: this.deviceFirmwareVersion(),
+        baseRev: frame ? frame.arrangementVersion : 0,
+      }).then((r) => {
+        if (r && r.behindHint) this.setData({ transferMessage: r.behindHint });
+        // 其余失败静默：不阻塞、不打断编辑（§8）
+      }).catch(() => { /* 静默 */ });
+    } catch (e) { /* 编排不完整等：静默，不影响连接 */ }
+  },
+
+  /** 首连时设备编排为空而云端有备份：不自动拉，只提示一次 */
+  maybeEmptyDeviceHint() {
+    const app = getApp();
+    if (!app || !app.cloudSync) return;
+    try {
+      const arr = this.store.load(this._deviceName);
+      const empty = !arr || !arr.pins || arr.pins.every((p) => !p.groups || p.groups.length === 0);
+      if (!empty) return;
+      // 「不自动拉」硬规则：空编排只提示一次，是否真有备份由恢复按钮确认
+      if (!app.cloudAuth.isLoggedIn()) return;
+      const storageKey = `cloudSync:hinted:${this._deviceName}`;
+      if (wx.getStorageSync(storageKey)) return;
+      wx.setStorageSync(storageKey, true);
+      this.setData({ transferMessage: '设备编排为空，若云端有备份可在下方点「从云端恢复」' });
+    } catch (e) { /* 静默 */ }
+  },
+
+  /** 详情页「从云端恢复」：GET backup?fwVersion=<设备固件>，确认后写回设备 */
+  restoreFromCloud() {
+    const app = getApp();
+    if (!app || !app.cloudSync || !app.cloudAuth.isLoggedIn()) {
+      this.setData({ transferMessage: '未登录云端，无法恢复（本地功能不受影响）' });
+      return;
+    }
+    if (this._senderActive || !this._chunkSize) return;
+    app.cloudSync.restore({
+      mlId: this._deviceName,
+      fwVersion: this.deviceFirmwareVersion(),
+      statusFrame: this._lastStatusFrame,
+      confirmedStale: this._staleConfirmed || false,
+      restoreToDevice: async (bytes) => this.writeBytesToDevice(bytes),
+    }).then((r) => {
+      if (r.ok && r.restored) {
+        this._staleConfirmed = false;
+        this.setData({ transferMessage: '已从云端恢复编排到设备' });
+      } else if (r.ok && r.skipped === 'same-crc') {
+        this.setData({ transferMessage: '设备上已是云端这份编排，无需恢复' });
+      } else if (r.reason === 'stale-needs-confirm') {
+        this._staleConfirmed = true;
+        wx.showModal({
+          title: '固件版本不同',
+          content: `备份来自 ${r.backupFwVersion}，你设备是 ${r.deviceFwVersion}，恢复可能丢新灯效。继续恢复？`,
+          success: (res) => { if (res.confirm) this.restoreFromCloud(); else this._staleConfirmed = false; },
+        });
+      } else if (r.reason === 'no-backup') {
+        this.setData({ transferMessage: '云端没有这台设备的备份' });
+      } else if (r.reason === 'unauthorized') {
+        this.setData({ transferMessage: '登录态失效，已转仅本地模式' });
+      } else if (r.reason === 'restore-failed') {
+        this.setData({ transferMessage: '写回设备失败，设备编排未变' });
+      } else if (r.reason === 'network' || (r.reason && r.reason.startsWith('http-'))) {
+        this.setData({ transferMessage: '网络异常，拉取备份失败' });
+      }
+    }).catch(() => { /* 静默：备份失败不阻塞 */ });
+  },
+
+  /** 把云端 TLV 字节经 M2 分片通道写回设备（编排写通道） */
+  async writeBytesToDevice(payloadBytes) {
+    const frame = this._lastStatusFrame;
+    const version = frame ? (frame.arrangementVersion + 1) & 0xffff : 1;
+    const sender = createArrangementSender(this.ble, { chunkSize: this._chunkSize });
+    const result = await sender.send({
+      payloadVersion: 1,
+      protoMajor: TEST_PROTO_MAJOR,
+      protoMinor: TEST_PROTO_MINOR,
+      data: payloadBytes,
+    });
+    if (!result.ok) {
+      const err = new Error(result.reason);
+      err.reason = result.reason;
+      throw err; // restore() 统一转 restore-failed
+    }
+    this.setData({ pushVersion: version });
   },
 
   /** §2.5：退避 1/2/4/8 s 封顶，无限重试 */
