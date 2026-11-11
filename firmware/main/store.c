@@ -34,7 +34,10 @@ int ml_store_init(void)
         nvs_close(h);
         if (err == ESP_OK && len >= 4 &&
             mlarr_validate(s_buf, (uint16_t)len) == MLARR_OK) {
-            ml_arrangement_t a;
+            /* ml_arrangement_t is ~13 KB (pins×groups×stages×layers fully
+             * expanded) — on the stack it overflows the main task even at
+             * 8 KB. Init runs once at boot, single-threaded: static is safe. */
+            static ml_arrangement_t a;
             if (mlarr_parse(s_buf, (uint16_t)len, &a) == MLARR_OK) {
                 s_len = (uint16_t)len;
                 s_version = a.version;

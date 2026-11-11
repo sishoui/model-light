@@ -32,10 +32,10 @@ static const uint8_t default_arrangement[] = {
     30,               /* length */
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* name */
     0x01,             /* groupCount 1 */
-    /* group 0 */
+    /* group 0: rangeCount then stageCount are adjacent (mlarr wire format) */
     0x01,             /* rangeCount 1 */
-    0x00, 30, 0x00,   /* range [0,30) forward */
     0x02,             /* stageCount 2 */
+    0x00, 30, 0x00,   /* range [0,30) forward */
     /* stage 0: 1000 ms, no fade, 1 layer */
     0xE8, 0x03,       /* durationMs 1000 */
     0x00, 0x01,       /* fadeInMs 0, layerCount 1 */
