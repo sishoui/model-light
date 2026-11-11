@@ -48,6 +48,9 @@ export function fakeStore() {
     async findRefreshTokenByHash(hash: string) {
       return tokens.find((t) => t.tokenHash === hash) ?? null;
     },
+    async findActiveRefreshToken(userId: bigint) {
+      return tokens.filter((t) => t.userId === userId && !t.revokedAt).slice(-1)[0] ?? null;
+    },
     async createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date) {
       tokens.push({ id: tokenId++, userId, tokenHash, expiresAt, revokedAt: null });
     },

@@ -24,12 +24,18 @@ describe('backup endpoints (B3)', () => {
   async function login(openid: string): Promise<{ token: string; userId: bigint }> {
     const code = `code-${openid}-${randomUUID()}`;
     wx.codes.set(code, openid);
-    const res = await request(app.getHttpServer()).post('/v1/auth/login').send({ code });
+    // §7 login 10/min per IP：每个用例用独立 IP，避免用例间登录预算互相挤占
+    loginIpCounter += 1;
+    const res = await request(app.getHttpServer())
+      .post('/v1/auth/login')
+      .set('x-forwarded-for', `10.99.${Math.floor(loginIpCounter / 250)}.${loginIpCounter % 250}`)
+      .send({ code });
     const token = res.body.accessToken as string;
     const jwt = await import('jsonwebtoken');
     const payload = jwt.decode(token) as { sub: string };
     return { token, userId: BigInt(payload.sub) };
   }
+  let loginIpCounter = 0;
 
   beforeAll(async () => {
     const devStore = fakeDeviceStore();

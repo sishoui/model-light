@@ -1,10 +1,11 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RateLimitGuard } from '../auth/rate-limit.guard';
 import { BackupBody, DevicesService, DeviceMetaBody } from './devices.service';
 
 @Controller('v1/devices')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RateLimitGuard)
 export class DevicesController {
   constructor(private readonly devices: DevicesService) {}
 

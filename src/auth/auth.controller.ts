@@ -2,13 +2,16 @@ import { Body, Controller, Get, HttpCode, Patch, Post, Req, UseGuards } from '@n
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { RateLimit, RateLimitGuard } from './rate-limit.guard';
 
 @Controller('v1/auth')
+@UseGuards(RateLimitGuard)
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('login')
   @HttpCode(200)
+  @RateLimit('login')
   async login(@Body() body: { code?: string }) {
     const { tokens, user } = await this.auth.login(requireCode(body));
     return { ...tokens, user };
@@ -16,19 +19,22 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(200)
+  @RateLimit('refresh')
   async refresh(@Body() body: { refreshToken?: string }) {
     return this.auth.refresh(requireRefreshToken(body));
   }
 
   @Post('logout')
   @HttpCode(204)
-  async logout(@Body() body: { refreshToken?: string }) {
-    await this.auth.logout(requireRefreshToken(body));
+  @UseGuards(JwtAuthGuard)
+  async logout(@Req() req: Request) {
+    // §5#3：认证走 access token，撤销当前 refresh（body 不再传 refreshToken）
+    await this.auth.logout(req.user!.userId);
   }
 }
 
 @Controller('v1/me')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RateLimitGuard)
 export class MeController {
   constructor(private readonly auth: AuthService) {}
 

@@ -45,6 +45,8 @@ export interface AuthStore {
   createUser(openid: string, now: Date): Promise<UserRow>;
   touchLogin(userId: bigint, now: Date): Promise<void>;
   findRefreshTokenByHash(hash: string): Promise<RefreshTokenRow | null>;
+  /** §5#3 logout: the user's latest unrevoked refresh token (may be null). */
+  findActiveRefreshToken(userId: bigint): Promise<RefreshTokenRow | null>;
   createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date): Promise<void>;
   revokeRefreshToken(id: bigint, now: Date): Promise<void>;
   findUserById(id: bigint): Promise<UserRow | null>;
@@ -89,9 +91,14 @@ export class AuthService {
     return this.issueTokens(row.userId, now);
   }
 
-  async logout(refreshToken: string, now = new Date()): Promise<void> {
-    const row = await this.store.findRefreshTokenByHash(hashToken(refreshToken));
-    if (row && !row.revokedAt) {
+  /**
+   * §5#3: logout revokes the caller's current (latest unrevoked) refresh
+   * token. Authentication already happened via the access token in the
+   * guard, so the body carries nothing.
+   */
+  async logout(userId: bigint, now = new Date()): Promise<void> {
+    const row = await this.store.findActiveRefreshToken(userId);
+    if (row) {
       await this.store.revokeRefreshToken(row.id, now);
     }
   }

@@ -58,6 +58,9 @@ function fakeStore() {
     async findRefreshTokenByHash(hash: string) {
       return tokens.find((t) => t.tokenHash === hash) ?? null;
     },
+    async findActiveRefreshToken(userId: bigint) {
+      return tokens.filter((t) => t.userId === userId && !t.revokedAt).slice(-1)[0] ?? null;
+    },
     async createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date) {
       tokens.push({ id: tokenId++, userId, tokenHash, expiresAt, revokedAt: null });
     },
@@ -218,11 +221,13 @@ describe('POST /v1/auth/refresh', () => {
 });
 
 describe('POST /v1/auth/logout', () => {
-  it('revokes the current refresh token', async () => {
+  it('authenticates via access token and revokes the current refresh token (spec §5#3)', async () => {
     const body = await login('o-out');
+    // §5#3：认证走 access token，撤销当前 refresh——不再 body 传 refreshToken
     const res = await request(harness.app.getHttpServer())
       .post('/v1/auth/logout')
-      .send({ refreshToken: body.refreshToken });
+      .set('Authorization', `Bearer ${body.accessToken}`)
+      .send({});
     expect(res.status).toBe(204);
     const { createHash } = await import('node:crypto');
     const hash = createHash('sha256').update(body.refreshToken).digest('hex');
@@ -231,6 +236,14 @@ describe('POST /v1/auth/logout', () => {
       .post('/v1/auth/refresh')
       .send({ refreshToken: body.refreshToken })
       .expect(401);
+  });
+
+  it('requires a valid access token (401 without one)', async () => {
+    const res = await request(harness.app.getHttpServer())
+      .post('/v1/auth/logout')
+      .send({});
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('AUTH_INVALID');
   });
 });
 
@@ -280,6 +293,86 @@ describe('PATCH /v1/me', () => {
       nickname: '灯友',
       avatarUrl: 'https://example.com/a.png',
     });
+  });
+});
+
+describe('rate limiting (spec-backend §7)', () => {
+  // 限流测试用独立 app + 独立计数器，避免污染其他用例的共享登录预算
+  let rlHarness: typeof harness;
+
+  beforeAll(async () => {
+    rlHarness = await buildApp();
+    const { app } = rlHarness;
+    const { RequestIdMiddleware } = await import('../src/common/request-id.middleware');
+    app.use((req: unknown, res: unknown, next: () => void) =>
+      (Object.create(RequestIdMiddleware.prototype) as any).use.call({ logger: { log: jest.fn() } }, req, res, next),
+    );
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await rlHarness.app.close();
+  });
+
+  function rlLogin(openid: string) {
+    const code = `code-${openid}-${randomUUID()}`;
+    rlHarness.wx.codes.set(code, openid);
+    return code;
+  }
+
+  it('login is limited to 10 requests/min per IP with 429 RATE_LIMITED + Retry-After', async () => {
+    for (let i = 0; i < 10; i++) {
+      const res = await request(rlHarness.app.getHttpServer())
+        .post('/v1/auth/login')
+        .set('x-forwarded-for', `10.0.0.1`)
+        .send({ code: rlLogin(`o-rl-login-${i}`) });
+      expect(res.status).toBe(200);
+    }
+    const over = await request(rlHarness.app.getHttpServer())
+      .post('/v1/auth/login')
+      .set('x-forwarded-for', '10.0.0.1')
+      .send({ code: rlLogin('o-rl-login-over') });
+    expect(over.status).toBe(429);
+    expect(over.body.error.code).toBe('RATE_LIMITED');
+    expect(Number(over.headers['retry-after'])).toBeGreaterThan(0);
+    // 另一个 IP 不受影响
+    const otherIp = await request(rlHarness.app.getHttpServer())
+      .post('/v1/auth/login')
+      .set('x-forwarded-for', '10.0.0.2')
+      .send({ code: rlLogin('o-rl-login-ip2') });
+    expect(otherIp.status).toBe(200);
+  });
+
+  it('refresh is limited to 20 requests/min per token family (caller IP)', async () => {
+    const loginRes = await request(rlHarness.app.getHttpServer())
+      .post('/v1/auth/login')
+      .send({ code: rlLogin('o-rl-refresh') });
+    let last = loginRes.body;
+    for (let i = 0; i < 20; i++) {
+      const res = await request(rlHarness.app.getHttpServer())
+        .post('/v1/auth/refresh')
+        .send({ refreshToken: last.refreshToken });
+      expect(res.status).toBe(200);
+      last = res.body;
+    }
+    const over = await request(rlHarness.app.getHttpServer())
+      .post('/v1/auth/refresh')
+      .send({ refreshToken: last.refreshToken });
+    expect(over.status).toBe(429);
+    expect(over.body.error.code).toBe('RATE_LIMITED');
+  });
+
+  it('other authed endpoints are limited to 120 requests/min per userId', async () => {    const loginRes = await request(rlHarness.app.getHttpServer())
+      .post('/v1/auth/login')
+      .send({ code: rlLogin('o-rl-me') });
+    const headers = { Authorization: `Bearer ${loginRes.body.accessToken}` };
+    for (let i = 0; i < 120; i++) {
+      const res = await request(rlHarness.app.getHttpServer()).get('/v1/me').set(headers);
+      expect(res.status).toBe(200);
+    }
+    const over = await request(rlHarness.app.getHttpServer()).get('/v1/me').set(headers);
+    expect(over.status).toBe(429);
+    expect(over.body.error.code).toBe('RATE_LIMITED');
   });
 });
 
