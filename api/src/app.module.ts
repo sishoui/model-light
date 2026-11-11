@@ -11,6 +11,7 @@ import { PrismaAuthStore } from './prisma/prisma-auth.store';
 import { PrismaDeviceStore } from './prisma/prisma-device.store';
 import { PrismaBackupStore } from './prisma/prisma-backup.store';
 import { PrismaService } from './prisma/prisma.service';
+import { HealthController } from './health/health.controller';
 import { WxHttpGateway } from './wx/wx-http.gateway';
 
 /** In-memory fixed-window rate limiter (per process; single-node deployment per spec §10). */
@@ -32,7 +33,7 @@ class MemoryRateLimiter {
 }
 
 @Module({
-  controllers: [AuthController, MeController, DevicesController],
+  controllers: [AuthController, MeController, DevicesController, HealthController],
   providers: [
     AuthService,
     DevicesService,
