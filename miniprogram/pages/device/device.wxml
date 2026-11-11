@@ -1,0 +1,24 @@
+<view class="page">
+  <view class="topbar">
+    <view class="row">
+      <text class="name">{{name}}</text>
+      <view class="badge {{connected ? 'ok' : (reconnecting ? 'warn' : 'bad')}}">
+        {{connected ? '已连接' : (reconnecting ? '重连中…' : '未连接')}}
+      </view>
+    </view>
+    <view class="row meta">
+      <text>固件 {{firmwareLabel}}</text>
+      <text>mode: {{modeLabel}}</text>
+      <text wx:if="{{tokenLabel}}">{{tokenLabel}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{errorMessage}}" class="error-bar">{{errorMessage}}</view>
+  <view wx:if="{{visitorMode}}" class="visitor-bar">来访模式：只能改编排，不能工厂重置</view>
+
+  <view class="panel">
+    <view class="stat"><text class="k">限亮</text><text class="v">{{brightnessLimit === null ? '—' : brightnessLimit + '%'}}</text></view>
+    <view class="stat"><text class="k">温度</text><text class="v">{{temperature === null ? '—' : temperature + ' °C'}}</text></view>
+    <view class="stat"><text class="k">状态帧</text><text class="v">{{framesSeen}} 帧</text></view>
+  </view>
+</view>

@@ -1,11 +1,13 @@
 {
-  "name": "model-light-api",
+  "name": "model-light",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "test": "jest",
+    "test": "npm run test:api && npm run test:mini",
+    "test:api": "jest",
+    "test:mini": "node --test \"test/*.test.js\"",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy"
   },
