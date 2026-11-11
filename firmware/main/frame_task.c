@@ -7,6 +7,7 @@
 #include "mlproto.h"
 #include "mlarr.h"
 #include "store.h"
+#include "mltoken.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -50,6 +51,19 @@ static const uint8_t default_arrangement[] = {
 
 static ml_arrangement_t s_arr;
 static int s_have_arr;
+static volatile uint8_t s_run_mode;   /* MLPROTO_MODE_* */
+static uint32_t s_last_realtime_ms;   /* §2.3: realtime idle fallback */
+
+void frame_exit_realtime(void)
+{
+    /* §2.6: BLE 一断立刻退出实时模式回回放，不保留最后一帧。
+     * 实时覆盖走 mlarr 之外的临时表（F6 补齐实时通道），这里清模式即可：
+     * 下一帧就重新按编排渲染（无残影，mlarr_render 每像素都写）。 */
+    s_run_mode = MLPROTO_MODE_PLAYBACK;
+    s_last_realtime_ms = 0;
+}
+
+uint8_t frame_run_mode(void) { return s_run_mode; }
 
 int frame_arrangement_init(void)
 {
@@ -125,13 +139,9 @@ void status_task(void *arg)
 {
     /* §2.9: 5 s heartbeat full frame with real arrangement identity;
      * changes are pushed immediately by the modules that cause them. */
-    uint8_t frame[MLPROTO_STATE_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK,
-                            ml_store_version(), ml_store_crc32(),
-                            ML_BRIGHTNESS_LIMIT_DEFAULT, 0, 0x00, 0, 0);
-        ble_notify_state(frame);
+        ble_push_status();
     }
 }
 
@@ -141,5 +151,8 @@ void store_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(200));
         ml_store_tick((uint32_t)(esp_timer_get_time() / 1000));
+        /* Token deadlines (5 s probe window, 30 s heartbeat death, 60 s
+         * suspend retention, 30 s error hold) fire through this poll. */
+        mlt_poll(ble_token(), (uint32_t)(esp_timer_get_time() / 1000));
     }
 }

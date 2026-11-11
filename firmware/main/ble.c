@@ -14,6 +14,8 @@
 #include "mlproto.h"
 #include "mlarr.h"
 #include "store.h"
+#include "mltoken.h"
+#include "frame_task.h"
 #include "app_config.h"
 
 #include <stdio.h>
@@ -71,6 +73,45 @@ static char     s_adv_name[8];          /* "ML-XXXX" + NUL */
 static uint8_t  s_devinfo[10];
 static uint16_t s_status_attr_val;
 static uint16_t s_seqblock_attr_val;
+static uint16_t s_command_attr_val;
+
+/* Control token state machine (F5, spec §2.5). */
+static mlt_t *s_mlt;
+
+/* ---- token callbacks ---- */
+static void token_send(void *user, uint16_t conn, uint8_t cmd,
+                       const uint8_t *payload, uint8_t len)
+{
+    (void)user;
+    uint8_t f[4] = { cmd, 0, 0, 0 };
+    uint8_t n = 3 + (len < 1 ? 0 : len);
+    if (len) {
+        f[3] = payload[0];
+    }
+    ble_notify_command_to(conn, f, n);
+}
+
+static void token_change(void *user)
+{
+    (void)user;
+    /* §2.9: 变化立即发 — push fresh status frames to everyone. */
+    ble_push_status();
+    ble_update_adv();
+}
+
+/* Pull the whole frame out of the mbuf chain. */
+static uint16_t om_flat(struct os_mbuf *om, uint8_t *out, uint16_t cap)
+{
+    uint16_t len = 0;
+    for (struct os_mbuf *m = om; m != NULL && len < cap;
+         m = SLIST_NEXT(m, om_next)) {
+        uint16_t copy = (uint16_t)(m->om_len < cap - len ? m->om_len
+                                                         : cap - len);
+        memcpy(out + len, m->om_data, copy);
+        len += copy;
+    }
+    return len;
+}
 
 /* Arrangement transfer session (F2): chunked rx on ...0003, ACK/NAK back
  * on the same characteristic's notify. */
@@ -89,6 +130,14 @@ static void xfer_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak,
     ble_notify_seqblock(f, sizeof f);
 }
 
+static void token_reset(void *user)
+{
+    (void)user;
+    ml_store_reset();
+    frame_exit_realtime();
+    ESP_LOGI(TAG, "factory reset executed");
+}
+
 static int xfer_commit(void *user, const uint8_t *buf, uint16_t len,
                        uint16_t version)
 {
@@ -101,16 +150,14 @@ static int xfer_commit(void *user, const uint8_t *buf, uint16_t len,
 static int chr_seqblock_access(uint16_t conn, uint16_t attr,
                                struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    /* writeNoResponse + notify: each write is one frame cmd(1)+seq(2)+payload */
-    struct os_mbuf *om = ctxt->om;
-    uint8_t frame[MLARR_ARR_MAX_BYTES + 3 > 512 ? 512 : 259];
-    uint16_t len = 0;
-    for (struct os_mbuf *m = om; m != NULL && len < sizeof frame; m = SLIST_NEXT(m, om_next)) {
-        uint16_t copy = (uint16_t)(m->om_len < sizeof frame - len ? m->om_len
-                                                                  : sizeof frame - len);
-        memcpy(frame + len, m->om_data, copy);
-        len += copy;
+    /* writeNoResponse + notify: each write is one frame cmd(1)+seq(2)+payload.
+     * §2.4: 非令牌连接的编排写被拒，状态帧报 0x01. */
+    if (!mlt_can_write(s_mlt, conn)) {
+        ble_raise_error(MLT_ERR_NOT_TOKEN);
+        return 0;
     }
+    uint8_t frame[MLARR_ARR_MAX_BYTES + 3 > 512 ? 512 : 259];
+    uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
     if (s_rx != NULL) {
         mlarr_rx_on_frame(s_rx, frame, len,
                           (uint32_t)(esp_timer_get_time() / 1000));
@@ -119,14 +166,50 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
     return 0;
 }
 
+/* Pull the whole frame out of the mbuf chain. */
+static uint16_t om_flat(struct os_mbuf *om, uint8_t *out, uint16_t cap);
+
 /* ---- characteristic accessors ---- */
+
+/* ...0001 command channel: token request/grant/heartbeat, factory reset. */
+static int chr_command_access(uint16_t conn, uint16_t attr,
+                              struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    (void)attr; (void)arg;
+    uint8_t frame[16];
+    uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
+    if (len >= 1) {
+        mlt_on_command(s_mlt, conn, frame, len,
+                       (uint32_t)(esp_timer_get_time() / 1000));
+    }
+    return 0;
+}
+
+/* ...0002 realtime channel: token-gated (§2.4 — reject 0x01). The realtime
+ * parameter engine itself lands in F6; this ticket enforces the gate. */
+static int chr_realtime_access(uint16_t conn, uint16_t attr,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    (void)attr; (void)arg;
+    if (!mlt_can_write(s_mlt, conn)) {
+        ble_raise_error(MLT_ERR_NOT_TOKEN);
+        return 0; /* writeNoResponse has no ATT error path; error goes via
+                     the status frame (§2.9). */
+    }
+    return 0;
+}
+
 static int chr_status_access(uint16_t conn, uint16_t attr,
                              struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     uint8_t frame[MLPROTO_STATE_LEN];
-    mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK,
+    mlproto_state_frame(frame, frame_run_mode(),
                         ml_store_version(), ml_store_crc32(),
-                        ML_BRIGHTNESS_LIMIT_DEFAULT, 0, 0x00, 0, 0);
+                        ML_BRIGHTNESS_LIMIT_DEFAULT,
+                        mlt_perspective(s_mlt, conn),
+                        mlt_error_code(s_mlt,
+                                       (uint32_t)(esp_timer_get_time() / 1000)),
+                        0, ble_flags());
     return os_mbuf_append(ctxt->om, frame, sizeof frame) == 0 ? 0
            : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
@@ -140,25 +223,18 @@ static int chr_devinfo_access(uint16_t conn, uint16_t attr,
            : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
-static int chr_not_yet_access(uint16_t conn, uint16_t attr,
-                              struct ble_gatt_access_ctxt *ctxt, void *arg)
-{
-    /* Write channels are accepted-and-ignored in F1; real handling in later
-     * tickets. Replying 0 means ATT write succeeded. */
-    return 0;
-}
-
 static const struct ble_gatt_svc_def gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = (const ble_uuid_t *)&svc_uuid,
         .characteristics = (struct ble_gatt_chr_def[]) {
             { .uuid = (const ble_uuid_t *)&chr_command_uuid,
-              .access_cb = chr_not_yet_access,
+              .access_cb = chr_command_access,
+              .val_handle = &s_command_attr_val,
               .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP |
                        BLE_GATT_CHR_F_NOTIFY },
             { .uuid = (const ble_uuid_t *)&chr_realtime_uuid,
-              .access_cb = chr_not_yet_access,
+              .access_cb = chr_realtime_access,
               .flags = BLE_GATT_CHR_F_WRITE_NO_RSP },
             { .uuid = (const ble_uuid_t *)&chr_seqblock_uuid,
               .access_cb = chr_seqblock_access,
@@ -204,6 +280,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (s_rx != NULL) {
             mlarr_rx_on_disconnect(s_rx);
         }
+        /* §2.5: 持有者断连 → 令牌挂起 60 s；§2.6: 断连即回放，不保留最后一帧。 */
+        mlt_on_disconnect(s_mlt, event->disconnect.conn.conn_handle,
+                          (uint32_t)(esp_timer_get_time() / 1000));
+        frame_exit_realtime();
+        token_change(NULL);
         ble_advertising_start();
         return 0;
     default:
@@ -304,6 +385,11 @@ int ble_start(void)
     if (ml_store_init() != 0) {
         ESP_LOGE(TAG, "store init failed");
     }
+    s_mlt = mlt_new(token_send, token_change, token_reset, NULL);
+    if (s_mlt == NULL) {
+        ESP_LOGE(TAG, "token state machine alloc failed");
+        return -1;
+    }
     s_rx = mlarr_rx_new(xfer_commit, xfer_send, NULL, MLARR_PROTO_MAJOR);
     if (s_rx == NULL) {
         ESP_LOGE(TAG, "rx state machine alloc failed");
@@ -383,4 +469,51 @@ int ble_notify_seqblock(const uint8_t *frame, uint16_t len)
 void ble_build_device_info(uint8_t out[10])
 {
     mlproto_device_info(out, ML_FW_MAJOR, ML_FW_MINOR, ble_device_id());
+}
+
+void ble_notify_command_to(uint16_t conn, const uint8_t *frame, uint16_t len)
+{
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, len);
+    if (om != NULL) {
+        ble_gatts_notify_custom(conn, s_command_attr_val, om);
+    }
+}
+
+void ble_push_status(void)
+{
+    /* tokenHolder is per-connection perspective (§2.9), so build one frame
+     * per connection. Frame is 12 B: mode + arrVersion + arrCrc32 +
+     * brightnessLimit + tokenHolder + errorCode + temperature + flags. */
+    for (size_t i = 0; i < s_conn_count; i++) {
+        uint16_t conn = s_conn_handles[i];
+        uint8_t frame[MLPROTO_STATE_LEN];
+        mlproto_state_frame(frame, frame_run_mode(),
+                            ml_store_version(), ml_store_crc32(),
+                            ML_BRIGHTNESS_LIMIT_DEFAULT,
+                            mlt_perspective(s_mlt, conn),
+                            mlt_error_code(s_mlt,
+                                           (uint32_t)(esp_timer_get_time() / 1000)),
+                            0, ble_flags());
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, sizeof frame);
+        if (om != NULL) {
+            ble_gatts_notify_custom(conn, s_status_attr_val, om);
+        }
+    }
+}
+
+void ble_raise_error(uint8_t code)
+{
+    mlt_set_error(s_mlt, code, (uint32_t)(esp_timer_get_time() / 1000));
+    /* change callback (ble_push_status via token_change) fires inside
+     * mlt_set_error, so nothing more to do here. */
+}
+
+mlt_t *ble_token(void) { return s_mlt; }
+
+uint8_t ble_flags(void)
+{
+    /* §2.9 flags: bit0 在传输中, bit1 来访模式. Guest mode is not user-
+     * switchable yet (capability bit13 already advertises support); a
+     * transfer is in progress while the F2 rx state machine holds a session. */
+    return (uint8_t)((s_rx != NULL && mlarr_rx_active(s_rx) ? 0x01 : 0x00));
 }
