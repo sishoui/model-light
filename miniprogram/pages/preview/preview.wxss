@@ -1,0 +1,39 @@
+/* 3D 灯板预览页样式 */
+.page { padding: 20rpx; }
+.topbar { margin-bottom: 16rpx; }
+.badge {
+  display: inline-block; padding: 6rpx 18rpx; border-radius: 999rpx;
+  font-size: 24rpx; color: #fff;
+}
+.badge-ok { background: #16a34a; }
+.badge-off { background: #6b7280; }
+.hint {
+  margin-top: 12rpx; padding: 12rpx 18rpx; border-radius: 12rpx;
+  font-size: 24rpx; background: #f59e0b22; color: #b45309;
+}
+.hint-disconnected { background: #6b728022; color: #4b5563; }
+.hint-version-mismatch { background: #ef444422; color: #b91c1c; }
+.hint-realtime { background: #f59e0b22; color: #b45309; }
+
+.controls { display: flex; flex-direction: column; gap: 16rpx; }
+.row { display: flex; align-items: center; gap: 16rpx; flex-wrap: wrap; }
+.label { font-size: 26rpx; color: #9ca3af; width: 120rpx; }
+.seg { display: flex; }
+.seg-btn {
+  padding: 8rpx 24rpx; font-size: 24rpx; border-radius: 0;
+  background: #1f2937; color: #9ca3af;
+}
+.seg-btn:first-child { border-radius: 12rpx 0 0 12rpx; }
+.seg-btn:last-child { border-radius: 0 12rpx 12rpx 0; }
+.seg-btn.on { background: #2563eb; color: #fff; }
+.pill {
+  padding: 8rpx 28rpx; font-size: 24rpx; border-radius: 999rpx;
+  background: #1f2937; color: #e5e7eb;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 8rpx; }
+.chip {
+  padding: 6rpx 20rpx; font-size: 24rpx; border-radius: 999rpx;
+  background: #1f2937; color: #9ca3af;
+}
+.chip.on { background: #2563eb; color: #fff; }
+.muted { font-size: 22rpx; color: #6b7280; }

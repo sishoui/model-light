@@ -1,0 +1,68 @@
+// 3D 灯板预览（xr-frame）- 唯一的 xr-frame 页面：一个 xr-frame 组件 + 一个顶层 xr-scene
+// 顶栏（徽标 + 提示条）与下方控件区为普通 view；xr-frame 区块内不混写 view。
+
+<xr-frame style="width:100%;height:640rpx;display:block"
+  debug="{{false}}">
+  <xr-scene bind:ready="handleSceneReady">
+    <xr-camera id="camera" clear-color="#0b0b10" near="1" far="4000" fov="45"
+      position="1 20 14" target="1 -1 0" />
+    <xr-ambient-light intensity="0.9" />
+    <xr-directional-light intensity="0.6" position="1 2 3" />
+    <!-- 灯珠实例由 preview.js 按 (ledCount, rowWidth, layout) 推导并挂载 -->
+    <xr-node id="board-root" />
+  </xr-scene>
+</xr-frame>
+
+<!-- ===== 画布下方普通 UI 区 ===== -->
+<view class="page">
+  <view class="topbar">
+    <text class="badge {{connected ? 'badge-ok' : 'badge-off'}}">{{statusBadge}}</text>
+    <view wx:if="{{hint}}" class="hint hint-{{hint.reason}}">
+      <text>{{hint.text}}</text>
+    </view>
+  </view>
+
+  <view class="controls">
+    <view class="row">
+      <text class="label">显示范围</text>
+      <view class="seg">
+        <button class="seg-btn {{scope === 'group' ? 'on' : ''}}"
+          data-scope="group" bindtap="onScopeChange">当前灯组</button>
+        <button class="seg-btn {{scope === 'pin' ? 'on' : ''}}"
+          data-scope="pin" bindtap="onScopeChange">整条引脚</button>
+      </view>
+    </view>
+
+    <view class="row">
+      <text class="label">布局</text>
+      <button class="pill" bindtap="onToggleLayout">
+        {{layout === 'row-major-snake' ? '蛇形' : '从左到右'}}
+      </button>
+    </view>
+
+    <view class="row">
+      <text class="label">行宽</text>
+      <view class="chips">
+        <button wx:for="{{rowWidths}}" wx:key="*this"
+          class="chip {{rowWidth === item ? 'on' : ''}}"
+          data-w="{{item}}" bindtap="onRowWidthChange">{{item}}</button>
+      </view>
+    </view>
+
+    <view class="row">
+      <text class="label">帧率</text>
+      <view class="seg">
+        <button class="seg-btn {{fps === 30 ? 'on' : ''}}"
+          data-fps="30" bindtap="onFpsChange">30</button>
+        <button class="seg-btn {{fps === 60 ? 'on' : ''}}"
+          data-fps="60" bindtap="onFpsChange">60</button>
+      </view>
+    </view>
+
+    <view class="row">
+      <button class="pill" bindtap="onPlayToggle">{{playing ? '暂停' : '播放'}}</button>
+      <button class="pill" bindtap="onResetCamera">复位</button>
+      <text class="muted">质量 {{quality}} / {{ledCount}} 颗</text>
+    </view>
+  </view>
+</view>
