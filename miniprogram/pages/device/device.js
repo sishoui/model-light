@@ -6,6 +6,27 @@ const { createBleClient, SERVICE_UUID, CHAR_STATUS } = require('../../lib/ble');
 const { parseStatusFrame } = require('../../lib/status-frame');
 const { nextBackoffMs, resetBackoff } = require('../../lib/backoff');
 const { MODE_LABELS, ERROR_MESSAGES, TOKEN_LABELS } = require('../../lib/labels');
+const { createArrangementSender } = require('../../lib/arrangement-sender');
+const { computeChunkSize } = require('../../lib/chunk-size');
+const { crc32 } = require('../../lib/crc32');
+const { parseDeviceInfo } = require('../../lib/device-info');
+const { isReadOnlyProtocol, describeNakStatus } = require('../../lib/device-protocol');
+
+// 固定测试 TLV：最小编排（version/payloadVersion + 1 引脚 0 灯组占位），
+// 真实编排由编辑器票产出；这里只为验证传输链路。
+const TEST_PROTO_MAJOR = 1;
+const TEST_PROTO_MINOR = 0;
+const TEST_PAYLOAD_VERSION = 1;
+
+function buildTestTlv() {
+  const b = [];
+  const push16 = (v) => { b.push(v & 0xff, (v >> 8) & 0xff); };
+  push16(1);            // version
+  push16(TEST_PAYLOAD_VERSION); // payloadVersion
+  b.push(8);            // pinCount（固定 8 引脚）
+  b.push(0);            // pin 0 length（未知，由设备侧定）——占位最小编排
+  return new Uint8Array(b);
+}
 
 Page({
   data: {
@@ -21,6 +42,12 @@ Page({
     temperature: null,
     visitorMode: false,
     framesSeen: 0,
+    protoLabel: '',
+    readOnly: false,
+    chunkSize: null,
+    transferring: false,
+    progressLabel: '',
+    transferMessage: '',
   },
 
   onLoad(query) {
@@ -48,8 +75,62 @@ Page({
       this._offStatus = this.ble.onStatusFrame((frame) => this.applyFrame(frame));
       this.setData({ connected: true, reconnecting: false });
       getApp().rememberDevice(this.data.name, this.deviceId);
+      await this.probeDeviceCapabilities();
     } catch (e) {
       this.scheduleReconnect();
+    }
+  },
+
+  /** §2.8：读设备信息特征 → 协议版本 + 能力位图；major 不同进只读态 */
+  async probeDeviceCapabilities() {
+    try {
+      const info = await this.ble.readDeviceInfo();
+      if (!info) return;
+      const local = { major: TEST_PROTO_MAJOR, minor: TEST_PROTO_MINOR };
+      const readOnly = isReadOnlyProtocol(local, info);
+      this.setData({
+        protoLabel: `v${info.protoMajor}.${info.protoMinor}`,
+        readOnly,
+      });
+      // §2.1：chunkSize 每次连接现算
+      const sys = wx.getSystemInfoSync();
+      const { chunkSize } = await this.ble.negotiateChunkSize(sys.platform);
+      this.setData({ chunkSize });
+      this._chunkSize = chunkSize;
+    } catch (e) {
+      // 读不到设备信息不阻塞连接，按钮按只读处理
+      this.setData({ readOnly: true });
+    }
+  },
+
+  /** M2 调试：推一份固定 TLV，走 START → 滑窗 DATA → FIN 全流程 */
+  async sendTestArrangement() {
+    if (this._senderActive || this.readOnly || !this._chunkSize) return;
+    const data = buildTestTlv();
+    const sender = createArrangementSender(this.ble, { chunkSize: this._chunkSize });
+    this._senderActive = true;
+    this.setData({ transferring: true, progressLabel: '0%', transferMessage: '' });
+    try {
+      const result = await sender.send({
+        payloadVersion: TEST_PAYLOAD_VERSION,
+        protoMajor: TEST_PROTO_MAJOR,
+        protoMinor: TEST_PROTO_MINOR,
+        data,
+      });
+      if (result.ok) {
+        this.setData({ transferMessage: '推送成功，设备已原子提交' });
+      } else if (result.reason === 'nak') {
+        this.setData({ transferMessage: describeNakStatus(result.status) });
+      } else if (result.reason === 'no-ack') {
+        this.setData({ transferMessage: '设备无响应，已发送 RESET，旧编排未变' });
+      } else if (result.reason === 'timeout') {
+        this.setData({ transferMessage: '传输超时（30 s），已发送 RESET，旧编排未变' });
+      } else {
+        this.setData({ transferMessage: '传输已取消' });
+      }
+    } finally {
+      this._senderActive = false;
+      this.setData({ transferring: false });
     }
   },
 
