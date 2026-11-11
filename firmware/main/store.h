@@ -10,6 +10,9 @@ extern "C" {
 /* Boot: read back the stored arrangement. Returns 0 (also on empty store). */
 int  ml_store_init(void);
 
+/* Factory reset: clear the RAM copy and erase the NVS blob. */
+void ml_store_reset(void);
+
 /* Stage a fully validated arrangement in RAM; NVS write is debounced 2 s. */
 void ml_store_stage(const uint8_t *buf, uint16_t len, uint16_t version);
 

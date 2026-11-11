@@ -9,3 +9,7 @@ target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 # Arrangement TLV codec + rx state machine (host-compilable, no ESP-IDF).
 target_sources(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mlarr/mlarr.c")
 target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mlarr/include")
+
+# Control-token state machine (F5, host-compilable, no ESP-IDF).
+target_sources(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mltoken/mltoken.c")
+target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../components/mltoken/include")

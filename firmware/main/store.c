@@ -54,6 +54,21 @@ int ml_store_init(void)
 
 /* Called from mlarr commit callback (BLE host task context): copy into RAM
  * and mark dirty; the NVS write happens later in ml_store_tick(). */
+void ml_store_reset(void)
+{
+    s_len = 0;
+    s_version = 0;
+    s_crc32 = 0;
+    s_dirty = false;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_key(h, NVS_KEY);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "factory reset: arrangement cleared");
+}
+
 void ml_store_stage(const uint8_t *buf, uint16_t len, uint16_t version)
 {
     if (len > MLARR_ARR_MAX_BYTES) {
