@@ -1,14 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import {
   AuthStore,
   RefreshTokenRow,
   UserRow,
 } from '../auth/auth.service';
+import { PrismaService } from './prisma.service';
 
 @Injectable()
 export class PrismaAuthStore implements AuthStore {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaClient) {}
 
   async findUserByOpenid(openid: string): Promise<UserRow | null> {
     const row = await this.prisma.user.findUnique({ where: { openid } });
