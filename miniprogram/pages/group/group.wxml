@@ -31,4 +31,14 @@
     </view>
     <view wx:if="{{ranges.length === 0}}" class="empty">在上方像素条点两个灯珠来加区间</view>
   </view>
+
+  <view class="panel">
+    <view class="panel-title">阶段（{{stages.length}}）· 合计 {{totalLabel}}</view>
+    <view wx:for="{{stages}}" wx:key="index" class="stage-row" data-stage="{{item.index}}" bindtap="openStageEditor">
+      <text class="stage-label">#{{item.index + 1}} · {{item.durationMs}} ms · {{item.layersLabel}}</text>
+      <text class="stage-go">编辑 ›</text>
+    </view>
+    <view wx:if="{{stages.length === 0}}" class="empty">灯组还没有阶段，去阶段页加一个</view>
+    <button class="stages-btn" bindtap="openStagePage">编辑阶段与灯效</button>
+  </view>
 </view>

@@ -1,0 +1,98 @@
+<view class="page">
+  <!-- 阶段列表 -->
+  <view class="panel" wx:if="{{editing === null}}">
+    <view class="panel-title">阶段（{{stages.length}}）· 合计 {{totalLabel}}</view>
+    <view wx:for="{{stages}}" wx:key="index" class="stage-row">
+      <view class="stage-main" data-stage="{{item.index}}" bindtap="openStage">
+        <text class="stage-name">阶段 {{item.index + 1}}</text>
+        <text class="stage-meta">{{item.durationMs}} ms · {{item.fadeInLabel}}</text>
+        <text class="stage-layers">{{item.layersLabel}}</text>
+      </view>
+      <view class="stage-btns">
+        <button class="mini-btn" size="mini" data-stage="{{item.index}}" bindtap="onMoveUp" disabled="{{item.index === 0}}">↑</button>
+        <button class="mini-btn" size="mini" data-stage="{{item.index}}" bindtap="onMoveDown" disabled="{{item.index === stages.length - 1}}">↓</button>
+        <button class="mini-btn del" size="mini" data-stage="{{item.index}}" bindtap="onRemoveStage">删</button>
+      </view>
+    </view>
+    <button class="add-btn" bindtap="onAddStage">+ 加阶段</button>
+    <text wx:if="{{errorMessage}}" class="error">{{errorMessage}}</text>
+  </view>
+
+  <!-- 单阶段编辑 -->
+  <block wx:if="{{editStage !== null}}">
+    <view class="panel">
+      <view class="panel-head">
+        <view class="panel-title">阶段 {{editStage.index + 1}}</view>
+        <button class="mini-btn" size="mini" bindtap="closeStage">返回列表</button>
+      </view>
+
+      <view class="field-row">
+        <text class="k">时长 (ms)</text>
+        <input class="inp" type="number" value="{{editStage.durationMs}}" bindinput="onDurationInput" bindblur="saveDuration" />
+      </view>
+      <view class="field-row">
+        <text class="k">淡入 (ms，0 = 硬切)</text>
+        <input class="inp" type="number" value="{{editStage.fadeInMs}}" bindinput="onFadeInInput" bindblur="saveFadeIn" />
+      </view>
+      <text wx:if="{{errorMessage}}" class="error">{{errorMessage}}</text>
+    </view>
+
+    <!-- 层 -->
+    <view class="panel" wx:for="{{editStage.layers}}" wx:key="layerIndex" wx:for-item="layer">
+      <view class="panel-head">
+        <view class="panel-title">{{layer.roleLabel}} · {{layer.effectLabel}}</view>
+        <view class="head-btns">
+          <button class="mini-btn" size="mini" data-layer="{{layer.layerIndex}}" bindtap="toggleLayerEditor">换灯效</button>
+          <button class="mini-btn del" size="mini" data-layer="{{layer.layerIndex}}" bindtap="onRemoveLayer">删层</button>
+        </view>
+      </view>
+
+      <!-- 换灯效清单（同 role） -->
+      <view wx:if="{{editingLayer === layer.layerIndex}}" class="choices">
+        <view wx:for="{{layer.role === 0 ? bgChoices : dyChoices}}" wx:key="index" wx:for-item="choice"
+          class="choice {{choice.enabled ? '' : 'disabled'}}"
+          data-layer="{{layer.layerIndex}}" data-effect="{{choice.index}}"
+          bindtap="{{choice.enabled ? 'onReplaceEffect' : ''}}">
+          <text>{{choice.name}}</text>
+          <text wx:if="{{!choice.enabled}}" class="choice-warn">{{choice.disabledReason}}</text>
+        </view>
+      </view>
+
+      <!-- 参数面板（schema 生成） -->
+      <view wx:for="{{layer.panel}}" wx:key="name" wx:for-item="p" class="param-row">
+        <text class="k">{{p.label}}</text>
+        <picker wx:if="{{p.view === 'color'}}" mode="selector" disabled
+          data-layer="{{layer.layerIndex}}" data-param="{{p.name}}">
+          <view class="color-chip" style="background: rgb({{p.value[0]}},{{p.value[1]}},{{p.value[2]}})"></view>
+        </picker>
+        <input wx:if="{{p.view === 'range'}}" class="inp small" type="number"
+          value="{{p.value}}" min="{{p.min}}" max="{{p.max}}"
+          data-layer="{{layer.layerIndex}}" data-param="{{p.name}}"
+          bindinput="onRangeInput" bindblur="onRangeBlur" />
+        <picker wx:if="{{p.view === 'enum'}}" mode="selector" range="{{p.options}}"
+          value="{{p.value}}" data-layer="{{layer.layerIndex}}" data-param="{{p.name}}"
+          bindchange="onEnumChange">
+          <view class="enum-value">{{p.options[p.value]}}</view>
+        </picker>
+        <switch wx:if="{{p.view === 'bool'}}" checked="{{p.boolChecked}}"
+          data-layer="{{layer.layerIndex}}" data-param="{{p.name}}" bindchange="onBoolChange" />
+      </view>
+    </view>
+
+    <!-- 加层 -->
+    <view class="panel" wx:if="{{editStage.layers.length < 2}}">
+      <view class="panel-title" wx:if="{{editStage.layers.length === 0 || editStage.layers[0].roleLabel === '动态层'}}">加背景层（bg 清单）</view>
+      <view class="panel-title" wx:else>加动态层（dy 清单）</view>
+      <view class="choices">
+        <view wx:for="{{editStage.layers.length === 0 || editStage.layers[0].roleLabel === '动态层' ? bgChoices : dyChoices}}"
+          wx:key="index" wx:for-item="choice"
+          class="choice {{choice.enabled ? '' : 'disabled'}}"
+          data-effect="{{choice.index}}"
+          bindtap="{{choice.enabled ? (editStage.layers.length === 0 || editStage.layers[0].roleLabel === '动态层' ? 'onAddBgLayer' : 'onAddDyLayer') : ''}}">
+          <text>{{choice.name}}</text>
+          <text wx:if="{{!choice.enabled}}" class="choice-warn">{{choice.disabledReason}}</text>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

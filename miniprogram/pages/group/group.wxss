@@ -25,4 +25,8 @@
 .range-switch { display: flex; align-items: center; gap: 8rpx; }
 .range-switch .k { color: #9ca3af; font-size: 22rpx; }
 .del-btn { background: #7f1d1d; color: #fecaca; font-size: 22rpx; }
+.stage-row { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; border-bottom: 1rpx solid #374151; }
+.stage-label { color: #d1d5db; font-size: 24rpx; }
+.stage-go { color: #60a5fa; font-size: 24rpx; }
+.stages-btn { margin-top: 16rpx; background: #1d4ed8; color: #fff; font-size: 26rpx; }
 .empty { color: #6b7280; font-size: 26rpx; padding: 24rpx 0; }
