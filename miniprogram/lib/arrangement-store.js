@@ -18,10 +18,26 @@ function keyFor(deviceName) {
   return `arrangement:${deviceName}`;
 }
 
+/* Pages pass `wx` directly; wx has getStorageSync/setStorageSync, not
+ * getItem/setItem. Wrap it once here so both interfaces work (tests use
+ * the Map adapter from makeMemoryStorage). */
+function normalizeStorage(storage) {
+  if (typeof storage.getItem === 'function') return storage;
+  return {
+    getItem: (k) => {
+      try { return storage.getStorageSync(k) || null; } catch (e) { return null; }
+    },
+    setItem: (k, v) => { storage.setStorageSync(k, v); },
+    removeItem: (k) => { try { storage.removeStorageSync(k); } catch (e) { /* ok */ } },
+  };
+}
+
 /**
  * @param {object} storage { getItem(k) -> string|null, setItem(k, v), removeItem(k) }
+ *   or the wx object (getStorageSync/setStorageSync/removeStorageSync).
  */
 function createArrangementStore(storage) {
+  storage = normalizeStorage(storage);
   function load(deviceName) {
     const raw = storage.getItem(keyFor(deviceName));
     if (!raw) return null;

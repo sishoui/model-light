@@ -25,7 +25,23 @@ function decodeJwtExp(jwt) {
 
 const STORAGE_KEY = 'cloudSession';
 
-function createCloudAuth({ requester, storage, loginCode, now = () => Date.now() }) {
+/* Pages pass the wx object (getStorageSync-style); tests pass a Map adapter
+ * with getItem/setItem. Accept both. */
+function normalizeStorage(storage) {
+  if (typeof storage.getItem === 'function') return storage;
+  return {
+    getItem: (k) => {
+      try { return storage.getStorageSync(k) || null; } catch (e) { return null; }
+    },
+    setItem: (k, v) => { storage.setStorageSync(k, v); },
+    removeItem: (k) => { try { storage.removeStorageSync(k); } catch (e) { /* ok */ } },
+  };
+}
+
+function createCloudAuth(opts) {
+  const storage = normalizeStorage(opts.storage);
+  const { requester, loginCode } = opts;
+  const now = opts.now || (() => Date.now());
   function load() {
     try {
       const raw = storage.getItem(STORAGE_KEY);
