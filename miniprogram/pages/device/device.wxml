@@ -32,4 +32,22 @@
     </button>
     <text wx:if="{{transferMessage}}" class="transfer-msg">{{transferMessage}}</text>
   </view>
+
+  <view class="panel">
+    <view class="panel-title">引脚（0–7 固定）</view>
+    <view wx:for="{{pins}}" wx:key="index" class="pin-row" data-pin="{{item.index}}" bindtap="openPin">
+      <text class="pin-label">{{item.label}}</text>
+      <text class="pin-name">{{item.name}}</text>
+      <text class="pin-meta">{{item.length}} 珠 · {{item.groupCount}} 灯组</text>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">推送编排到设备（本地先缓存，失败不丢编辑）</view>
+    <button class="push-btn" bindtap="pushArrangementAction"
+      disabled="{{!connected || transferring || readOnly}}">
+      {{transferring ? '推送中…' : '推送'}}
+    </button>
+    <text wx:if="{{pushVersion}}" class="transfer-msg">本机编排版本 v{{pushVersion}}</text>
+  </view>
 </view>

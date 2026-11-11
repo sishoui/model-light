@@ -304,5 +304,6 @@ function totalDurationMs(group) {
 module.exports = {
   createArrangement, createPin, createGroup, createRange, createStage, createLayer,
   encode, decode, getOccupiedPixels, getUncoveredPixels, isPixelCovered, totalDurationMs,
+  utf8Len,
   PAYLOAD_VERSION, PIN_COUNT, NAME_BYTES, SCHEMA_VERSION_REF: SCHEMA_VERSION,
 };

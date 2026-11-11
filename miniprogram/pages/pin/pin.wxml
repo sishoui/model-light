@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="panel">
+    <view class="panel-title">{{pinLabel}}（固定 0–7，不可增删）</view>
+    <view class="field">
+      <text class="k">名字（≤16 字节 UTF-8，已输 {{nameBytes}} B）</text>
+      <input class="input" value="{{name}}" maxlength="20" bindinput="onNameInput" />
+      <button class="save-btn" size="mini" bindtap="saveName">保存名字</button>
+    </view>
+    <view class="field">
+      <text class="k">灯珠数量（0–255）</text>
+      <input class="input" type="number" value="{{length}}" bindinput="onLengthInput" />
+      <button class="save-btn" size="mini" bindtap="saveLength">保存数量</button>
+    </view>
+    <text wx:if="{{errorMessage}}" class="error">{{errorMessage}}</text>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">灯组（{{groups.length}}）</view>
+    <view wx:for="{{groups}}" wx:key="index" class="group-row" data-group="{{item.index}}" bindtap="openGroup">
+      <view class="group-info">
+        <text class="group-name">灯组 {{item.index + 1}}</text>
+        <text class="group-meta">{{item.rangeLabel}} · {{item.durationLabel}}</text>
+      </view>
+      <button class="del-btn" size="mini" catchtap="removeGroup" data-group="{{item.index}}">删除</button>
+    </view>
+    <view wx:if="{{groups.length === 0}}" class="empty">还没有灯组，点下面新建</view>
+    <button class="add-btn" bindtap="createGroup">新建灯组</button>
+  </view>
+</view>
