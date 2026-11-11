@@ -21,4 +21,15 @@
     <view class="stat"><text class="k">温度</text><text class="v">{{temperature === null ? '—' : temperature + ' °C'}}</text></view>
     <view class="stat"><text class="k">状态帧</text><text class="v">{{framesSeen}} 帧</text></view>
   </view>
+
+  <!-- M2 调试：推送固定编排 TLV（#15：只做传输，不做编辑界面） -->
+  <view class="panel">
+    <view class="stat"><text class="k">协议</text><text class="v">{{readOnly ? '只读（major 不符）' : (protoLabel || '—')}}</text></view>
+    <view class="stat"><text class="k">分片</text><text class="v">{{chunkSize || '—'}} B</text></view>
+    <button class="debug-btn" size="mini" bindtap="sendTestArrangement"
+      disabled="{{!connected || transferring || readOnly}}">
+      {{transferring ? '传输中 ' + progressLabel : '推送测试编排'}}
+    </button>
+    <text wx:if="{{transferMessage}}" class="transfer-msg">{{transferMessage}}</text>
+  </view>
 </view>

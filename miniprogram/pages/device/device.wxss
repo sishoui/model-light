@@ -13,3 +13,6 @@
 .stat { flex: 1; background: #1f2937; border-radius: 16rpx; padding: 24rpx; border: 1rpx solid #374151; }
 .k { color: #9ca3af; font-size: 24rpx; display: block; }
 .v { color: #f9fafb; font-size: 32rpx; margin-top: 8rpx; display: block; }
+
+.panel .debug-btn { margin-top: 12rpx; }
+.transfer-msg { font-size: 24rpx; color: #666; margin-top: 8rpx; }

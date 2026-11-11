@@ -14,16 +14,22 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "frame_task.h"
+#include "mlarr.h"
 
 static const char *TAG = "main";
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "model-light F1 skeleton, fw %d.%d, proto %d.%d",
+    ESP_LOGI(TAG, "model-light F3 render loop, fw %d.%d, proto %d.%d",
              ML_FW_MAJOR, ML_FW_MINOR, MLPROTO_MAJOR, MLPROTO_MINOR);
 
     if (out_layer_init() != 0) {
         ESP_LOGE(TAG, "output layer init failed; halting");
+        return;
+    }
+
+    if (frame_arrangement_init() != 0) {
+        ESP_LOGE(TAG, "default arrangement parse failed; halting");
         return;
     }
 
