@@ -179,6 +179,14 @@ Page({
     });
   },
 
+  /** §9：固件升级入口（设备详情页「固件版本」区 → 升级页） */
+  openOta() {
+    if (!this.connected) return;
+    wx.navigateTo({
+      url: `../ota/ota?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&chunkSize=${this._chunkSize || 20}`,
+    });
+  },
+
   /** §4：整份编排推给设备；推成功后重读状态帧核对 arrangementVersion */
   async pushArrangementAction() {
     if (this._senderActive || this.readOnly || !this._chunkSize) return;

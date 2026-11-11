@@ -1,0 +1,28 @@
+<view class="page">
+  <view class="topbar">
+    <text class="name">{{name}}</text>
+    <view class="badge {{connected ? 'ok' : 'bad'}}">{{connected ? '已连接' : '未连接'}}</view>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">固件升级</view>
+    <button class="btn" bindtap="chooseFirmware" disabled="{{!connected || otaState === 'transferring'}}">
+      选择固件文件（.bin）
+    </button>
+    <view wx:if="{{fileName}}" class="file-row">
+      <text>{{fileName}}</text>
+      <text class="muted">{{sizeLabel}}</text>
+    </view>
+
+    <button wx:if="{{otaState === 'ready'}}" class="btn primary" bindtap="startUpgrade">开始升级</button>
+    <button wx:if="{{resumable && otaState !== 'transferring'}}" class="btn primary" bindtap="resumeUpgrade">继续升级</button>
+
+    <view wx:if="{{otaState === 'transferring'}}" class="progress-box">
+      <progress percent="{{progress}}" stroke-width="6" activeColor="#3b82f6" />
+      <view class="row"><text>{{progressLabel}}</text><text class="muted">{{sizeLabel}}</text></view>
+    </view>
+
+    <text class="msg">{{message}}</text>
+    <text wx:if="{{otaState === 'transferring'}}" class="msg muted">请保持亮屏，切换小程序会暂停升级</text>
+  </view>
+</view>

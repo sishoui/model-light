@@ -5,7 +5,8 @@
     "pages/pin/pin",
     "pages/group/group",
     "pages/stage/stage",
-    "pages/preview/preview"
+    "pages/preview/preview",
+    "pages/ota/ota"
   ],
   "window": {
     "navigationBarTitleText": "模型灯效",

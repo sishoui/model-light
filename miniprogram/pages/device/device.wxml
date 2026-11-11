@@ -55,4 +55,10 @@
     </button>
     <text class="transfer-msg muted">恢复是手动操作：只在设备与云端不一致时写回设备</text>
   </view>
+
+  <view class="panel">
+    <view class="panel-title">固件升级（OTA）</view>
+    <button class="push-btn" bindtap="openOta" disabled="{{!connected}}">固件升级…</button>
+    <text class="transfer-msg muted">升级期间设备暂停编排渲染，其他连接降为只读</text>
+  </view>
 </view>

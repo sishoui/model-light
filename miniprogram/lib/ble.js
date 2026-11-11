@@ -193,6 +193,34 @@ function createBleClient(wxApi) {
     };
   }
 
+  /**
+   * §3 OTA：订阅 ...0006 notify（ACK / SESSION / EVENT / RESUME_OK 下行）。
+   */
+  function onOtaNotify(callback) {
+    const handler = (res) => callback(new Uint8Array(res.value));
+    wxApi.onBLECharacteristicValueChange(handler);
+    return call(wxApi, 'notifyBLECharacteristicValueChange', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_OTA,
+      state: true,
+    }).then(() => () => {
+      wxApi.offBLECharacteristicValueChange(handler);
+    });
+  }
+
+  /** §3：OTA 固件字节写 ...0006（writeNoResponse；iOS 退化为带响应写也兼容） */
+  function writeOta(bytes) {
+    return call(wxApi, 'writeBLECharacteristicValue', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_OTA,
+      value: bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      writeType: 'writeNoResponse',
+    });
+  }
+
   async function disconnect() {
     if (deviceId) {
       await call(wxApi, 'closeBLEConnection', { deviceId }).catch(() => {});
@@ -211,6 +239,8 @@ function createBleClient(wxApi) {
     onSequenceNotify,
     writeSequence,
     writeRealtime,
+    onOtaNotify,
+    writeOta,
     negotiateChunkSize,
     readDeviceInfo,
     disconnect,
