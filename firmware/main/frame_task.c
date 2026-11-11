@@ -8,6 +8,7 @@
 #include "mlarr.h"
 #include "store.h"
 #include "mltoken.h"
+#include "mlrt.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -51,19 +52,65 @@ static const uint8_t default_arrangement[] = {
 
 static ml_arrangement_t s_arr;
 static int s_have_arr;
+static mlrt_t *s_rt;                  /* F6 realtime override engine */
 static volatile uint8_t s_run_mode;   /* MLPROTO_MODE_* */
-static uint32_t s_last_realtime_ms;   /* §2.3: realtime idle fallback */
+
+/* Notification that realtime mode just ended (3 s idle fallback) so the
+ * status frame goes out without waiting for the 5 s heartbeat. */
+static volatile uint8_t s_mode_change_pending;
 
 void frame_exit_realtime(void)
 {
     /* §2.6: BLE 一断立刻退出实时模式回回放，不保留最后一帧。
-     * 实时覆盖走 mlarr 之外的临时表（F6 补齐实时通道），这里清模式即可：
-     * 下一帧就重新按编排渲染（无残影，mlarr_render 每像素都写）。 */
+     * mlrt_exit restores every patched byte; the arrangement is re-rendered
+     * from the global clock next frame, so playback resumes at the correct
+     * stage (the timeline never paused, §2.4). */
+    mlrt_exit(s_rt);
     s_run_mode = MLPROTO_MODE_PLAYBACK;
-    s_last_realtime_ms = 0;
 }
 
 uint8_t frame_run_mode(void) { return s_run_mode; }
+
+void frame_realtime_init(void)
+{
+    if (s_rt == NULL) {
+        s_rt = mlrt_new(&s_arr);
+    }
+}
+
+/* Feed one ...0002 payload. Returns 1 if applied (realtime entered or its
+ * idle window refreshed); 0 = silently dropped (bad address / bad shape). */
+int frame_realtime_packet(const uint8_t *buf, uint16_t len)
+{
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (s_rt == NULL) {
+        s_rt = mlrt_new(&s_arr);
+        if (s_rt == NULL) return 0;
+    }
+    int applied = mlrt_on_packet(s_rt, buf, len, now);
+    if (applied) {
+        s_run_mode = MLPROTO_MODE_REALTIME;
+    }
+    return applied;
+}
+
+/* Poll from the frame loop: fires the 3 s idle fallback and pushes the
+ * mode change through the status channel immediately (§2.9). */
+void frame_realtime_poll(void)
+{
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (mlrt_poll(s_rt, now)) {
+        s_run_mode = MLPROTO_MODE_PLAYBACK;
+        s_mode_change_pending = 1;
+    }
+}
+
+uint8_t frame_realtime_take_change(void)
+{
+    uint8_t v = s_mode_change_pending;
+    s_mode_change_pending = 0;
+    return v;
+}
 
 int frame_arrangement_init(void)
 {
@@ -111,6 +158,13 @@ void frame_task(void *arg)
                 mlarr_parse(bytes, len, &s_arr) == MLARR_OK) {
                 s_loaded_version = cur_ver;
                 s_have_arr = 1;
+                /* s_arr contents were replaced in place; realtime overrides
+                 * point into the old bytes. Spec §2.4: a commit finishing
+                 * during realtime keeps rendering realtime until timeout —
+                 * but after a re-parse the safest correct behavior is to
+                 * fall back to playback of the NEW arrangement. */
+                mlrt_exit(s_rt);
+                s_run_mode = MLPROTO_MODE_PLAYBACK;
             } else if (!s_have_arr) {
                 s_have_arr = 1; /* already fell back to default in init */
                 s_loaded_version = cur_ver;
@@ -120,6 +174,7 @@ void frame_task(void *arg)
          * stage positioning, ranges+reverse mapping, uncovered pixels black.
          * Ble tinting comes free: colors come from the arrangement. */
         uint32_t clock_ms = esp_timer_get_time() / 1000;
+        frame_realtime_poll();
         mlarr_render(&s_arr, clock_ms, 0, frame, ML_PIN0_LED_COUNT);
         for (uint16_t i = 0; i < ML_PIN0_LED_COUNT; i++) {
             uint8_t r = frame[i * 3], g = frame[i * 3 + 1], b = frame[i * 3 + 2];
@@ -142,6 +197,11 @@ void status_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         ble_push_status();
+        /* F6: 3 s idle fallback ended realtime mode — push immediately
+         * instead of waiting for the next heartbeat (§2.9). */
+        if (frame_realtime_take_change()) {
+            ble_push_status();
+        }
     }
 }
 

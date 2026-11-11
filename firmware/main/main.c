@@ -32,6 +32,7 @@ void app_main(void)
         ESP_LOGE(TAG, "default arrangement parse failed; halting");
         return;
     }
+    frame_realtime_init();
 
     if (ble_start() != 0) {
         ESP_LOGE(TAG, "BLE start failed; halting");
