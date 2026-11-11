@@ -5,6 +5,7 @@
 #include "out_layer.h"
 #include "ble.h"
 #include "mlproto.h"
+#include "store.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -47,13 +48,23 @@ void frame_task(void *arg)
 
 void status_task(void *arg)
 {
-    /* §2.9: 5 s heartbeat full frame; changes are pushed immediately by the
-     * modules that cause them (F1 has none). */
+    /* §2.9: 5 s heartbeat full frame with real arrangement identity;
+     * changes are pushed immediately by the modules that cause them. */
     uint8_t frame[MLPROTO_STATE_LEN];
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK, 0, 0,
+        mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK,
+                            ml_store_version(), ml_store_crc32(),
                             ML_BRIGHTNESS_LIMIT_DEFAULT, 0, 0x00, 0, 0);
         ble_notify_state(frame);
+    }
+}
+
+void store_task(void *arg)
+{
+    /* 2 s NVS debounce: check 10× per debounce period. */
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        ml_store_tick((uint32_t)(esp_timer_get_time() / 1000));
     }
 }

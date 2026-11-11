@@ -1,9 +1,9 @@
-/* NimBLE GAP + GATT skeleton.
+/* NimBLE GAP + GATT.
  * Service UUID base 7c9f0000-1b2a-4c3d-9e8f-000000000000 (§2.1, single
  * service). Characteristics:
  *   ...0001 command       write + write-no-rsp + notify   (not handled yet)
  *   ...0002 realtime      write-no-rsp                    (not handled yet)
- *   ...0003 seq block     write-no-rsp + notify           (not handled yet)
+ *   ...0003 seq block     write-no-rsp + notify           arrangement TLV rx (F2)
  *   ...0004 status        notify + read                   (12 B frame, §2.9)
  *   ...0005 device info   read
  * (...0006 OTA is a later ticket.)
@@ -12,12 +12,15 @@
 #include "ble.h"
 #include "ble_adv.h"
 #include "mlproto.h"
+#include "mlarr.h"
+#include "store.h"
 #include "app_config.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -67,14 +70,62 @@ static size_t   s_conn_count;
 static char     s_adv_name[8];          /* "ML-XXXX" + NUL */
 static uint8_t  s_devinfo[10];
 static uint16_t s_status_attr_val;
+static uint16_t s_seqblock_attr_val;
+
+/* Arrangement transfer session (F2): chunked rx on ...0003, ACK/NAK back
+ * on the same characteristic's notify. */
+static mlarr_rx_t *s_rx;
+
+static void xfer_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak,
+                      uint8_t status)
+{
+    (void)user;
+    uint8_t f[7] = { cmd };
+    f[1] = (uint8_t)(ack & 0xFF);
+    f[2] = (uint8_t)(ack >> 8);
+    f[3] = (uint8_t)(nak & 0xFF);
+    f[4] = (uint8_t)(nak >> 8);
+    f[5] = status;
+    ble_notify_seqblock(f, sizeof f);
+}
+
+static int xfer_commit(void *user, const uint8_t *buf, uint16_t len,
+                       uint16_t version)
+{
+    /* All validations already passed in mlarr; stage whole blob atomically.
+     * NVS write is debounced 2 s in store.c. */
+    ml_store_stage(buf, len, version);
+    return 0;
+}
+
+static int chr_seqblock_access(uint16_t conn, uint16_t attr,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    /* writeNoResponse + notify: each write is one frame cmd(1)+seq(2)+payload */
+    struct os_mbuf *om = ctxt->om;
+    uint8_t frame[MLARR_ARR_MAX_BYTES + 3 > 512 ? 512 : 259];
+    uint16_t len = 0;
+    for (struct os_mbuf *m = om; m != NULL && len < sizeof frame; m = SLIST_NEXT(m, om_next)) {
+        uint16_t copy = (uint16_t)(m->om_len < sizeof frame - len ? m->om_len
+                                                                  : sizeof frame - len);
+        memcpy(frame + len, m->om_data, copy);
+        len += copy;
+    }
+    if (s_rx != NULL) {
+        mlarr_rx_on_frame(s_rx, frame, len,
+                          (uint32_t)(esp_timer_get_time() / 1000));
+        mlarr_rx_poll(s_rx, (uint32_t)(esp_timer_get_time() / 1000));
+    }
+    return 0;
+}
 
 /* ---- characteristic accessors ---- */
 static int chr_status_access(uint16_t conn, uint16_t attr,
                              struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     uint8_t frame[MLPROTO_STATE_LEN];
-    /* F1 idle boot state: mode=0 playback, tokenHolder=0, errorCode=0. */
-    mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK, 0, 0,
+    mlproto_state_frame(frame, MLPROTO_MODE_PLAYBACK,
+                        ml_store_version(), ml_store_crc32(),
                         ML_BRIGHTNESS_LIMIT_DEFAULT, 0, 0x00, 0, 0);
     return os_mbuf_append(ctxt->om, frame, sizeof frame) == 0 ? 0
            : BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -110,7 +161,8 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
               .access_cb = chr_not_yet_access,
               .flags = BLE_GATT_CHR_F_WRITE_NO_RSP },
             { .uuid = (const ble_uuid_t *)&chr_seqblock_uuid,
-              .access_cb = chr_not_yet_access,
+              .access_cb = chr_seqblock_access,
+              .val_handle = &s_seqblock_attr_val,
               .flags = BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_NOTIFY },
             { .uuid = (const ble_uuid_t *)&chr_status_uuid,
               .access_cb = chr_status_access,
@@ -147,6 +199,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                 s_conn_handles[i] = s_conn_handles[--s_conn_count];
                 break;
             }
+        }
+        /* §2.2: 断连即丢弃半份编排，不写 NVS；手机重连后从头重传。 */
+        if (s_rx != NULL) {
+            mlarr_rx_on_disconnect(s_rx);
         }
         ble_advertising_start();
         return 0;
@@ -245,6 +301,15 @@ int ble_start(void)
     }
     ESP_ERROR_CHECK(err);
 
+    if (ml_store_init() != 0) {
+        ESP_LOGE(TAG, "store init failed");
+    }
+    s_rx = mlarr_rx_new(xfer_commit, xfer_send, NULL, MLARR_PROTO_MAJOR);
+    if (s_rx == NULL) {
+        ESP_LOGE(TAG, "rx state machine alloc failed");
+        return -1;
+    }
+
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
 
@@ -292,6 +357,22 @@ int ble_notify_state(const uint8_t frame[12])
             continue;
         }
         int rc = ble_gatts_notify_custom(s_conn_handles[i], s_status_attr_val, om);
+        if (rc == 0) {
+            sent++;
+        }
+    }
+    return sent;
+}
+
+int ble_notify_seqblock(const uint8_t *frame, uint16_t len)
+{
+    int sent = 0;
+    for (size_t i = 0; i < s_conn_count; i++) {
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, len);
+        if (om == NULL) {
+            continue;
+        }
+        int rc = ble_gatts_notify_custom(s_conn_handles[i], s_seqblock_attr_val, om);
         if (rc == 0) {
             sent++;
         }
