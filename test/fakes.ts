@@ -65,6 +65,74 @@ export function fakeStore() {
   };
 }
 
+export interface FakeDevice {
+  mlId: string;
+  displayName: string | null;
+  fwVersion: string | null;
+  payloadVersion: number | null;
+  pinsJson: Array<{ index: number; name: string; len: number }> | null;
+  previewJson: unknown | null;
+  rev: number;
+  lastPushedBy: bigint | null;
+  pushedAt: Date | null;
+  createdAt: Date;
+  hasBackup: boolean;
+}
+
+export function fakeDeviceStore() {
+  const devices: FakeDevice[] = [];
+  return {
+    devices,
+    async listDevices(
+      userId: bigint,
+      cursor: { pushedAt: Date; mlId: string } | null,
+      limit: number,
+    ): Promise<{ rows: FakeDevice[]; hasMore: boolean }> {
+      const mine = devices
+        .filter((d) => d.lastPushedBy === userId && d.pushedAt !== null)
+        .sort((a, b) => {
+          const t = b.pushedAt!.getTime() - a.pushedAt!.getTime();
+          if (t !== 0) return t;
+          return a.mlId < b.mlId ? 1 : a.mlId > b.mlId ? -1 : 0;
+        });
+      let start = 0;
+      if (cursor) {
+        start = mine.findIndex(
+          (d) =>
+            d.pushedAt!.getTime() < cursor.pushedAt.getTime() ||
+            (d.pushedAt!.getTime() === cursor.pushedAt.getTime() && d.mlId < cursor.mlId),
+        );
+        if (start === -1) return { rows: [], hasMore: false };
+      }
+      const rows = mine.slice(start, start + limit);
+      return { rows, hasMore: start + limit < mine.length };
+    },
+    async findDevice(mlId: string): Promise<FakeDevice | null> {
+      return devices.find((d) => d.mlId === mlId) ?? null;
+    },
+    async updateMeta(mlId: string, meta: {
+      displayName: string | null;
+      fwVersion: string | null;
+      payloadVersion: number | null;
+      pinsJson: Array<{ index: number; name: string; len: number }> | null;
+      previewJson: unknown | null;
+    }): Promise<FakeDevice> {
+      let d = devices.find((x) => x.mlId === mlId);
+      if (!d) {
+        d = { mlId, rev: 0, lastPushedBy: null, pushedAt: null, createdAt: new Date(), hasBackup: false, ...meta };
+        devices.push(d);
+        return d;
+      }
+      Object.assign(d, meta);
+      return d;
+    },
+    async deleteDevice(mlId: string): Promise<void> {
+      const i = devices.findIndex((d) => d.mlId === mlId);
+      if (i !== -1) devices.splice(i, 1);
+    },
+  };
+}
+
 export function fakeWx(): WxGateway & { codes: Map<string, string> } {
   const codes = new Map<string, string>();
   return {
