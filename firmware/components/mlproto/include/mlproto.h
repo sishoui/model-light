@@ -12,11 +12,13 @@ extern "C" {
 #define MLPROTO_MAJOR 1
 #define MLPROTO_MINOR 0
 
-/* Capability bitmap (spec §2.8): bit0-11 effects, bit12 OTA, bit13 guest mode.
- * F1 implements only the skeleton: static color (bg.solid, bit0). */
+/* Capability bitmap (spec §2.8): bit0-11 effects (§2.11 table order =
+ * mlarr effect ids 0-11), bit12 OTA, bit13 guest mode.
+ * F4: all 12 v1 effects implemented. */
 #define MLPROTO_CAP_BG_SOLID   (1u << 0)
 #define MLPROTO_CAP_OTA        (1u << 12)
-#define MLPROTO_CAPS_F1        MLPROTO_CAP_BG_SOLID
+#define MLPROTO_CAPS_ALL_FX    0x0FFFu            /* bits 0-11 */
+#define MLPROTO_CAPS_F4        (MLPROTO_CAPS_ALL_FX | MLPROTO_CAP_OTA)
 
 /* Run state, manufacturer data byte [6] / state frame `mode` (spec §2.7/§2.9). */
 enum {

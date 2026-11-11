@@ -228,40 +228,281 @@ int mlarr_parse(const uint8_t *buf, size_t len, ml_arrangement_t *out)
     return MLARR_OK;
 }
 
-/* ---- effects (spec §2.11; F3 implements bg.solid, rest fall back) ---- */
+/* ---- effect roles (spec §2.11: bit0-4 bg, bit5-11 dy) ---- */
+
+int mlarr_effect_role(uint16_t effect_id)
+{
+    if (effect_id <= MLARR_FX_BG_FLAME) return MLARR_ROLE_BG;
+    if (effect_id <= MLARR_FX_DY_COLORWIPE) return MLARR_ROLE_DY;
+    return -1; /* unknown: allowed on any layer, renders as fallback */
+}
+
+/* ---- effects (spec §2.11; F4 implements all 12) ---- */
+
+/* HSV → RGB (hue 0-1531 = 0-360° scaled by 256/60, sat/val 0-255).
+ * Integer-only, good enough for LED animation. */
+static void hsv_rgb(uint16_t hue, uint8_t sat, uint8_t val,
+                    uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    hue %= 1536;
+    uint8_t sector = (uint8_t)(hue / 256);
+    uint8_t frac = (uint8_t)(hue & 0xFF);
+    uint8_t q = (uint8_t)(val * (255 - sat) / 255);
+    uint8_t d = (uint8_t)(val * (255 - (uint16_t)sat * frac / 255) / 255);
+    uint8_t e = (uint8_t)(val * (255 - (uint16_t)sat * (255 - frac) / 255) / 255);
+    uint8_t rr, gg, bb;
+    switch (sector) {
+    case 0: rr = val; gg = e; bb = q; break;
+    case 1: rr = d; gg = val; bb = q; break;
+    case 2: rr = q; gg = val; bb = e; break;
+    case 3: rr = q; gg = d; bb = val; break;
+    case 4: rr = e; gg = q; bb = val; break;
+    default: rr = val; gg = q; bb = d; break;
+    }
+    *r = rr; *g = gg; *b = bb;
+}
+
+static uint8_t rd_u8p(const ml_layer_t *l, uint8_t idx)
+{
+    return idx < l->param_len ? l->param[idx] : 0;
+}
+
+static uint16_t rd_u16p(const ml_layer_t *l, uint8_t idx)
+{
+    /* u16 LE at param offset idx */
+    return (uint16_t)(rd_u8p(l, idx) | ((uint16_t)rd_u8p(l, idx + 1) << 8));
+}
+
+/* scale each channel by k/255 */
+static void scale_rgb(uint8_t *r, uint8_t *g, uint8_t *b, uint8_t k)
+{
+    *r = (uint8_t)((uint16_t)*r * k / 255);
+    *g = (uint8_t)((uint16_t)*g * k / 255);
+    *b = (uint8_t)((uint16_t)*b * k / 255);
+}
+
+/* Random-ish but frame-deterministic hash (xorshift), for sparkle.
+ * Host tests rely on determinism: same (t, pixel) → same result. */
+static uint8_t sparkle_rand(uint32_t t, uint16_t pixel)
+{
+    uint32_t x = t * 2654435761u ^ ((uint32_t)pixel * 40503u);
+    x ^= x >> 13; x *= 3266489917u; x ^= x >> 16;
+    return (uint8_t)(x & 0xFF);
+}
+
+/* bg.flame: per-pixel noise-driven mix between colorHot and colorCold. */
+static void flame_color(const uint8_t *hot, const uint8_t *cold,
+                        uint32_t t, uint16_t pixel, uint8_t intensity,
+                        uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    /* two wobbling noise terms, period ~512 ms and ~1024 ms */
+    uint8_t n = sparkle_rand(t / 64u, pixel);
+    uint8_t n2 = sparkle_rand(t / 128u + 7u, pixel + 13u);
+    uint32_t mix = ((uint32_t)n * intensity / 100u +
+                    (uint32_t)n2 * intensity / 200u);
+    if (mix > 255) mix = 255;
+    *r = (uint8_t)((cold[0] * (255 - mix) + hot[0] * mix) / 255);
+    *g = (uint8_t)((cold[1] * (255 - mix) + hot[1] * mix) / 255);
+    *b = (uint8_t)((cold[2] * (255 - mix) + hot[2] * mix) / 255);
+}
+
+/* Dynamic effects: fill `head[MLARR_FX_BUF]` with 255 where the dynamic
+ * layer covers logical pixel i (group length n), 0 where it shows the
+ * background. The caller then per-pixel mixes bg → dy over the mask. */
+#define MLARR_FX_BUF 256
+
+static void dy_mask(const ml_layer_t *l, uint16_t effect_id,
+                    uint32_t t, uint16_t n, uint8_t *mask)
+{
+    memset(mask, 0, n);
+    switch (effect_id) {
+    case MLARR_FX_DY_COMET: {
+        /* param: color(3) tailLen(1) speedMs(u16) reverse(1) */
+        uint8_t tail = rd_u8p(l, 3);
+        uint16_t speed = rd_u16p(l, 4);
+        uint8_t rev = rd_u8p(l, 6);
+        if (speed == 0) speed = 1;
+        uint32_t head = (t / speed) % n;
+        for (uint16_t i = 0; i < n; i++) {
+            /* signed head→pixel distance, tail extends backwards */
+            int32_t d = (int32_t)(rev ? n - 1 - head : head) - (int32_t)i;
+            if (d >= 0 && d < tail) {
+                /* fade over the tail: head=255 → tail tip≈0 */
+                uint32_t k = 255u - (uint32_t)d * 255u / tail;
+                mask[i] = (uint8_t)k;
+            }
+        }
+        break;
+    }
+    case MLARR_FX_DY_SCAN: {
+        /* param: color(3) width(1) speedMs(u16) direction(1) 0=forward */
+        uint8_t width = rd_u8p(l, 3);
+        uint16_t speed = rd_u16p(l, 4);
+        uint8_t dir = rd_u8p(l, 6);
+        if (speed == 0) speed = 1;
+        if (width == 0) width = 1;
+        uint32_t head = (t / speed) % n;
+        for (uint16_t i = 0; i < n; i++) {
+            uint16_t pos = dir ? (uint16_t)(n - 1 - head) : (uint16_t)head;
+            uint16_t d = i >= pos ? (uint16_t)(i - pos) : (uint16_t)(pos - i);
+            if (d < width) mask[i] = 255;
+        }
+        break;
+    }
+    case MLARR_FX_DY_BLINK: {
+        /* param: color(3) onMs(u16) offMs(u16) duty(1) — duty scales on-glow */
+        uint16_t on = rd_u16p(l, 3);
+        uint16_t off = rd_u16p(l, 5);
+        uint8_t duty = rd_u8p(l, 7);
+        uint32_t period = (uint32_t)on + off;
+        if (period == 0) break;
+        uint32_t ph = t % period;
+        uint32_t k = duty == 100 ? 255u
+                   : duty == 0 ? 0u
+                   : 255u * duty / 100u;
+        if (ph < on && k > 0) {
+            /* trapezoid: on for onMs, brightness = duty% */
+            memset(mask, (uint8_t)k, n);
+        }
+        break;
+    }
+    case MLARR_FX_DY_RAINBOWFLOW: {
+        /* param: saturation(1) brightness(1) speedMs(u16) — handled
+         * per-pixel in the renderer (hue offset by logical position). */
+        memset(mask, 255, n);
+        break;
+    }
+    case MLARR_FX_DY_SPARKLE: {
+        /* param: color(3) density(1) decayMs(u16) — per-pixel hash decides
+         * spark on/off, decay fades it. */
+        uint8_t density = rd_u8p(l, 3);
+        uint16_t decay = rd_u16p(l, 5);
+        if (decay == 0) decay = 1;
+        for (uint16_t i = 0; i < n; i++) {
+            /* spark window per pixel: hash(t/decay) < density% */
+            uint32_t slot = t / decay;
+            uint8_t r_ = sparkle_rand(slot, i);
+            if (r_ < density) {
+                uint32_t age = t % decay;
+                uint32_t k = 255u - age * 255u / decay;
+                mask[i] = (uint8_t)k;
+            }
+        }
+        break;
+    }
+    case MLARR_FX_DY_PULSE: {
+        /* param: color(3) periodMs(u16) width(1) fromCenter(1) — expanding
+         * ring of `width` logical pixels per period. */
+        uint16_t period = rd_u16p(l, 3);
+        uint8_t width = rd_u8p(l, 5);
+        uint8_t center = rd_u8p(l, 6);
+        if (period == 0) period = 1;
+        if (width == 0) width = 1;
+        uint32_t span = period > n ? period / n : 1; /* ms per logical pixel */
+        uint32_t travel = (t / span) % (n + width);
+        for (uint16_t i = 0; i < n; i++) {
+            uint32_t d = center
+                ? (i >= (n - 1) / 2 ? (uint32_t)(i - (n - 1) / 2)
+                                    : (uint32_t)((n - 1) / 2 - i))
+                : i;
+            if (travel >= d && travel < d + width) mask[i] = 255;
+        }
+        break;
+    }
+    case MLARR_FX_DY_COLORWIPE: {
+        /* param: colorA(3) colorB(3) wipeMs(u16) holdMs(u16) — wipe from A
+         * to B over wipeMs, hold B for holdMs, then restart at A. Full
+         * coverage: per-pixel color (A before the front, B after) is
+         * chosen in the renderer; the mask only marks dy as opaque. */
+        memset(mask, 255, n);
+        break;
+    }
+    default:
+        /* Unknown id on the dy layer: opaque full coverage (static color
+         * fallback per spec §2.11). */
+        memset(mask, 255, n);
+        break;
+    }
+}
 
 static void apply_effect(const ml_layer_t *l, uint16_t stage_offset_ms,
                          uint16_t stage_duration_ms, uint8_t fade_ms,
+                         uint32_t group_t_ms, uint16_t group_len,
                          uint8_t *r, uint8_t *g, uint8_t *b)
 {
-    switch (l->effect_id) {
-    case MLARR_FX_BG_SOLID:
+    uint16_t id = l->effect_id;
+    switch (id) {
+    case MLARR_FX_BG_SOLID: {
         if (l->param_len >= 3) {
-            *r = l->param[0];
-            *g = l->param[1];
-            *b = l->param[2];
+            *r = l->param[0]; *g = l->param[1]; *b = l->param[2];
         }
         break;
+    }
+    case MLARR_FX_BG_GRADIENT: {
+        /* param: colorA(3) colorB(3) reverse(1) — mix along logical pixel */
+        uint8_t rev = rd_u8p(l, 6);
+        (void)rev; /* per-pixel handled in render; here whole-group fallback */
+        break;
+    }
+    case MLARR_FX_BG_BREATH: {
+        /* param: color(3) periodMs(u16) minLevel(1, 0-100) */
+        uint16_t period = rd_u16p(l, 3);
+        uint8_t minlvl = rd_u8p(l, 5);
+        if (period == 0) period = 1;
+        /* half-sine over periodMs */
+        uint32_t ph = group_t_ms % period;
+        uint32_t k = (ph < period / 2)
+            ? 255u * ph / (period / 2)
+            : 255u * (period - ph) / (period / 2);
+        /* floor at minLevel% of full */
+        uint32_t flo = (uint32_t)255u * minlvl / 100u;
+        if (k < flo) k = flo;
+        *r = l->param_len >= 3 ? l->param[0] : 255;
+        *g = l->param_len >= 3 ? l->param[1] : 255;
+        *b = l->param_len >= 3 ? l->param[2] : 255;
+        scale_rgb(r, g, b, (uint8_t)k);
+        break;
+    }
+    case MLARR_FX_BG_RAINBOW_LOW: {
+        /* param: saturation(1) brightness(1) periodMs(u16) — hue sweeps the
+         * full wheel every periodMs; gradient across the group so it reads
+         * as a slow rainbow wash. */
+        uint8_t sat = rd_u8p(l, 0);
+        uint8_t val = rd_u8p(l, 1);
+        uint16_t period = rd_u16p(l, 2);
+        if (period == 0) period = 1;
+        uint16_t hue = (uint16_t)(1536u * (group_t_ms % period) / period);
+        hsv_rgb(hue, sat, val, r, g, b);
+        break;
+    }
+    case MLARR_FX_BG_FLAME: {
+        /* param: colorHot(3) colorCold(3) intensity(1, 0-100) */
+        uint8_t hot[3], cold[3];
+        for (int i = 0; i < 3; i++) {
+            hot[i] = rd_u8p(l, i);
+            cold[i] = rd_u8p(l, 3 + i);
+        }
+        uint8_t intensity = rd_u8p(l, 6);
+        /* per-pixel flame handled in render; whole-group approximation here
+         * uses pixel 0 (acceptable: real flame needs per-pixel anyway). */
+        flame_color(hot, cold, group_t_ms, 0, intensity, r, g, b);
+        break;
+    }
     default:
         /* Unknown id → static color: primaryColor if present, else white
          * (spec §2.11). */
         if (l->param_len >= 3) {
-            *r = l->param[0];
-            *g = l->param[1];
-            *b = l->param[2];
+            *r = l->param[0]; *g = l->param[1]; *b = l->param[2];
         } else {
             *r = *g = *b = 255;
         }
         break;
     }
 
-    /* Fade-in: linear over fade_ms from black (spec §2.10: 0 = hard cut). */
-    if (fade_ms > 0 && stage_offset_ms < fade_ms) {
-        uint32_t k = (uint32_t)stage_offset_ms * 255 / fade_ms;
-        *r = (uint8_t)((uint16_t)*r * k / 255);
-        *g = (uint8_t)((uint16_t)*g * k / 255);
-        *b = (uint8_t)((uint16_t)*b * k / 255);
-    }
+    /* Fade-in is applied per-pixel by the renderer (per-layer path removed
+     * to avoid double-scaling). */
+    (void)fade_ms;
+    (void)stage_offset_ms;
     (void)stage_duration_ms;
 }
 
@@ -291,27 +532,109 @@ int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
         }
         const ml_stage_t *st = &g->stages[si];
 
-        uint8_t r = 0, gc = 0, b = 0;
-        /* Overlay composition: dynamic layers paint over background layers. */
-        static const uint8_t role_order[MLARR_MAX_LAYERS] = {MLARR_ROLE_BG, MLARR_ROLE_DY};
-        for (uint8_t pass = 0; pass < MLARR_MAX_LAYERS; pass++) {
-            for (uint8_t li = 0; li < st->layer_count; li++) {
-                const ml_layer_t *l = &st->layers[li];
-                if (l->role != role_order[pass]) continue;
-                apply_effect(l, (uint16_t)t, st->duration_ms, st->fade_in_ms,
-                             &r, &gc, &b);
+        uint16_t glen = mlarr_group_len(g);
+        if (glen == 0) continue;
+
+        /* Find bg / dy layers once. Role enforcement (§2.11): the effect's
+         * real role decides which layer slot it fills — a bg-listed effect
+         * in the dy slot never acts as dynamic coverage and vice versa.
+         * Unknown ids have no role and follow the wire role (fallback
+         * static color either way). */
+        const ml_layer_t *bg = NULL;
+        const ml_layer_t *dy = NULL;
+        for (uint8_t li = 0; li < st->layer_count; li++) {
+            const ml_layer_t *l = &st->layers[li];
+            int er = mlarr_effect_role(l->effect_id);
+            if (er == MLARR_ROLE_BG && bg == NULL) bg = l;
+            else if (er == MLARR_ROLE_DY && dy == NULL) dy = l;
+            else if (er == -1) {
+                if (l->role == MLARR_ROLE_BG && bg == NULL) bg = l;
+                else if (l->role == MLARR_ROLE_DY && dy == NULL) dy = l;
             }
         }
 
-        /* Map logical group pixel i to physical pixel. */
-        uint16_t glen = mlarr_group_len(g);
+        /* Dynamic-layer coverage mask, per logical pixel (255 = dy wins). */
+        uint8_t mask[MLARR_FX_BUF];
+        const uint8_t *mask_p = NULL; /* per-pixel mask or NULL when n/a */
+        if (dy != NULL && glen <= MLARR_FX_BUF) {
+            dy_mask(dy, dy->effect_id, t, glen, mask);
+            mask_p = mask;
+        }
+
+        uint8_t r = 0, gc = 0, b = 0;
+        /* Compute the whole-group base color from the bg layer. */
+        if (bg != NULL) {
+            apply_effect(bg, (uint16_t)t, st->duration_ms, st->fade_in_ms,
+                         t, glen, &r, &gc, &b);
+        }
+
+        /* Map logical group pixel i to physical pixel, composing bg + dy
+         * per pixel (覆盖式: dy wins wherever its mask is opaque). */
+        uint8_t dr = 0, dg = 0, db = 0;
+        if (dy != NULL) {
+            dr = dg = db = 0;
+            if (dy->param_len >= 3) {
+                dr = dy->param[0]; dg = dy->param[1]; db = dy->param[2];
+            } else {
+                dr = dg = db = 255; /* fallback: primaryColor absent → white */
+            }
+        }
+
         for (uint16_t i = 0; i < glen && i < pixels; i++) {
+            uint8_t pr = r, pg = gc, pb = b;
+
+            /* per-pixel bg effects: gradient position + flame noise */
+            if (bg != NULL && bg->effect_id == MLARR_FX_BG_GRADIENT &&
+                bg->param_len >= 6) {
+                uint8_t rev = rd_u8p(bg, 6);
+                uint32_t pos = rev ? (uint32_t)(glen - 1 - i) : i;
+                uint32_t k = glen > 1 ? pos * 255u / (glen - 1) : 0;
+                pr = (uint8_t)((bg->param[0] * (255u - k) + bg->param[3] * k) / 255);
+                pg = (uint8_t)((bg->param[1] * (255u - k) + bg->param[4] * k) / 255);
+                pb = (uint8_t)((bg->param[2] * (255u - k) + bg->param[5] * k) / 255);
+            } else if (bg != NULL && bg->effect_id == MLARR_FX_BG_FLAME &&
+                       bg->param_len >= 7) {
+                uint8_t intensity = rd_u8p(bg, 6);
+                flame_color(&bg->param[0], &bg->param[3], t, i, intensity,
+                            &pr, &pg, &pb);
+            }
+
+            if (bg != NULL && st->fade_in_ms > 0 && t < st->fade_in_ms) {
+                uint32_t k = t * 255u / st->fade_in_ms;
+                scale_rgb(&pr, &pg, &pb, (uint8_t)k);
+            }
+
+            /* dy.colorWipe: per-pixel A→B switch at the wipe front */
+            if (dy != NULL && dy->effect_id == MLARR_FX_DY_COLORWIPE) {
+                uint16_t wipe = rd_u16p(dy, 6);
+                uint16_t hold = rd_u16p(dy, 8);
+                if (wipe == 0) wipe = 1;
+                uint32_t period = (uint32_t)wipe + hold;
+                uint32_t ph = t % period;
+                uint32_t front = ph >= wipe ? glen
+                                            : (uint32_t)glen * ph / wipe;
+                const uint8_t *c = i < front ? &dy->param[3] : &dy->param[0];
+                pr = c[0]; pg = c[1]; pb = c[2];
+            } else if (dy != NULL && dy->effect_id == MLARR_FX_DY_RAINBOWFLOW) {
+                uint8_t sat = rd_u8p(dy, 0);
+                uint8_t val = rd_u8p(dy, 1);
+                uint16_t speed = rd_u16p(dy, 3);
+                if (speed == 0) speed = 1;
+                uint16_t hue = (uint16_t)(((t / speed) * 8u + i * 16u) % 1536);
+                hsv_rgb(hue, sat, val, &pr, &pg, &pb);
+            } else if (dy != NULL && mask_p != NULL && mask_p[i] > 0) {
+                uint32_t k = mask_p[i];
+                pr = (uint8_t)((dr * k) / 255);
+                pg = (uint8_t)((dg * k) / 255);
+                pb = (uint8_t)((db * k) / 255);
+            }
+
             uint16_t phys = mlarr_pixel_at(g, i);
             if (phys >= pixels) continue;
             uint8_t *px = rgb + (size_t)phys * 3;
-            px[0] = r;
-            px[1] = gc;
-            px[2] = b;
+            px[0] = pr;
+            px[1] = pg;
+            px[2] = pb;
         }
     }
     return MLARR_OK;
