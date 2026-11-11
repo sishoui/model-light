@@ -1,0 +1,15 @@
+{
+  "pages": [
+    "pages/devices/devices",
+    "pages/device/device"
+  ],
+  "window": {
+    "navigationBarTitleText": "模型灯效",
+    "navigationBarBackgroundColor": "#1f2937",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#111827"
+  },
+  "requiredPrivateInfos": [],
+  "permission": {},
+  "sitemapLocation": "sitemap.json"
+}
