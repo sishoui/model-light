@@ -16,6 +16,32 @@ firmware/
     └── main.c              启动顺序：输出层 → BLE → 帧任务 → 空闲 RAM 打印
 ```
 
+## 主机侧单元测试（本机已验证配方）
+
+各组件 `host_tests/` 是纯 C 单测（不需要 ESP-IDF）。本机（Windows）工具链位置与完整命令：
+
+```powershell
+# 工具链（不在 PATH 中，用绝对路径）
+$CMAKE = "C:\Espressif\tools\cmake\3.30.2\bin\cmake.exe"   # ctest.exe 同目录
+$GCC   = <见下>                                             # 本机 gcc.exe 位置需自行定位：
+                                                            # Get-ChildItem C:\Espressif -Filter gcc.exe -Recurse -Depth 6
+                                                            # 若 Espressif 未装 gcc，用 MSYS2/MinGW 的 gcc 亦可（mlarr 等组件为纯 C）
+
+# 每个组件独立构建（在仓库根执行；组件列表见 firmware/components/*/host_tests）
+foreach ($comp in "mlarr","mlproto","mltoken","mlrt","mlota") {
+  & $CMAKE -S "firmware/components/$comp/host_tests" -B "C:\ml-build\host-tests\$comp" -G Ninja `
+      -DCMAKE_MAKE_PROGRAM="C:\Espressif\tools\ninja\1.12.1\ninja.exe" `
+      -DCMAKE_C_COMPILER=$GCC
+  & $CMAKE --build "C:\ml-build\host-tests\$comp"
+  & "C:\Espressif\tools\cmake\3.30.2\bin\ctest.exe" --test-dir "C:\ml-build\host-tests\$comp" --output-on-failure
+}
+```
+
+要点：
+- 构建目录放 ASCII 路径（`C:\ml-build\...`），与整库镜像同一坑：非 ASCII 路径会让 ninja/gcc 行为异常。
+- ninja 位置：`C:\Espressif\tools\ninja\1.12.1\ninja.exe`（cmake 默认生成器在无 VS 环境下会失败，显式 `-G Ninja` 最稳）。
+- CI（`.github/workflows/ci.yml`）在 Ubuntu 上跑同一组 ctest，命令一致。
+
 ## 构建
 
 需要 ESP-IDF ≥ 5.4。**注意**：项目路径含非 ASCII 字符（如 `项目`）时，

@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
+    build: ./api
     image: model-light-api:latest
     environment:
       DATABASE_URL: mysql://ml:${DB_PASSWORD}@db:3306/modellight

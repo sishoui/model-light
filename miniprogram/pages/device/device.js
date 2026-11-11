@@ -112,10 +112,11 @@ Page({
     try {
       const info = await this.ble.readDeviceInfo();
       if (!info) return;
-      // M7：fwVersion 来自 0005 固件版本字段；当前 parseDeviceInfo 未暴露（协议布局分歧未定），
-      // 暂缺时 restore/autoPush 传 null → 服务端 stale 恒 false，恢复提示不受影响。
+      // spec §2.8：fwMajor/fwMinor 在 0005 前 2 B（interop 测试锁定布局）
+      this._fwVersion = info.fwMajor != null ? `${info.fwMajor}.${info.fwMinor}` : null;
       const local = { major: TEST_PROTO_MAJOR, minor: TEST_PROTO_MINOR };
-      const readOnly = isReadOnlyProtocol(local, info);
+      const remote = { major: info.protoMajor, minor: info.protoMinor };
+      const readOnly = isReadOnlyProtocol(local, remote);
       this.setData({
         protoLabel: `v${info.protoMajor}.${info.protoMinor}`,
         readOnly,
