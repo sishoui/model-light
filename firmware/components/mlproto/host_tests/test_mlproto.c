@@ -15,8 +15,8 @@ static void test_adv_manufacturer_layout(void)
     assert(b[0] == 0xFF && b[1] == 0xFF);
     /* proto major.minor = 1.0 */
     assert(b[2] == 1 && b[3] == 0);
-    /* caps LE: only bg.solid → 0x0001 */
-    assert(b[4] == 0x01 && b[5] == 0x00);
+    /* caps LE: 12 v1 effects (bits 0-11) + OTA (bit 12) → 0x1FFF */
+    assert(b[4] == 0xFF && b[5] == 0x1F);
     /* run state 0 = 回放 */
     assert(b[6] == 0);
     /* [7..8] reserved, zero */
@@ -66,7 +66,7 @@ static void test_device_info_layout(void)
     mlproto_device_info(b, 1, 2, 0xAABBCCDDu);
     assert(b[0] == 1 && b[1] == 2);   /* firmware version */
     assert(b[2] == 1 && b[3] == 0);   /* protocol version */
-    assert(b[4] == 0x01 && b[5] == 0x00); /* caps LE */
+    assert(b[4] == 0xFF && b[5] == 0x1F); /* caps LE */
     assert(b[6] == 0xDD && b[7] == 0xCC && b[8] == 0xBB && b[9] == 0xAA);
 }
 

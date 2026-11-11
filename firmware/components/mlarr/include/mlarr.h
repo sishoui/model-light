@@ -80,12 +80,28 @@ enum {
     MLARR_ROLE_DY = 1,
 };
 
-/* Effect ids (spec §2.11 first-version table order; capability bitmap bit0-11). */
+/* Effect ids (spec §2.11 first-version table order; capability bitmap bit0-11).
+ * Param byte layout is byte-aligned with miniprogram/lib/effect-schema.js
+ * encodeParams: color 3B, bool/enum 1B, int/speed u16 LE, in schema order. */
 enum {
-    MLARR_FX_BG_SOLID = 0,
-    /* 1..11 reserved for the rest of the v1 effect list; anything else is
-     * "unknown" and renders as fallback static color. */
+    MLARR_FX_BG_SOLID       = 0,
+    MLARR_FX_BG_GRADIENT    = 1,
+    MLARR_FX_BG_BREATH      = 2,
+    MLARR_FX_BG_RAINBOW_LOW = 3,
+    MLARR_FX_BG_FLAME       = 4,
+    MLARR_FX_DY_COMET       = 5,
+    MLARR_FX_DY_SCAN        = 6,
+    MLARR_FX_DY_BLINK       = 7,
+    MLARR_FX_DY_RAINBOWFLOW = 8,
+    MLARR_FX_DY_SPARKLE     = 9,
+    MLARR_FX_DY_PULSE       = 10,
+    MLARR_FX_DY_COLORWIPE   = 11,
 };
+
+/* Which layer an effect may live in (spec §2.11 `role`). Returns
+ * MLARR_ROLE_BG (ids 0-4), MLARR_ROLE_DY (ids 5-11) or -1 for unknown ids
+ * (unknown ids are allowed on either layer and fall back to static color). */
+int mlarr_effect_role(uint16_t effect_id);
 
 typedef struct {
     uint8_t start;    /* [start, end) */

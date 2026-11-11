@@ -9,8 +9,8 @@ void mlproto_adv_manufacturer(uint8_t buf[9], uint8_t run_state)
     buf[1] = (uint8_t)(MLPROTO_VENDOR_ID_TEST >> 8);
     buf[2] = MLPROTO_MAJOR;
     buf[3] = MLPROTO_MINOR;
-    buf[4] = (uint8_t)(MLPROTO_CAPS_F1 & 0xFF);
-    buf[5] = (uint8_t)(MLPROTO_CAPS_F1 >> 8);
+    buf[4] = (uint8_t)(MLPROTO_CAPS_F4 & 0xFF);
+    buf[5] = (uint8_t)(MLPROTO_CAPS_F4 >> 8);
     buf[6] = run_state;
     buf[7] = 0;
     buf[8] = 0;
@@ -42,8 +42,8 @@ void mlproto_device_info(uint8_t buf[10], uint8_t fw_major, uint8_t fw_minor,
     buf[1] = fw_minor;
     buf[2] = MLPROTO_MAJOR;
     buf[3] = MLPROTO_MINOR;
-    buf[4] = (uint8_t)(MLPROTO_CAPS_F1 & 0xFF);
-    buf[5] = (uint8_t)(MLPROTO_CAPS_F1 >> 8);
+    buf[4] = (uint8_t)(MLPROTO_CAPS_F4 & 0xFF);
+    buf[5] = (uint8_t)(MLPROTO_CAPS_F4 >> 8);
     buf[6] = (uint8_t)(device_id & 0xFF);
     buf[7] = (uint8_t)((device_id >> 8) & 0xFF);
     buf[8] = (uint8_t)((device_id >> 16) & 0xFF);

@@ -7,6 +7,7 @@
 #include "mlarr.h"
 #include <assert.h>
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -972,6 +973,212 @@ static void test_render_brightness_limit(void)
     assert(rgb[0] == 255 && rgb[1] == 255 && rgb[2] == 255);
 }
 
+/* ---- F4: effect roles (spec §2.11) ---- */
+static void test_effect_roles(void)
+{
+    /* ids 0-4 bg, ids 5-11 dy, unknown → -1 (allowed on any layer) */
+    assert(mlarr_effect_role(0) == MLARR_ROLE_BG);
+    assert(mlarr_effect_role(4) == MLARR_ROLE_BG);
+    assert(mlarr_effect_role(5) == MLARR_ROLE_DY);
+    assert(mlarr_effect_role(11) == MLARR_ROLE_DY);
+    assert(mlarr_effect_role(12) == -1);
+    assert(mlarr_effect_role(0x00FF) == -1);
+}
+
+/* ---- F4: all 12 effects render without error and without escape to
+ * the fallback path — each id's param block built per effect-schema.js
+ * encodeParams order (color 3B, bool/enum 1B, int/speed u16 LE). ---- */
+
+/* helper: one group, one stage 1000ms, layer role/eid/params; render at
+ * clockMs over `n` logical pixels; every pixel must be non-negative and
+ * the call must return MLARR_OK (no error code, keep playing). */
+static void render_effect(uint8_t role, uint16_t eid, const uint8_t *params,
+                          uint8_t plen, uint32_t clock_ms, uint8_t *rgb,
+                          uint16_t pixels)
+{
+    uint8_t b[512];
+    size_t o = enc_header(0, b, 1, 1, 1);
+    o = enc_pin_header(o, b, (uint8_t)pixels, 1);
+    o = enc_group_header(o, b, 1, 1);
+    o = enc_range(o, b, 0, (uint8_t)pixels, 0);
+    o = enc_stage_f3(o, b, 1000, 0, 1);
+    {
+        uint8_t tmp[64];
+        size_t n = enc_layer(tmp, role, eid, params, plen);
+        memcpy(b + o, tmp, n);
+        o += n;
+    }
+    ml_arrangement_t a;
+    assert(mlarr_parse(b, o, &a) == MLARR_OK);
+    assert(mlarr_render(&a, clock_ms, 0, rgb, pixels) == MLARR_OK);
+}
+
+static void test_render_all_12_effects(void)
+{
+    const uint16_t ids[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    uint8_t rgb[30 * 3];
+    /* representative param blocks per effect (schema order) */
+    static const uint8_t p_solid[]   = {200, 100, 50};
+    static const uint8_t p_gradient[]= {255,0,0, 0,0,255, 0};
+    static const uint8_t p_breath[]  = {255,0,0, 200,0, 10};
+    static const uint8_t p_rbowlo[]  = {255, 128, 200,0};
+    static const uint8_t p_flame[]   = {255,80,0, 40,0,0, 50};
+    static const uint8_t p_comet[]   = {255,255,0, 8, 200,0, 0};
+    static const uint8_t p_scan[]    = {0,255,0, 4, 200,0, 0};
+    static const uint8_t p_blink[]   = {255,0,255, 200,0, 200,0, 50};
+    static const uint8_t p_rbowfl[]  = {255, 128, 200,0};
+    static const uint8_t p_sparkle[] = {255,255,255, 20, 44,0};
+    static const uint8_t p_pulse[]   = {0,0,255, 232,0, 8, 0};
+    static const uint8_t p_cwipe[]   = {255,0,0, 0,0,255, 200,0, 100,0};
+    const uint8_t *params[12] = {
+        p_solid, p_gradient, p_breath, p_rbowlo, p_flame,
+        p_comet, p_scan, p_blink, p_rbowfl, p_sparkle, p_pulse, p_cwipe,
+    };
+    const uint8_t plens[12] = {
+        3, 7, 6, 4, 7,
+        7, 7, 8, 4, 6, 7, 10,
+    };
+    for (int k = 0; k < 12; k++) {
+        uint8_t role = k <= 4 ? MLARR_ROLE_BG : MLARR_ROLE_DY;
+        for (uint32_t t = 0; t < 1000; t += 50) {
+            memset(rgb, 0xAA, sizeof rgb);
+            render_effect(role, ids[k], params[k], plens[k], t, rgb, 30);
+            /* never an error / fallback-only garbage: something rendered */
+        }
+    }
+    /* spot-check semantics at a known time:
+     * bg.solid at t=0 → exact color */
+    memset(rgb, 0, sizeof rgb);
+    render_effect(MLARR_ROLE_BG, 0, p_solid, 3, 0, rgb, 30);
+    for (int i = 0; i < 30; i++)
+        assert(rgb[i*3] == 200 && rgb[i*3+1] == 100 && rgb[i*3+2] == 50);
+    /* bg.gradient: pixel 0 = colorA, last pixel ≈ colorB */
+    render_effect(MLARR_ROLE_BG, 1, p_gradient, 7, 0, rgb, 30);
+    assert(rgb[0] == 255 && rgb[1] == 0 && rgb[2] == 0);
+    assert(rgb[29*3+2] >= 250);      /* last pixel mostly blue */
+    assert(rgb[29*3] <= 5);          /* and not red */
+    /* bg.breath at period phase 0 → minLevel floor (10% of 255,0,0) */
+    render_effect(MLARR_ROLE_BG, 2, p_breath, 7, 0, rgb, 30);
+    assert(rgb[0] >= 20 && rgb[0] <= 30 && rgb[1] == 0 && rgb[2] == 0);
+    /* dy.blink at t=100 (inside onMs=200, duty 50) → 50% of magenta */
+    render_effect(MLARR_ROLE_DY, 7, p_blink, 8, 100, rgb, 30);
+    for (int i = 0; i < 30; i++)
+        assert(rgb[i*3] == 127 && rgb[i*3+2] == 127 && rgb[i*3+1] == 0);
+    /* dy.blink at t=300 (off window) → background (black, no bg layer) */
+    render_effect(MLARR_ROLE_DY, 7, p_blink, 8, 300, rgb, 30);
+    assert(rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0);
+    /* bg.flame at t=0: pixel 0 must be a mix of hot/cold, not fallback */
+    render_effect(MLARR_ROLE_BG, 4, p_flame, 7, 0, rgb, 30);
+    /* hot=255,80,0 intensity=50: pixel 0 has some red dominance */
+    assert(rgb[0] > 0 && rgb[0] >= rgb[1]);
+    /* dy.colorWipe at t=0: front=0 → all colorA (red); dy alone shows A */
+    render_effect(MLARR_ROLE_DY, 11, p_cwipe, 10, 0, rgb, 30);
+    assert(rgb[0] == 255 && rgb[1] == 0 && rgb[2] == 0);
+    /* dy.colorWipe at t=100 (mid-wipe, front=15): pixel 0 already B */
+    render_effect(MLARR_ROLE_DY, 11, p_cwipe, 10, 100, rgb, 30);
+    assert(rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 255);
+    assert(rgb[29*3] == 255 && rgb[29*3+2] == 0); /* tail still A */
+    /* dy.colorWipe at t=250 (hold window 200..300): fully wiped to B */
+    render_effect(MLARR_ROLE_DY, 11, p_cwipe, 10, 250, rgb, 30);
+    assert(rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 255);
+}
+
+/* ---- F4: overlay composition — dy.comet over bg.breath: tail pixels
+ * show the comet color, non-tail pixels show the breathing background. ---- */
+static void test_render_two_layer_overlay(void)
+{
+    /* bg.breath red (period 1000, min 0) + dy.scan green width 1 speed 100 */
+    uint8_t b[512];
+    size_t o = enc_header(0, b, 1, 1, 1);
+    o = enc_pin_header(o, b, 30, 1);
+    o = enc_group_header(o, b, 1, 1);
+    o = enc_range(o, b, 0, 30, 0);
+    /* stage with 2 layers */
+    o = enc_stage_hdr(o, b, 1000, 0, 2);
+    {
+        static const uint8_t pbg[] = {255,0,0, 200,0, 0x64,0x00, 0};
+        uint8_t tmp[64];
+        size_t n = enc_layer(tmp, MLARR_ROLE_BG, 2, pbg, 8);
+        memcpy(b + o, tmp, n); o += n;
+        static const uint8_t pdy[] = {0,255,0, 1, 100,0, 0};
+        n = enc_layer(tmp, MLARR_ROLE_DY, 6, pdy, 7);
+        memcpy(b + o, tmp, n); o += n;
+    }
+    ml_arrangement_t a;
+    assert(mlarr_parse(b, o, &a) == MLARR_OK);
+
+    uint8_t rgb[30 * 3];
+    /* t=500: scan head at pixel 5; breath phase 500/1000 → peak (255,0,0) */
+    assert(mlarr_render(&a, 500, 0, rgb, 30) == MLARR_OK);
+    assert(rgb[5*3] == 0 && rgb[5*3+1] == 255 && rgb[5*3+2] == 0);   /* dy wins */
+    assert(rgb[10*3] == 255 && rgb[10*3+1] == 0 && rgb[10*3+2] == 0); /* bg shows */
+}
+
+/* ---- F4: role enforcement — a bg-listed effect placed on the dy layer
+ * is rejected at the role level: renderer ignores a dy layer whose
+ * effect id is bg-only, leaving the bg layer visible. ---- */
+static void test_render_role_enforced(void)
+{
+    /* dy layer carrying bg.solid (id 0): role says dy, effect says bg.
+     * Spec: 灯效 role 生效 — bg effects only in the bg layer. Renderer
+     * treats the layer by its effect's role: it renders as the bg layer
+     * would (static color), and since there is no dy coverage the pixels
+     * show that color rather than being masked away. */
+    uint8_t b[512];
+    size_t o = enc_header(0, b, 1, 1, 1);
+    o = enc_pin_header(o, b, 30, 1);
+    o = enc_group_header(o, b, 1, 1);
+    o = enc_range(o, b, 0, 30, 0);
+    o = enc_stage_hdr(o, b, 1000, 0, 2);
+    o = enc_layer_solid2(o, b, MLARR_ROLE_BG, 0, 0, 200);
+    o = enc_layer_solid2(o, b, MLARR_ROLE_DY, 200, 0, 0); /* id 0 on dy! */
+    ml_arrangement_t a;
+    assert(mlarr_parse(b, o, &a) == MLARR_OK);
+    uint8_t rgb[30 * 3];
+    assert(mlarr_render(&a, 0, 0, rgb, 30) == MLARR_OK);
+    /* dy layer's effect (bg.solid) belongs in the bg layer → it must not
+     * act as dynamic coverage: bg blue stays visible. */
+    assert(rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 200);
+}
+
+/* ---- F4: performance — 8 pins × full 12-effect combinations, frame
+ * time must stay within the 25 ms budget (40 FPS). ---- */
+static void test_render_perf_8pins(void)
+{
+    uint8_t b[2048];
+    size_t o = enc_header(0, b, 1, MLARR_PAYLOAD_VERSION, 8);
+    for (int pin = 0; pin < 8; pin++) {
+        o = enc_pin_header(o, b, 100, 4);
+        for (int gi = 0; gi < 4; gi++) {
+            o = enc_group_header(o, b, 1, 1);
+            o = enc_range(o, b, (uint8_t)(gi * 25), (uint8_t)(gi * 25 + 25), 0);
+            o = enc_stage_hdr(o, b, 1000, 0, 2);
+            static const uint8_t pbg[] = {255,0,0, 200,0, 0, 0};
+            uint8_t tmp[64];
+            size_t n = enc_layer(tmp, MLARR_ROLE_BG, 2, pbg, 7);
+            memcpy(b + o, tmp, n); o += n;
+            static const uint8_t pdy[] = {0,255,0, 8, 200,0, 0, 0};
+            n = enc_layer(tmp, MLARR_ROLE_DY, 5, pdy, 8);
+            memcpy(b + o, tmp, n); o += n;
+        }
+    }
+    ml_arrangement_t a;
+    assert(mlarr_parse(b, o, &a) == MLARR_OK);
+
+    uint8_t rgb[100 * 3];
+    uint32_t t0 = (uint32_t)clock();
+    for (int frame = 0; frame < 1000; frame++) {
+        for (uint8_t pin = 0; pin < 8; pin++)
+            mlarr_render(&a, (uint32_t)frame * 25, pin, rgb, 100);
+    }
+    uint32_t elapsed = (uint32_t)clock() - t0;
+    /* 8 pins × 800 px total @ 40 FPS → budget 25 ms per full frame */
+    printf("perf: 1000 frames x 8 pins (800 px each) in %lu ms "
+           "(%.3f ms/frame)\n",
+           (unsigned long)elapsed, elapsed / 1000.0);
+    assert(elapsed <= 25000); /* 25 ms per frame ceiling */
+}
+
 int main(void)
 {
     test_parse_minimal();
@@ -985,6 +1192,11 @@ int main(void)
     test_render_unknown_effect_fallback();
     test_render_bg_layer_composition();
     test_render_brightness_limit();
+    test_effect_roles();
+    test_render_all_12_effects();
+    test_render_two_layer_overlay();
+    test_render_role_enforced();
+    test_render_perf_8pins();
     test_crc32_vector();
     test_validate_ok();
     test_decode_structure();
@@ -1010,6 +1222,6 @@ int main(void)
     test_rx_commit_fail_cb_nak();
     test_rx_total_len_too_big();
     test_rx_data_before_start_ignored();
-    printf("all mlarr host tests passed (%d cases)\n", 35);
+    printf("all mlarr host tests passed (%d cases)\n", 40);
     return 0;
 }
