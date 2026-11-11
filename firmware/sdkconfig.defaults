@@ -21,3 +21,11 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
 # Compiler optimization for frame task headroom.
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# OTA rollback (spec §3.4): new app boots as PENDING_VERIFY until the
+# running app confirms; a broken image rolls back to the other slot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# §7.2 recommendation: keep the RMT ISR IRAM-resident so flash
+# erase/write during OTA does not stall the (paused) LED output.
+CONFIG_RMT_ISR_IRAM_SAFE=y
