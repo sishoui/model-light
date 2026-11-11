@@ -1,9 +1,0 @@
-feat(mini): M7 云端同步——自动上推与手动恢复 (#26)
-
-- lib/cloud-auth.js：wx.login 静默登录、JWT/refresh 缓存与旋转、401 策略（spec-backend §4）
-- lib/cloud-backup.js：PUT/GET backup 请求与响应形状、CRC32 比对（§5.4/§5.5）
-- lib/cloud-sync.js：自动上推（失败静默重试 1 次、pending 下次连接重推）、
-  401 转仅本地、空编排不自动拉只提示一次、stale 需确认、CRC 一致跳过写回（§8）
-- lib/cloud-api.js：wx.request 接线 + 401→刷新→重试一次
-- app.js：启动静默登录；device 详情页连接后自动上推 + 「从云端恢复」按钮
-- 上推/备份任何失败均不阻塞编辑与 BLE 写入
