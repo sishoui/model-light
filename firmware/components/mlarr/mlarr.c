@@ -653,6 +653,7 @@ static inline uint16_t seq_ahead(uint16_t a, uint16_t b)
 struct mlarr_rx {
     mlarr_commit_fn commit;
     mlarr_send_fn   send;
+    mlarr_error_fn  error;
     void           *user;
     uint8_t         proto_major;
 
@@ -721,8 +722,9 @@ static void drain_contiguous(mlarr_rx_t *rx)
     }
 }
 
-mlarr_rx_t *mlarr_rx_new(mlarr_commit_fn commit, mlarr_send_fn send,
-                         void *user, uint8_t proto_major)
+mlarr_rx_t *mlarr_rx_new_full(mlarr_commit_fn commit, mlarr_send_fn send,
+                              mlarr_error_fn error, void *user,
+                              uint8_t proto_major)
 {
     mlarr_rx_t *rx = calloc(1, sizeof *rx);
     if (rx == NULL) {
@@ -730,10 +732,17 @@ mlarr_rx_t *mlarr_rx_new(mlarr_commit_fn commit, mlarr_send_fn send,
     }
     rx->commit = commit;
     rx->send = send;
+    rx->error = error;
     rx->user = user;
     rx->proto_major = proto_major;
     rx->last_ack_ms = 0;
     return rx;
+}
+
+mlarr_rx_t *mlarr_rx_new(mlarr_commit_fn commit, mlarr_send_fn send,
+                         void *user, uint8_t proto_major)
+{
+    return mlarr_rx_new_full(commit, send, NULL, user, proto_major);
 }
 
 void mlarr_rx_free(mlarr_rx_t *rx)
@@ -811,6 +820,9 @@ static void finish(mlarr_rx_t *rx, uint32_t now_ms)
 
 fail:
     rx->send(rx->user, MLARR_CMD_NAK, rx->last_acked_seq, 0, status);
+    if (rx->error != NULL) {
+        rx->error(rx->user, status); /* §2.9: latch errorCode (30 s hold) */
+    }
     reset_session(rx); /* 半份编排立即丢弃，不写 NVS */
 }
 
@@ -830,6 +842,9 @@ static void handle_start(mlarr_rx_t *rx, const uint8_t *f, uint16_t len,
     if (major != rx->proto_major) {
         reset_session(rx);
         rx->send(rx->user, MLARR_CMD_NAK, 0, 0, MLARR_STATUS_VERSION);
+        if (rx->error != NULL) {
+            rx->error(rx->user, MLARR_STATUS_VERSION);
+        }
         return;
     }
     if (total == 0 || total > MLARR_ARR_MAX_BYTES) {

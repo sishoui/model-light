@@ -13,6 +13,10 @@
 #include "ble_adv.h"
 #include "mlproto.h"
 #include "mlarr.h"
+
+/* §2.2 seqblock write frame cap: ATT_MTU-3 ceiling 512, clamped to the
+ * arrangement transfer's own 255 B frame limit (cmd + seq + 252 B chunk). */
+#define SEQ_WRITE_FRAME_MAX 259
 #include "store.h"
 #include "mltoken.h"
 #include "mlrt.h"
@@ -35,6 +39,7 @@
 #include "host/ble_gap.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
+#include "services/dis/ble_svc_dis.h"
 
 static const char *TAG = "ble";
 
@@ -143,6 +148,14 @@ static void xfer_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak,
     ble_notify_seqblock(f, sizeof f);
 }
 
+/* Item 9: 编排传输 NAK（校验失败/缺口/版本不符等）→ 状态帧 errorCode
+ * （§2.9，mlt_set_error 内 30 s 保持）。 */
+static void xfer_error(void *user, uint8_t status)
+{
+    (void)user;
+    ble_raise_error(status);
+}
+
 static void token_reset(void *user)
 {
     (void)user;
@@ -174,7 +187,9 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
         ble_raise_error(MLOTA_ERR_BUSY);
         return 0;
     }
-    uint8_t frame[MLARR_ARR_MAX_BYTES + 3 > 512 ? 512 : 259];
+    /* §2.2 frame cap: cmd(1)+seq(2)+payload — ATT 写上限 512，编排分片
+     * 有效载荷上限 259（255 帧 − 3 头部，MLARR_CHUNK_MAX 内取整）。 */
+    uint8_t frame[SEQ_WRITE_FRAME_MAX];
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
     if (s_rx != NULL) {
         mlarr_rx_on_frame(s_rx, frame, len,
@@ -183,9 +198,6 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
     }
     return 0;
 }
-
-/* Pull the whole frame out of the mbuf chain. */
-static uint16_t om_flat(struct os_mbuf *om, uint8_t *out, uint16_t cap);
 
 static void build_status_frame(uint8_t frame[MLPROTO_STATE_LEN], uint16_t conn);
 int ble_ota_progress_changed(void);
@@ -347,6 +359,13 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
     { 0 },
 };
 
+/* ---- Device Information Service (0x180A, §2.1: 设备信息镜像到标准 DIS，
+ * 供非小程序调试工具读) ---- */
+static const char *DIS_MANUFACTURER = "model-light";
+static const char *DIS_MODEL = "ML-ESP32C3";
+/* Firmware/software revision mirrors ML_FW_MAJOR.MINOR from app_config.h. */
+static char s_dis_firmware_rev[8];
+
 /* ---- GAP events ---- */
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
@@ -486,11 +505,13 @@ int ble_start(void)
         ESP_LOGE(TAG, "token state machine alloc failed");
         return -1;
     }
-    s_rx = mlarr_rx_new(xfer_commit, xfer_send, NULL, MLARR_PROTO_MAJOR);
-    if (s_rx == NULL) {
+    mlarr_rx_t *rx = mlarr_rx_new_full(xfer_commit, xfer_send, xfer_error,
+                                       NULL, MLARR_PROTO_MAJOR);
+    if (rx == NULL) {
         ESP_LOGE(TAG, "rx state machine alloc failed");
         return -1;
     }
+    s_rx = rx;
     s_ota = ota_start(ota_send, ota_change, ota_reboot, NULL);
     if (s_ota == NULL) {
         ESP_LOGE(TAG, "ota state machine alloc failed");
@@ -516,6 +537,14 @@ int ble_start(void)
         return rc;
     }
     ble_svc_gap_init();
+    /* §2.1: standard DIS 0x180A — manufacturer / model / firmware revision
+     * mirror the vendor ...0005 device info for desktop BLE tools. */
+    ble_svc_dis_init();
+    ble_svc_dis_manufacturer_name_set(DIS_MANUFACTURER);
+    ble_svc_dis_model_number_set(DIS_MODEL);
+    snprintf(s_dis_firmware_rev, sizeof s_dis_firmware_rev, "%u.%u",
+             (unsigned)ML_FW_MAJOR, (unsigned)ML_FW_MINOR);
+    ble_svc_dis_firmware_revision_set(s_dis_firmware_rev);
 
     nimble_port_freertos_init(host_task);
     return 0;

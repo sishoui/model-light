@@ -13,6 +13,8 @@ const { parseDeviceInfo } = require('../../lib/device-info');
 const { isReadOnlyProtocol, describeNakStatus } = require('../../lib/device-protocol');
 const { createArrangementStore } = require('../../lib/arrangement-store');
 const { pushArrangement } = require('../../lib/arrangement-push');
+const { createTokenClient } = require('../../lib/token-client');
+const { createRealtimeThrottle } = require('../../lib/realtime-throttle');
 const { encode } = require('../../lib/arrangement');
 
 // 固定测试 TLV：最小编排（version/payloadVersion + 1 引脚 0 灯组占位），
@@ -61,6 +63,8 @@ Page({
     this._deviceName = decodeURIComponent(query.name || '');
     this.store = createArrangementStore(wx);
     this._lastStatusFrame = null; // pushArrangement 版本校验用
+    this._tokenClient = createTokenClient(this.ble); // §2.5 令牌握手（页面持有同一实例）
+    this._realtime = null; // 连接成功后建（需要 write 通道）
     this.setData({ name: this._deviceName });
     this.backoff = { attempt: 0 };
     this._reconnectTimer = null;
@@ -72,7 +76,9 @@ Page({
   onUnload() {
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
+    if (this._tokenTimer) clearInterval(this._tokenTimer);
     if (this._offStatus) this._offStatus();
+    this._tokenClient.dispose();
     this.ble.disconnect();
   },
 
@@ -90,6 +96,12 @@ Page({
       await this.probeDeviceCapabilities();
       this.maybeAutoPushBackup(); // M7：连上即自动上推（不阻塞 BLE）
       this.maybeEmptyDeviceHint(); // M7：空编排提示（仅提示一次）
+      // §2.5：令牌心跳计时（10 s 补发，由页面的定时器驱动）
+      this._tokenTimer = setInterval(() => this._tokenClient.tick(), 2000);
+      // §2.3：实时参数通道（...0002 writeNoResponse + 50 ms 节流）
+      this._realtime = createRealtimeThrottle({
+        send: (frame) => this.ble.writeRealtime(frame),
+      });
     } catch (e) {
       this.scheduleReconnect();
     }
@@ -138,10 +150,40 @@ Page({
     if (this.store) this.reloadPins(); // 从 pin/group 编辑页返回时刷新
   },
 
+  /** §2.5：手动请求令牌（推送/调参前）；结果如实上报，不静默 */
+  async requestToken() {
+    try {
+      const r = await this._tokenClient.requestToken();
+      this.setData({ tokenLabel: r.granted ? '本机持有' : '令牌获取失败' });
+      if (!r.granted) {
+        const why = { denied: '持有者拒绝了交接', busy: '设备正忙', timeout: '无应答（可能无持有者或已断连）' };
+        this.setData({ transferMessage: `未拿到令牌：${why[r.reason] || r.reason}` });
+      }
+      return r;
+    } catch (e) {
+      this.setData({ transferMessage: e.message || '令牌请求失败' });
+      return { granted: false, reason: 'error' };
+    }
+  },
+
+  /** §2.3：stage 编辑页拖动参数时调用（leaf 参数实时下发，50 ms 节流） */
+  sendRealtimeParam(params) {
+    if (!this._realtime || this.readOnly) return;
+    this._realtime.push(params);
+  },
+
   openPin(e) {
     const { pin } = e.currentTarget.dataset;
     wx.navigateTo({
       url: `../pin/pin?name=${encodeURIComponent(this._deviceName)}&pin=${pin}`,
+    });
+  },
+
+  /** §9：固件升级入口（设备详情页「固件版本」区 → 升级页） */
+  openOta() {
+    if (!this.connected) return;
+    wx.navigateTo({
+      url: `../ota/ota?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&chunkSize=${this._chunkSize || 20}`,
     });
   },
 
@@ -167,9 +209,13 @@ Page({
         payloadBytes,
         version,
         getStatusFrame: () => this._lastStatusFrame,
+        token: this._tokenClient, // 复用页面令牌实例（推送前取、成功后释放）
       });
       if (result.ok) {
         this.setData({ transferMessage: '推送成功，设备版本已确认' });
+      } else if (result.reason === 'no-token') {
+        const why = { denied: '当前持有者拒绝了令牌交接', busy: '设备正忙，稍后再试', timeout: '令牌握手超时' };
+        this.setData({ transferMessage: `未获得控制令牌：${why[result.detail] || result.detail}` });
       } else if (result.reason === 'nak') {
         this.setData({ transferMessage: describeNakStatus(result.status) });
       } else if (result.reason === 'version-mismatch') {

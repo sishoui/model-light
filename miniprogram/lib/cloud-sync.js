@@ -12,6 +12,8 @@ const PENDING_KEY = 'cloudSync:pendingPush';   // 名字 → { baseRev, fwVersio
 const HINTED_KEY = 'cloudSync:emptyHinted';    // 名字 → true（首连空编排提示已给过）
 const LOCAL_ONLY_KEY = 'cloudSync:localOnly';  // true = 401 刷新后仍失败，转仅本地
 
+const cloudBackup = require('./cloud-backup.js');
+
 function makeMemoryStorage() {
   const map = new Map();
   return {
@@ -46,6 +48,14 @@ function createCloudSync({
     storage.removeItem(LOCAL_ONLY_KEY);
   }
 
+  /** 提取 autoPush 成功路径的公共逻辑：清仅本地标记 + 清待重推标记 */
+  function onPushSuccess(mlId) {
+    clearLocalOnly();
+    const pending = readJson(PENDING_KEY);
+    delete pending[mlId];
+    storage.setItem(PENDING_KEY, JSON.stringify(pending));
+  }
+
   /**
    * 自动上推。设备真源，连上设备（令牌握手完成）后调用。
    * @param {object} opts { mlId, bytes, crc32Value, payloadVersion, fwVersion, baseRev }
@@ -55,10 +65,7 @@ function createCloudSync({
     if (!auth.isLoggedIn()) return { ok: false, reason: 'not-logged-in' };
     const result = await cloudApi.putBackup(opts);
     if (result.ok) {
-      clearLocalOnly();
-      const pending = readJson(PENDING_KEY);
-      delete pending[opts.mlId];
-      storage.setItem(PENDING_KEY, JSON.stringify(pending));
+      onPushSuccess(opts.mlId);
       if (result.behind) {
         // 提示，不是冲突解决（§5.5）
         return { ...result, behindHint: `云端已有更新的备份（rev ${result.rev}），已上推本机编排` };
@@ -69,10 +76,7 @@ function createCloudSync({
     if (retryDelayMs) await sleep(retryDelayMs);
     const retry = await cloudApi.putBackup(opts);
     if (retry.ok) {
-      clearLocalOnly();
-      const pending = readJson(PENDING_KEY);
-      delete pending[opts.mlId];
-      storage.setItem(PENDING_KEY, JSON.stringify(pending));
+      onPushSuccess(opts.mlId);
       if (retry.behind) {
         return { ...retry, retried: true, behindHint: `云端已有更新的备份（rev ${retry.rev}），已上推本机编排` };
       }
@@ -152,10 +156,9 @@ function createCloudSync({
     }
   }
 
-  /** 对比云端 CRC32 与设备状态帧（lib/cloud-backup.needsRestore 的薄包装，null 帧视为需要写） */
+  /** 对比云端 CRC32 与设备状态帧（lib/cloud-backup.needsRestore，null 帧视为需要写） */
   function needsRestoreCheck(backup, statusFrame) {
-    if (!statusFrame || typeof statusFrame.arrangementCrc32 !== 'number') return true;
-    return (backup.crc32 >>> 0) !== (statusFrame.arrangementCrc32 >>> 0);
+    return cloudBackup.needsRestore(backup.crc32, statusFrame);
   }
 
   return { autoPush, hasPendingPush, emptyDeviceHint, restore, isLocalOnly, clearLocalOnly };

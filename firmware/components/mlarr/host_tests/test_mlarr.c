@@ -281,6 +281,9 @@ typedef struct {
     int sent_n;
     struct { const uint8_t *buf; uint16_t len; uint16_t version; } committed[MAX_EVENTS];
     int committed_n;
+    /* mlarr_error: (user, status) on NAK failure paths (F2 §2.9 wiring). */
+    struct { uint8_t status; } errors[MAX_EVENTS];
+    int errors_n;
 } events_t;
 
 static void ev_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak, uint8_t status)
@@ -292,6 +295,14 @@ static void ev_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak, uint8_t
     e->sent[e->sent_n].nak = nak;
     e->sent[e->sent_n].status = status;
     e->sent_n++;
+}
+
+static void ev_error(void *user, uint8_t status)
+{
+    events_t *e = user;
+    assert(e->errors_n < MAX_EVENTS);
+    e->errors[e->errors_n].status = status;
+    e->errors_n++;
 }
 
 static int ev_commit(void *user, const uint8_t *buf, uint16_t len, uint16_t version)
@@ -527,6 +538,54 @@ static void test_rx_bad_crc_nak_keep_old(void)
     assert(ev.sent[0].status == MLARR_STATUS_LENGTH_OR_CRC);
     assert(mlarr_rx_active(rx) == 0);
     mlarr_rx_free(rx);
+}
+
+/* Item 9: NAK failure paths must surface the status to the host via the
+ * error callback so ble.c can latch it into the status frame errorCode
+ * (§2.9, 30 s hold). Success paths must NOT fire the callback. */
+static void test_rx_nak_surfaces_error_cb(void)
+{
+    /* CRC failure at FIN → error cb with 0x02 */
+    events_t ev = { 0 };
+    mlarr_rx_t *rx = mlarr_rx_new_full(ev_commit, ev_send, ev_error, &ev, 1);
+    uint32_t now = 0;
+    send_start(rx, now++, PAYLOAD_LEN, 1, 1, 0, 0xDEADBEEFu);
+    send_data(rx, now++, 0, payload70, 20);
+    send_data(rx, now++, 1, payload70 + 20, 20);
+    send_data(rx, now++, 2, payload70 + 40, (uint16_t)(PAYLOAD_LEN - 40));
+    send_fin(rx, now);
+    assert(ev.errors_n == 1 && ev.errors[0].status == MLARR_STATUS_LENGTH_OR_CRC);
+    mlarr_rx_free(rx);
+
+    /* gap at FIN → error cb with 0x03 */
+    events_t ev2 = { 0 };
+    mlarr_rx_t *rx2 = mlarr_rx_new_full(ev_commit, ev_send, ev_error, &ev2, 1);
+    now = 0;
+    send_start(rx2, now++, PAYLOAD_LEN, 1, 1, 0, mlarr_crc32(payload70, PAYLOAD_LEN));
+    send_data(rx2, now++, 0, payload70, 20);
+    send_fin(rx2, now);
+    assert(ev2.errors_n == 1 && ev2.errors[0].status == MLARR_STATUS_GAP);
+    mlarr_rx_free(rx2);
+
+    /* version mismatch at START → error cb with 0x07 */
+    events_t ev3 = { 0 };
+    mlarr_rx_t *rx3 = mlarr_rx_new_full(ev_commit, ev_send, ev_error, &ev3, 1);
+    send_start(rx3, 0, 60, 1, 2, 0, 0);
+    assert(ev3.errors_n == 1 && ev3.errors[0].status == MLARR_STATUS_VERSION);
+    mlarr_rx_free(rx3);
+
+    /* success path → no error cb */
+    events_t ev4 = { 0 };
+    mlarr_rx_t *rx4 = mlarr_rx_new_full(ev_commit, ev_send, ev_error, &ev4, 1);
+    now = 0;
+    send_start(rx4, now++, PAYLOAD_LEN, 1, 1, 0, mlarr_crc32(payload70, PAYLOAD_LEN));
+    send_data(rx4, now++, 0, payload70, 20);
+    send_data(rx4, now++, 1, payload70 + 20, 20);
+    send_data(rx4, now++, 2, payload70 + 40, (uint16_t)(PAYLOAD_LEN - 40));
+    send_fin(rx4, now);
+    assert(ev4.committed_n == 1);
+    assert(ev4.errors_n == 0);
+    mlarr_rx_free(rx4);
 }
 
 static void test_rx_bad_tlv_nak(void)
@@ -1212,6 +1271,7 @@ int main(void)
     test_rx_gap_nak_on_fin();
     test_rx_out_of_order_and_nak_fill();
     test_rx_bad_crc_nak_keep_old();
+    test_rx_nak_surfaces_error_cb();
     test_rx_bad_tlv_nak();
     test_rx_bad_version_nak();
     test_rx_start_resets_session();
@@ -1222,6 +1282,6 @@ int main(void)
     test_rx_commit_fail_cb_nak();
     test_rx_total_len_too_big();
     test_rx_data_before_start_ignored();
-    printf("all mlarr host tests passed (%d cases)\n", 40);
+    printf("all mlarr host tests passed (%d cases)\n", 41);
     return 0;
 }

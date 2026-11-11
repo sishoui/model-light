@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { pushArrangement } = require('../miniprogram/lib/arrangement-push');
+const { CMD_TOKEN, TOKEN_GRANTED, TOKEN_DENIED } = require('../miniprogram/lib/token-client');
 const { createArrangement, createPin, createGroup, createRange, createStage, createLayer, encode } = require('../miniprogram/lib/arrangement');
 const { makeMemoryStorage } = require('../miniprogram/lib/arrangement-store');
 
@@ -15,9 +16,14 @@ function makeBle() {
   return {
     sent: [],
     _cb: null,
+    _cmdCb: null,
+    nowMs: 0,
+    now() { return this.nowMs; },
     async write(bytes) { this.sent.push(Array.from(bytes)); },
     onFrame(cb) { this._cb = cb; return () => { this._cb = null; }; },
+    onCommand(cb) { this._cmdCb = cb; return () => { this._cmdCb = null; }; },
     ack(ackUpTo) { if (this._cb) this._cb(ackFrame(ackUpTo)); },
+    grant(payload = 0x00) { if (this._cmdCb) this._cmdCb(new Uint8Array([0x14, 0, 0, payload])); },
   };
 }
 
@@ -45,17 +51,37 @@ test('pushArrangement: 推成功且状态帧 arrangementVersion 一致 → ok + 
       timeoutMs: 5000,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     });
+    ble.grant(TOKEN_GRANTED); // 令牌握手
     await new Promise((r) => setTimeout(r, 50));
     version = 9; // 设备提交后状态帧回新版本
     const result = await p;
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.versionConfirmed, true);
-    // START 帧发出（帧 0），DATA 至少 1 片
-    assert.strictEqual(ble.sent[0][0], 0x01);
-    assert.ok(ble.sent.length >= 2);
+    // REQ_TOKEN 先发，然后 START（帧 0），DATA 至少 1 片
+    assert.strictEqual(ble.sent[0][0], 0x10);
+    assert.strictEqual(ble.sent[1][0], 0x01);
+    assert.ok(ble.sent.length >= 3);
+    // 推送成功后停心跳（释放令牌）
+    ble.nowMs += 10000;
   } finally {
     clearInterval(ackTimer);
   }
+});
+
+test('pushArrangement: 令牌 DENIED → ok=false + reason=no-token，不发编排帧', async () => {
+  const ble = makeBle();
+  const p = pushArrangement(ble, {
+    chunkSize: 20,
+    payloadBytes: payloadBytes(1),
+    version: 1,
+    sleep: async () => {},
+  });
+  ble.grant(TOKEN_DENIED);
+  const result = await p;
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, 'no-token');
+  assert.strictEqual(result.detail, 'denied');
+  assert.ok(ble.sent.every((f) => f[0] === 0x10), '只有 REQ_TOKEN，无编排帧');
 });
 
 test('pushArrangement: 推成功但版本不一致 → reason=version-mismatch', async () => {
@@ -70,6 +96,7 @@ test('pushArrangement: 推成功但版本不一致 → reason=version-mismatch',
       timeoutMs: 60,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     });
+    ble.grant(TOKEN_GRANTED);
     await new Promise((r) => setTimeout(r, 15));
     const result = await p;
     assert.strictEqual(result.ok, false);
@@ -90,6 +117,7 @@ test('pushArrangement: NAK → ok=false，本地缓存不受影响', async () =>
     timeoutMs: 5000,
     sleep: async () => {},
   });
+  ble.grant(TOKEN_GRANTED);
   await new Promise((r) => setTimeout(r, 20));
   ble._cb(new Uint8Array([0x06, 0, 0, 0, 0, 0x02])); // NAK cmd=0x06 status=0x02 CRC 失败
   const result = await p;

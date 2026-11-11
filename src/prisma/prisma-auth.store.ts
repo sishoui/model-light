@@ -39,6 +39,22 @@ export class PrismaAuthStore implements AuthStore {
       : null;
   }
 
+  async findActiveRefreshToken(userId: bigint): Promise<RefreshTokenRow | null> {
+    const row = await this.prisma.refreshToken.findFirst({
+      where: { userId, revokedAt: null },
+      orderBy: { id: 'desc' },
+    });
+    return row
+      ? {
+          id: row.id,
+          userId: row.userId,
+          tokenHash: row.tokenHash,
+          expiresAt: row.expiresAt,
+          revokedAt: row.revokedAt,
+        }
+      : null;
+  }
+
   async createRefreshToken(userId: bigint, tokenHash: string, expiresAt: Date): Promise<void> {
     await this.prisma.refreshToken.create({ data: { userId, tokenHash, expiresAt } });
   }
