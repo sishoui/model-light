@@ -23,6 +23,8 @@ jobs:
         run: npm run test:mini
       - name: Miniprogram libs (vitest)
         run: npm run test:mini:vitest
+      - name: Lint
+        run: npm run lint
 
   bootstrap-smoke:
     runs-on: ubuntu-latest

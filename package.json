@@ -9,9 +9,11 @@
     "test": "npm run test:api && npm run test:mini",
     "test:api": "npm test --workspace api",
     "test:mini": "node --test \"test/*.test.js\"",
-    "test:mini:vitest": "vitest run"
+    "test:mini:vitest": "vitest run",
+    "lint": "eslint miniprogram/lib/"
   },
   "devDependencies": {
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "eslint": "^8.57.0"
   }
 }

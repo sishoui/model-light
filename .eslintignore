@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+__pycache__/
+*.config.json
+*.private.config.json
+firmware/
+api/node_modules/
+api/dist/
+api/prisma/
