@@ -1,10 +1,10 @@
 // 设备 / 设备备份表模型（客户端侧纯函数镜像）— spec §5.4/§5.5
 // 两张表：devices / device_backups。无 owner / share / role / kick；rev 只用于「你落后了」提示（无 CAS/409）。
-// last_good 支持一步回退：PUT 时旧当前编排下沉为 last_good；restoreLastGood 互换当前与 last_good。
+// last_good 支持一步回退：PUT 时旧当前编排下沉 last_good；restoreLastGood 互换当前与 last_good。
 // 纯函数，无 wx 依赖，Node/vitest 可运行。
 import { describe, it, expect } from 'vitest';
-import { createDevice, createBackup, applyPutBackup, restoreLastGood, PIN_COUNT } from '../backup-models';
-import { crc32 } from '../crc32';
+import { createDevice, createBackup, applyPutBackup, restoreLastGood, PIN_COUNT } from '../../miniprogram/lib/backup-models';
+import { crc32 } from '../../miniprogram/lib/crc32';
 
 const mlId = 'ML-A3F2';
 const bytes1 = new Uint8Array([1, 2, 3]);

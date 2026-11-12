@@ -1,8 +1,8 @@
 // 备份 TLV 校验 — spec §5.4/§5.5：只验 CRC32 与 64 KiB 上限，不解析 TLV 结构。
 // 纯函数，无 wx 依赖，Node/vitest 可运行。
 import { describe, it, expect } from 'vitest';
-import { validateBackupTLV, MAX_BACKUP_BYTES } from '../backup-validate';
-import { crc32 } from '../crc32';
+import { validateBackupTLV, MAX_BACKUP_BYTES } from '../../miniprogram/lib/backup-validate';
+import { crc32 } from '../../miniprogram/lib/crc32';
 
 const BYTES = new Uint8Array([1, 0, 1, 0, 2, 8, 0]);
 const CRC = crc32(BYTES);
