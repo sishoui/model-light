@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wayfinder UI 原型资产 — 2~3 套小程序主题与布局 demo</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#f3f4f6;--card:#ffffff;--text:#111827;--muted:#6b7280;
+    --border:#e5e7eb;--primary:#2563eb;--accent:#0ea5e9;--radius:16px;
+    --shadow:0 1px 3px 0 rgb(0 0 0 / 0.1),0 1px 2px -1px rgb(0 0 0 / 0.1);
+  }
+  html{font-size:16px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif,"Noto Sans SC","Microsoft YaHei";background:var(--bg);color:var(--text);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:40px 20px}
+  header{margin-bottom:36px}
+  h1{font-size:26px;font-weight:700;letter-spacing:-0.02em;margin-bottom:8px}
+  .sub{color:var(--muted);font-size:15px}
+  .note{margin-top:10px;padding:10px 14px;border-radius:10px;border:1px dashed var(--border);background:#fbfdfd;color:#374151;font-size:13.5px}
+  .note b{color:#111827}
+  .grid{display:grid;grid-template-columns:1fr;gap:20px}
+  @media(min-width:600px){.grid{grid-template-columns:repeat(3,1fr)}}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+  .card-head{padding:22px 22px 12px}
+  .chip{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:999px;margin-bottom:10px}
+  .chip.a{background:#e0e7ff;color:#3730a3}
+  .chip.b{background:#f0fdf4;color:#166534}
+  .chip.c{background:#fdf2f8;color:#9d174d}
+  .card h2{font-size:18px;font-weight:700;margin-bottom:6px;letter-spacing:-0.01em}
+  .card p{font-size:14px;color:var(--muted);margin-bottom:12px;line-height:1.55}
+  .swatches{display:flex;gap:8px;margin-bottom:16px}
+  .sw{width:30px;height:30px;border-radius:8px;border:1px solid rgba(0,0,0,.08)}
+  .btn{display:block;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;text-align:center;margin-top:auto}
+  .btn:hover{opacity:.92}
+  .btn:active{transform:translateY(1px)}
+  .meta{font-size:12.5px;color:var(--muted);padding:0 22px 20px;border-top:1px solid var(--border);margin-top:auto}
+  .meta b{color:#374151}
+  .divider{height:1px;background:var(--border);margin:34px 0}
+  .foot{color:var(--muted);font-size:13px;padding-bottom:20px}
+  .foot b{color:#111827}
+  .tag{display:inline-block;font-size:11px;font-weight:700;color:#4b5563;border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin-right:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>wayfinder UI 原型资产</h1>
+    <div class="sub">2~3 套可预览的微信小程序 UI 主题与页面布局 demo/outline</div>
+    <div class="note"><b>子票 #66（prototype 类型）</b> · 对应实现规格决策 <b>#15 原型输出</b>（ticket #60）与决策 <b>#5 页面结构与 tabBar</b>。仅作为 demo/outline 资产，供评审选择与反馈，<b>不写入 miniprogram 生产代码</b>。</div>
+  </header>
+
+  <p style="font-size:14px;color:#6b7280;margin-bottom:18px">下方共 <b>3 套</b> 方案，点击“预览”可在浏览器中直接查看该主题下的色调、页面布局与导航方式。全部资产位于 <code>prototype/themes/</code>，每套包含可预览演示页 <code>index.html</code>、主题色设计令牌 <code>tokens.json</code> 与布局导航大纲 <code>layout-outline.md</code>。</p>
+
+  <div class="grid">
+    <!-- 方案 A -->
+    <article class="card">
+      <div class="card-head">
+        <span class="chip a">方案 A · 极光夜空</span>
+        <h2>深色主题 · 适合灯效控制</h2>
+        <p>深蓝/近黑背景与霓虹蓝、紫点缀，深色画布更能突出灯光效果，适合夜间操作场景。</p>
+        <div class="swatches">
+          <div class="sw" style="background:#0B0F19" title="背景 #0B0F19"></div>
+          <div class="sw" style="background:#131B2B" title="表面 #131B2B"></div>
+          <div class="sw" style="background:#38BDF8" title="主色 #38BDF8"></div>
+          <div class="sw" style="background:#818CF8" title="辅助 #818CF8"></div>
+          <div class="sw" style="background:#34D399" title="成功 #34D399"></div>
+        </div>
+        <a href="themes/theme-a-aurora-night/index.html" class="btn">预览方案 A</a>
+      </div>
+      <div class="meta">
+        <b>主题色：</b>#0B0F19 背景 / #131B2B 卡片 / #38BDF8 主色<br>
+        <b>页面布局：</b>卡片式设备列表 + 抽屉式详情<br>
+        <b>导航方式：</b>底部自定义 tabBar（home/设备、me/我的）+ wx.navigateTo 链路
+      </div>
+    </article>
+    <!-- 方案 B -->
+    <article class="card">
+      <div class="card-head">
+        <span class="chip b">方案 B · 极简白</span>
+        <h2>浅色主题 · 极简科技</h2>
+        <p>白/浅灰背景与蓝绿色点缀，信息层级清晰，视觉负担低，适合长时间使用。</p>
+        <div class="swatches">
+          <div class="sw" style="background:#FFFFFF" title="背景 #FFFFFF"></div>
+          <div class="sw" style="background:#F8FAFC" title="表面 #F8FAFC"></div>
+          <div class="sw" style="background:#2563EB" title="主色 #2563EB"></div>
+          <div class="sw" style="background:#059669" title="辅助 #059669"></div>
+          <div class="sw" style="background:#15803D" title="成功 #15803D"></div>
+        </div>
+        <a href="themes/theme-b-clean-white/index.html" class="btn">预览方案 B</a>
+      </div>
+      <div class="meta">
+        <b>主题色：</b>#FFFFFF 背景 / #F8FAFC 卡片 / #2563EB 主色<br>
+        <b>页面布局：</b>列表 + 堆叠式详情页<br>
+        <b>导航方式：</b>底部自定义 tabBar（home/设备、me/我的）+ 分段控制器
+      </div>
+    </article>
+    <!-- 方案 C -->
+    <article class="card">
+      <div class="card-head">
+        <span class="chip c">方案 C · 深色科技</span>
+        <h2>暗色主题 · 赛博风</h2>
+        <p>几乎纯黑背景与青色/品红高对比点缀，强科技感，突出设备状态与实时数据。</p>
+        <div class="swatches">
+          <div class="sw" style="background:#050505" title="背景 #050505"></div>
+          <div class="sw" style="background:#0F0F0F" title="表面 #0F0F0F"></div>
+          <div class="sw" style="background:#00F0FF" title="主色 #00F0FF"></div>
+          <div class="sw" style="background:#FF00FF" title="辅助 #FF00FF"></div>
+          <div class="sw" style="background:#00FF88" title="成功 #00FF88"></div>
+        </div>
+        <a href="themes/theme-c-dark-tech/index.html" class="btn">预览方案 C</a>
+      </div>
+      <div class="meta">
+        <b>主题色：</b>#050505 背景 / #0F0F0F 卡片 / #00F0FF 主色<br>
+        <b>页面布局：</b>网格卡片 + 全屏详情<br>
+        <b>导航方式：</b>底部自定义 tabBar（home/设备、me/我的）+ 抽屉侧边栏
+      </div>
+    </article>
+  </div>
+
+  <div class="divider"></div>
+  <div class="foot">
+    <b>资产清单：</b>
+    <span class="tag">prototype/index.html</span>
+    <span class="tag">prototype/navigation/tabbar-outline.md</span>
+    <span class="tag">prototype/themes/theme-a-aurora-night/{index.html,tokens.json,layout-outline.md}</span>
+    <span class="tag">prototype/themes/theme-b-clean-white/{index.html,tokens.json,layout-outline.md}</span>
+    <span class="tag">prototype/themes/theme-c-dark-tech/{index.html,tokens.json,layout-outline.md}</span>
+    <div style="margin-top:14px;font-size:12.5px;color:#9ca3af">注：所有 HTML 为纯前端静态演示，不依赖微信小程序运行时，可直接用浏览器打开预览；未接入 miniprogram/pages、app.json 或任何生产构建。</div>
+  </div>
+</div>
+</body>
+</html>

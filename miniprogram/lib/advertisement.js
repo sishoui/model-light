@@ -21,8 +21,8 @@ function toBytes(manufacturerData) {
 /**
  * @param {string|null} name 广播名
  * @param {Uint8Array|string|ArrayBuffer} manufacturerData
- * @returns {{name:string, major:number|null, minor:number|null,
- *            capabilities:number|null, runState:number|null}|null}
+ * @returns {{name:string, manufacturerId:number|null, major:number|null,
+ *            minor:number|null, capabilities:number|null, runState:number|null}|null}
  */
 function parseAdvertisement(name, manufacturerData) {
   if (!name || !DEVICE_NAME_RE.test(name)) return null;
@@ -33,6 +33,7 @@ function parseAdvertisement(name, manufacturerData) {
   const u16le = (i) => (i + 1 < bytes.length ? bytes[i] | (bytes[i + 1] << 8) : null);
   return {
     name,
+    manufacturerId: u16le(0), // [0..1] 厂商 ID（测试期 0xFFFF）
     major: at(2),
     minor: at(3),
     capabilities: u16le(4),
