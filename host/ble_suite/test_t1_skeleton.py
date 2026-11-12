@@ -125,3 +125,74 @@ def test_suite_directory_structure():
     assert (suite_dir / "__init__.py").is_file()
     assert (suite_dir / "transport.py").is_file()
     assert (suite_dir / "conftest.py").is_file()
+
+
+# --------------------------------------------------------------------------- #
+# US1：PC 会话通过假传输层 connect/disconnect（headless，无 bleak）
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_fake_transport_connect_disconnect(fake_transport):
+    """US1: PC 会话通过 FakeBleakTransport connect/disconnect。
+
+    connect() 后 connected 为真并可正常 write；disconnect() 后 connected 为假
+    且后续 write 失败。无需 bleak、无需真实 BLE 设备，headless 可运行。
+    """
+    assert fake_transport.connected is False
+
+    await fake_transport.connect()
+    assert fake_transport.connected is True
+    await fake_transport.write(b"\x01\x02\x03")
+    assert fake_transport.writes == [b"\x01\x02\x03"]
+
+    await fake_transport.disconnect()
+    assert fake_transport.connected is False
+    with pytest.raises(RuntimeError):
+        await fake_transport.write(b"\x04")
+
+
+# --------------------------------------------------------------------------- #
+# US2：...0005 设备信息特征 vs §2.1（纯解析逻辑，不改线格式）
+# --------------------------------------------------------------------------- #
+
+def parse_device_info(frame: bytes) -> dict:
+    """解析 ...0005 设备信息特征（10 B，spec §2.1）。
+
+    布局：[0] fw major, [1] fw minor, [2-3] proto 版本 LE, [4-5] 能力位图 LE
+    （bit11 = OTA 支持）, [6-9] 设备 ID LE。
+    """
+    if len(frame) != 10:
+        raise ValueError("device-info 特征应为 10 字节")
+    fw_major = frame[0]
+    fw_minor = frame[1]
+    proto = frame[2] | (frame[3] << 8)
+    caps = frame[4] | (frame[5] << 8)
+    device_id = (
+        frame[6] | (frame[7] << 8) | (frame[8] << 16) | (frame[9] << 24)
+    )
+    return {
+        "fw_major": fw_major,
+        "fw_minor": fw_minor,
+        "fw": f"{fw_major}.{fw_minor}",
+        "proto": proto,
+        "caps": caps,
+        "cap_ota": bool(caps & (1 << 11)),
+        "device_id": device_id,
+    }
+
+
+def test_device_info_parse_feasibility_vector():
+    """US2: ...0005 返回 10 字节，按 §2.1 解析。
+
+    可行性向量 → fw 1.1, proto 256 (0x0100), caps 0x1fff（bit11=OTA），device id 0。
+    """
+    frame = bytes.fromhex("01010001ff1f00000000")
+    assert len(frame) == 10
+    info = parse_device_info(frame)
+    assert info["fw_major"] == 1
+    assert info["fw_minor"] == 1
+    assert info["fw"] == "1.1"
+    assert info["proto"] == 256  # 0x0100 LE
+    assert info["caps"] == 0x1fff
+    assert info["cap_ota"] is True  # bit11 = OTA 支持
+    assert info["device_id"] == 0

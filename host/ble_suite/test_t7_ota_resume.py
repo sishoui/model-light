@@ -447,3 +447,56 @@ async def test_ota_resume_query_never_answered(fake_transport):
     assert device.query_count == 10
     assert sum(1 for f in fake_transport.writes if f[0] == OtaCmd.QUERY) == 10
     assert OtaCmd.ABORT not in [f[0] for f in fake_transport.writes]
+
+
+@pytest.mark.asyncio
+async def test_ota_disconnect_resume_from_persisted_offset(fake_transport):
+    """US14: 断连后会话保留已写进度，从设备持久化的 bytes_written 偏移续传
+    并完成。
+
+    设备在前若干片 ACK 后沉默（模拟断连）；主机 20 个无进展窗口后发 QUERY；
+    设备以 QUERY 应答携带 bytes_written（持久化偏移，设备为权威）；主机以
+    设备偏移为准续传，bytes_written 不倒退，会话最终 DONE。"""
+    total_chunks = 20
+    image = make_image(total_chunks * CHUNK_PAYLOAD)
+    acked_before_disconnect = 6
+    device = _OtaDeviceSim(
+        fake_transport,
+        image,
+        commit_status=0,
+        silent_after_chunks=acked_before_disconnect,
+        query_bytes_written=acked_before_disconnect * CHUNK_PAYLOAD,
+    )
+
+    result, session = await run_session(fake_transport, device, image, 0x01020304)
+
+    assert result.ok
+    assert result.reason == "ok"
+    assert result.bytes_written == len(image)
+    assert result.total_len == len(image)
+    assert session.state == OtaState.DONE
+
+    writes = fake_transport.writes
+    cmds = [f[0] for f in writes]
+    assert OtaCmd.QUERY in cmds
+    assert build_query_frame() in writes  # 出站 QUERY 线帧
+    assert OtaCmd.ABORT not in cmds
+    assert device.query_count == 1
+    assert device.commit_count == 1
+    assert device.abort_count == 0
+
+    # bytes_written 持续累积、不倒退，最终持平总长（断连前进度被保留）
+    assert session.bytes_written == len(image)
+
+    # QUERY 后，从设备持久化偏移（第 acked_before_disconnect 片，索引相同）
+    # 起重传剩余片；断连前已 ACK 片不重复传输
+    qpos = cmds.index(OtaCmd.QUERY)
+    resent_seqs = [
+        (f[1] | (f[2] << 8)) for f in writes[qpos + 1:] if f[0] == OtaCmd.DATA
+    ]
+    assert sorted(resent_seqs) == list(
+        range(acked_before_disconnect, total_chunks)
+    )
+    assert not any(
+        s in resent_seqs for s in range(0, acked_before_disconnect)
+    )

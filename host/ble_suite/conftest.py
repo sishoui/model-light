@@ -20,15 +20,17 @@ import pytest
 from ble_suite.transport import FakeBleakTransport
 
 # 测试文件名 -> spec 章节的回退推断（当测试未打 spec_section 标记时使用）。
+# 引用的章节必须是 spec 真实存在的章节（§2.1/§2.2/§2.9/§3.4/§5.1/§6/§7）；
+# 不得引用 §2.5/§2.10 等不存在章节。
 _SECTION_BY_FILE_PREFIX = {
     "test_t1": "transport",
     "test_t2": "§2.2",
-    "test_t3": "§6/§2.5",
+    "test_t3": "§6",
     "test_t4": "§2.9",
-    "test_t5": "§2.10/§2.2",
+    "test_t5": "§2.2",
     "test_t6": "§3.4",
-    "test_t7": "§3.4/§6",
-    "test_t8": "§5.1/§2.9",
+    "test_t7": "§3.4",
+    "test_t8": "§5.1",
     "test_t9": "§6/§7.3",
     "test_t10": "§7.2",
 }
@@ -112,6 +114,23 @@ def pytest_runtest_makereport(item, call):
         pass
 
 
+def _group_failures(
+    failures: list[dict], value_of
+) -> dict[str, dict[str, list]]:
+    """把失败按 (spec_section, error_code) 分组。
+
+    `value_of(failure)` 决定分组内追加的值：_write_report 追加 nodeid，
+    pytest_terminal_summary 追加 (nodeid, error_message)。两处复用同一
+    分组逻辑，避免重复代码。
+    """
+    by_section: dict[str, dict[str, list]] = {}
+    for failure in failures:
+        by_section.setdefault(failure["spec_section"], {}).setdefault(
+            failure["error_code"] or "(none)", []
+        ).append(value_of(failure))
+    return by_section
+
+
 def _write_report(config) -> None:
     failures = getattr(config, "_ble_suite_failures", None) or []
     if not failures:
@@ -122,11 +141,7 @@ def _write_report(config) -> None:
     try:
         report_path = Path(report_path)
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        by_section: dict[str, dict[str, list[str]]] = {}
-        for failure in failures:
-            by_section.setdefault(failure["spec_section"], {}).setdefault(
-                failure["error_code"] or "(none)", []
-            ).append(failure["nodeid"])
+        by_section = _group_failures(failures, lambda f: f["nodeid"])
         payload = {
             "suite": "ble_suite",
             "count": len(failures),
@@ -147,11 +162,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
         if failures:
             terminalreporter.write_line("")
             terminalreporter.write_line("=== Spec-section failure map (ble_suite) ===")
-            by_section: dict[str, dict[str, list[tuple[str, str]]]] = {}
-            for failure in failures:
-                by_section.setdefault(failure["spec_section"], {}).setdefault(
-                    failure["error_code"] or "(none)", []
-                ).append((failure["nodeid"], failure["error_message"]))
+            by_section = _group_failures(
+                failures, lambda f: (f["nodeid"], f["error_message"])
+            )
             for section, codes in by_section.items():
                 terminalreporter.write_line(f"{section}:")
                 for code, items in codes.items():

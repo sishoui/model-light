@@ -77,6 +77,21 @@ class FakeBleakTransport(BleTransport):
         self._fail_after = fail_after
         self._write_count = 0
         self.closed = False
+        self._connected = False
+
+    async def connect(self) -> None:
+        """建立（模拟）连接。连接后可正常 write；headless 可用，无需真实设备。"""
+        self._connected = True
+
+    async def disconnect(self) -> None:
+        """断开（模拟）连接。断开后 write 将失败；headless 可用，无需真实设备。"""
+        self._connected = False
+        self.closed = True
+
+    @property
+    def connected(self) -> bool:
+        """当前是否处于已连接状态。"""
+        return self._connected
 
     async def write(self, frame: bytes) -> None:
         """记录一帧出站写入（可注入延迟与失败）。"""

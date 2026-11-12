@@ -93,6 +93,7 @@ class OtaState(IntEnum):
     SENDING = 2        # 分片传输中
     COMMITTING = 3     # 已发 COMMIT，等待提交应答
     PENDING_RESUME = 4 # 待续传（已发 QUERY，等待设备回复 bytes_written）
+    PAUSED = 7         # 断连/暂停中，待恢复续传（与 PENDING_RESUME 并发，不改既有迁移）
     DONE = 5           # 提交成功，设备正在重启
     FAILED = 6         # 会话失败（指纹不符 / 提交失败 / 中止 / 超时）
 

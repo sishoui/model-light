@@ -378,6 +378,72 @@ async def test_ota_progress_throttle_1_percent_and_consistency():
     assert percents and percents[-1] == 100
 
 
+@pytest.mark.asyncio
+async def test_ota_progress_links_to_transmitting_status_frame(fake_transport):
+    """US7: OTA 期间状态帧上报 mode=2/TRANSMITTING，且 on_progress 按 1%
+    节 throttled、与 bytes_written/total_len 一致。
+
+    状态帧 12 B 线格式（§2.9）不改动：无进度字节；进度仅通过 on_progress
+    回调上报。二者在 OTA 期间并发，互相印证。"""
+    transport = FakeBleakTransport()
+    clock = _Clock(1000.0)
+    status_emitted: list[StatusFrame] = []
+    sub = StatusSubscription(
+        transport,
+        now=clock,
+        on_status=status_emitted.append,
+    )
+    sub.start()
+
+    progress: list[OtaProgress] = []
+    session = OtaSession(
+        transport,
+        per_ack_timeout_ms=50,
+        begin_timeout_ms=50,
+        query_timeout_ms=50,
+        commit_timeout_ms=100,
+        on_progress=lambda p: progress.append(p),
+    )
+    img = image_bytes(5000)
+    total_chunks = (len(img) + session._chunk_payload - 1) // session._chunk_payload
+
+    task = asyncio.create_task(session.run(img, app_version=9))
+    await asyncio.sleep(0)  # 让 run() 注册帧回调
+
+    # 设备在 OTA 期间上报 12 B 状态帧：mode=2 / 传输中（无进度字节）
+    transport.inject(build_status_frame(mode=2, flags=int(StatusFlags.TRANSMITTING)))
+    assert status_emitted
+    assert status_emitted[-1].mode_enum == StatusMode.TRANSMITTING
+    assert status_emitted[-1].is_transmitting
+
+    # 逐片 ACK 推进整个镜像，观察 on_progress 1% 节流与一致性
+    ack_up_to = -1
+    while ack_up_to < total_chunks - 1:
+        ack_up_to += 1
+        transport.inject(build_ack_frame(0, ack_up_to, status=0))
+        await asyncio.sleep(0)
+    # COMMIT 应答：已提交
+    transport.inject(build_ack_frame(0, 0, status=0))
+
+    result = await task
+    assert result.ok
+    assert result.reason == "ok"
+    assert result.bytes_written == len(img)
+
+    percents = [p.percent for p in progress]
+    assert percents == sorted(set(percents)), f"不严格递增或有重复: {percents}"
+    assert all(0 <= p <= 100 for p in percents)
+    for p in progress:
+        assert p.percent == p.bytes_written * 100 // p.total_len, (
+            f"percent={p.percent} != bytes_written*100//total_len="
+            f"{p.bytes_written * 100 // p.total_len}"
+        )
+        assert p.total_len == len(img)
+    assert percents and percents[-1] == 100
+
+    sub.stop()
+
+
 # =====================================================================
 # 5. 模式回落：OTA 结束后 mode 回落 PLAYBACK/REALTIME（非传输 = 40 FPS 恢复）
 # =====================================================================

@@ -403,3 +403,66 @@ async def test_empty_image_ok(fake_transport):
     assert OtaCmd.DATA not in cmds
     assert OtaCmd.ABORT not in cmds
     assert device.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_no_token_when_not_held(fake_transport):
+    """US3: OtaSession.run() 在未持令牌（token_held=False）时返回 no-token，
+    且不启动 OTA（不发 BEGIN），会话保持 IDLE。"""
+    image = make_image(2 * CHUNK_PAYLOAD)
+    device = _OtaDeviceSim(fake_transport, image, commit_status=0)
+
+    session = OtaSession(fake_transport, token_held=lambda: False)
+    result = await session.run(image, 1)
+
+    assert not result.ok
+    assert result.reason == "no-token"
+    assert result.bytes_written == 0
+    assert result.total_len == len(image)
+    assert session.state == OtaState.IDLE  # 未持令牌，不开始 OTA
+    # 未向设备发出任何帧（无 BEGIN/DATA/COMMIT/ABORT）
+    assert device.frames_from_host == []
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_mismatch_then_new_session_restarts_and_succeeds(
+    fake_transport
+):
+    """US9: 指纹不符导致会话 FAILED（仅 BEGIN，静默作废旧会话）；新建
+    OtaSession.run() 从头重发 BEGIN，成功完成 OTA。"""
+    image = make_image(4 * CHUNK_PAYLOAD)
+    app_version = 0x01020304
+
+    # 第一次：设备侧镜像与主机不符 -> 指纹不符，静默作废，仅发 BEGIN
+    mismatched_device = _OtaDeviceSim(
+        fake_transport, b"\x00" * len(image), commit_status=0
+    )
+    result1, session1 = await run_session(
+        fake_transport, mismatched_device, image, app_version
+    )
+
+    assert not result1.ok
+    assert result1.reason == "fingerprint-mismatch"
+    assert result1.bytes_written == 0
+    assert session1.state == OtaState.FAILED
+    assert [f[0] for f in mismatched_device.frames_from_host] == [OtaCmd.BEGIN]
+    assert mismatched_device.commit_count == 0
+    assert mismatched_device.abort_count == 0
+
+    # 第二次：新会话，设备侧镜像与主机一致 -> 从头重发 BEGIN 并成功
+    matched_device = _OtaDeviceSim(fake_transport, image, commit_status=0)
+    result2, session2 = await run_session(
+        fake_transport, matched_device, image, app_version
+    )
+
+    assert result2.ok
+    assert result2.reason == "ok"
+    assert result2.bytes_written == len(image)
+    assert result2.total_len == len(image)
+    assert result2.app_version == app_version
+    assert session2.state == OtaState.DONE
+    # 新会话重新发出 BEGIN（从头开始）
+    cmds2 = [f[0] for f in matched_device.frames_from_host]
+    assert OtaCmd.BEGIN in cmds2
+    assert matched_device.commit_count == 1
+    assert matched_device.abort_count == 0
