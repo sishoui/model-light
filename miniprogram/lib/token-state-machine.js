@@ -74,13 +74,20 @@ function createTokenStateMachine({
     emit({ type: 'revoke', connectionId: id });
   }
 
+  function onReleaseTick() {
+    if (holder === null) return;
+    const idle = now() - lastHeartbeatAt;
+    if (idle >= HEARTBEAT_RELEASE_MS) {
+      doRelease(holder);
+    } else {
+      // 最近有心跳：按剩余时间重装，避免一次性定时器导致令牌永不释放
+      releaseTimer.set(onReleaseTick, HEARTBEAT_RELEASE_MS - idle);
+    }
+  }
+
   function scheduleRelease() {
     clearTimer(releaseTimer);
-    releaseTimer.set(() => {
-      if (holder !== null && now() - lastHeartbeatAt >= HEARTBEAT_RELEASE_MS) {
-        doRelease(holder);
-      }
-    }, HEARTBEAT_RELEASE_MS);
+    releaseTimer.set(onReleaseTick, HEARTBEAT_RELEASE_MS);
   }
 
   /* ---------- 挂起（持有者断连，保留 60 s） ---------- */
