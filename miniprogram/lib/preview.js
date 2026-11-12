@@ -265,11 +265,11 @@ function simulatePin(arr, pinIndex, now, opts = {}) {
     });
   }
 
-  // 每颗：有灯组 → 推演；无 → 暗板色
+  // 每颗：有灯组 → 推演；无 → 黑色（与固件/render-engine 保持一致，未覆盖不残影）
   for (let i = 0; i < n; i++) {
     const g = ownerOf[i];
     if (!g) {
-      out[i * 3] = DIM_COLOR[0]; out[i * 3 + 1] = DIM_COLOR[1]; out[i * 3 + 2] = DIM_COLOR[2];
+      out[i * 3] = 0; out[i * 3 + 1] = 0; out[i * 3 + 2] = 0;
       continue;
     }
     const { stageIndex, tInStage } = resolveStage(g, now);
