@@ -1,0 +1,13 @@
+.page { padding: 24rpx; }
+.toolbar { margin-bottom: 24rpx; }
+.error { color: #f87171; padding: 16rpx 0; }
+.empty { color: #9ca3af; padding: 48rpx 0; text-align: center; }
+.list { display: flex; flex-direction: column; gap: 16rpx; }
+.device-card {
+  background: #1f2937; border-radius: 16rpx; padding: 24rpx;
+  border: 1rpx solid #374151;
+}
+.device-name { font-size: 32rpx; font-weight: 600; color: #f9fafb; }
+.device-meta { display: flex; justify-content: space-between; margin-top: 12rpx; }
+.fw { color: #9ca3af; font-size: 26rpx; }
+.addr { color: #6b7280; font-size: 22rpx; font-family: monospace; }

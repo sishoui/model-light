@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>wayfinder 原型预览 — 极简白（方案 B）</title>
+<style>
+  :root{
+    --bg:#FFFFFF;--surface:#F8FAFC;--surfaceEl:#FFFFFF;--primary:#2563EB;--primaryHover:#3B82F6;
+    --secondary:#059669;--accent:#0891B2;--text:#0F172A;--textSec:#64748B;--border:#E2E8F0;
+    --borderFocus:#2563EB;--success:#15803D;--warn:#D97706;--error:#DC2626;--shadow:rgba(0,0,0,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif,"Noto Sans SC","Microsoft YaHei";background:#f3f4f6;color:var(--text);-webkit-font-smoothing:antialiased}
+  .wrap{display:flex;flex-direction:column;align-items:center;padding:22px 14px;gap:16px;min-height:100vh}
+  .title{font-size:20px;font-weight:800;letter-spacing:.02em}
+  .subtitle{font-size:13px;color:var(--textSec);text-align:center;max-width:640px;margin:4px 0 2px}
+  .mock{width:375px;height:720px;background:#fff;border-radius:20px;box-shadow:0 20px 50px var(--shadow);overflow:hidden;position:relative;display:flex;flex-direction:column;border:1px solid var(--border)}
+  .mock .nav{height:48px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+  .mock .t{font-size:17px;font-weight:700}
+  .mock .scan{font-size:12px;color:var(--primary);border:1px solid var(--borderFocus);border-radius:8px;padding:4px 10px;background:transparent;cursor:pointer}
+  .mock .scan:active{opacity:.7}
+  .screen{flex:1;overflow-y:auto;background:var(--bg);padding:16px;display:flex;flex-direction:column;gap:12px}
+  .page{display:none;flex-direction:column;gap:12px}
+  .page.active{display:flex}
+  .page h2{font-size:17px;font-weight:700;margin:0 0 2px}
+  .page .sub{font-size:12.5px;color:var(--textSec);margin-bottom:8px}
+  .back{font-size:13px;color:var(--primary);border:1px solid var(--borderFocus);border-radius:8px;padding:6px 12px;width:fit-content;cursor:pointer;align-self:flex-start}
+  .back:active{opacity:.7}
+  .search{position:relative;margin-bottom:4px}
+  .search input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px 10px 36px;font-size:13px;color:var(--text);outline:none}
+  .cards{display:flex;flex-direction:column;gap:10px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px 15px;display:flex;align-items:center;justify-content:space-between;border-left:4px solid var(--primary)}
+  .card.known{border-left-color:var(--borderFocus)}
+  .card .ico{width:42px;height:42px;border-radius:11px;background:var(--surfaceEl);display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:19px;margin-right:12px;border:1px solid var(--border)}
+  .card .info{flex:1}
+  .card .name{font-size:15px;font-weight:700;color:var(--text)}
+  .card .meta{font-size:12px;color:var(--textSec)}
+  .chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid;color:#fff}
+  .chip.online{border-color:var(--success);background:rgba(21,128,61,.12);color:var(--success)}
+  .chip.offline{border-color:#94a3b8;background:rgba(148,163,184,.12);color:#64748b}
+  .chip.busy{border-color:var(--warn);background:rgba(217,119,6,.12);color:var(--warn)}
+  .btn{font-size:13px;font-weight:700;color:var(--primary);background:transparent;border:1px solid var(--borderFocus);border-radius:8px;padding:6px 14px;cursor:pointer}
+  .btn:active{opacity:.7}
+  .btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .grid8{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .pin{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px;display:flex;flex-direction:column;gap:8px}
+  .pin .head{display:flex;justify-content:space-between;align-items:center}
+  .pin .no{font-size:12px;font-weight:700;color:var(--textSec)}
+  .pin .name{font-size:14px;font-weight:600;color:var(--text)}
+  .pin .tog{display:flex;align-items:center;gap:8px}
+  .sw{width:44px;height:24px;border-radius:12px;border:1px solid var(--border);background:var(--bg);position:relative;cursor:pointer}
+  .sw.on{background:var(--primary);border-color:var(--primary)}
+  .sw.on::after{content:"";position:absolute;top:3px;left:21px;width:16px;height:16px;border-radius:50%;background:#fff}
+  .sw.off::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff}
+  .occ{font-size:11px;color:#94a3b8}
+  .tabbar{height:82px;background:var(--bg);border-top:1px solid var(--border);display:flex;flex-shrink:0}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10px;color:var(--textSec);cursor:pointer;transition:color .2s}
+  .tab.active{color:var(--primary)}
+  .tab .ic{font-size:20px}
+  .meta{font-size:12px;color:var(--textSec);max-width:640px;line-height:1.6;border-top:1px solid var(--border);padding-top:10px}
+  .meta h3{font-size:13px;font-weight:700;color:var(--text);margin:10px 0 6px}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0}
+  th{text-align:left;color:var(--textSec);padding:4px 6px;font-weight:600}
+  td{padding:4px 6px;border-bottom:1px solid var(--border);color:var(--textSec)}
+  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:6px}
+  .swatch{height:40px;border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--text)}
+  .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;border:1px solid var(--border);color:var(--textSec)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">wayfinder 原型预览 · 极简白（方案 B）</div>
+  <div class="subtitle">浅色极简科技 · 蓝绿色点缀 · 信息层级清晰 · 预览仅作 demo/outline，不写入 miniprogram 生产代码</div>
+
+  <div class="mock">
+    <div class="nav"><div class="t">设备</div><button class="scan">扫描</button></div>
+    <div class="screen">
+      <div class="page active" id="p-devices">
+        <h2>设备</h2>
+        <div class="sub">ML-XXXX 设备列表 · 按最近见排序 · JS 层按广播名过滤</div>
+        <div class="search"><input type="text" placeholder="搜索设备名 ML-XXXX"></div>
+        <div class="cards">
+          <div class="card known">
+            <div class="ico">💡</div>
+            <div class="info"><div class="name">ML-A1B2</div><div class="meta">在线 · MAC …1B:2A · 信号 -52 dBm</div></div>
+            <div><span class="chip online">在线</span><br><button class="btn" onclick="go('p-device')">连接</button></div>
+          </div>
+          <div class="card">
+            <div class="ico">💡</div>
+            <div class="info"><div class="name">ML-C3D4</div><div class="meta">离线 · 最后见 14:32</div></div>
+            <div><span class="chip offline">离线</span><br><button class="btn">连接</button></div>
+          </div>
+          <div class="card known">
+            <div class="ico">⚡</div>
+            <div class="info"><div class="name">ML-E5F6</div><div class="meta">传输中 · OTA 12%</div></div>
+            <div><span class="chip busy">传输</span><br><button class="btn">详情</button></div>
+          </div>
+        </div>
+        <div class="note">入口：发现（pages/discover）、设备信息（pages/device-info，决策 #5 新增）</div>
+      </div>
+      <div class="page" id="p-device">
+        <button class="back" onclick="go('p-devices')">← 设备</button>
+        <h2>ML-A1B2</h2>
+        <div class="sub">设备详情 · 状态帧仅驱动顶部徽章与提示条（只读）</div>
+        <div class="card"><div class="info"><div class="name">连接状态</div><div class="meta">已连接 · 持有令牌 · 温度 38 ℃</div></div><span class="chip online">持有令牌</span></div>
+        <div class="grid8">
+          <div class="pin"><div class="head"><div class="no">1</div><span class="chip online">开</span></div><div class="name">客厅主灯</div><div class="tog"><div class="sw on"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">2</div><span class="chip offline">关</span></div><div class="name">床头灯</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">3</div><span class="chip offline">关</span></div><div class="name">过道灯</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">4</div><span class="chip offline">关</span></div><div class="name">阳台灯</div><div class="tog"><div class="sw off"></div></div></div>
+        </div>
+        <div class="btn primary" style="width:100%" onclick="go('p-pin')">进入 8 pins（可重命名）</div>
+        <div class="note">继续：灯组 → 阶段 → 双层效果 + 时长；灯组选像素时，已占用 LED 置灰不可选</div>
+      </div>
+      <div class="page" id="p-pin">
+        <button class="back" onclick="go('p-device')">← 设备详情</button>
+        <h2>8 pins · 可重命名</h2>
+        <div class="sub">2×4 引脚网格 · 每个引脚独立开关/亮度/色温</div>
+        <div class="grid8">
+          <div class="pin"><div class="head"><div class="no">1</div><span class="chip online">开</span></div><div class="name">Pin 1 · 客厅主灯</div><div class="tog"><div class="sw on"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">2</div><span class="chip offline">关</span></div><div class="name">Pin 2 · 床头灯</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">3</div><span class="chip offline">关</span></div><div class="name">Pin 3 · 过道灯</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">4</div><span class="chip offline">关</span></div><div class="name">Pin 4 · 阳台灯</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">5</div><span class="chip offline">关</span></div><div class="name">Pin 5</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">6</div><span class="chip offline">关</span></div><div class="name">Pin 6</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">7</div><span class="chip offline">关</span></div><div class="name">Pin 7</div><div class="tog"><div class="sw off"></div></div></div>
+          <div class="pin"><div class="head"><div class="no">8</div><span class="chip offline">关</span></div><div class="name">Pin 8</div><div class="tog"><div class="sw off"></div></div></div>
+        </div>
+        <div class="note">灯组选像素时，已占用 LED 置灰不可选（占位示意）</div>
+      </div>
+    </div>
+    <div class="tabbar">
+      <div class="tab active" onclick="setTab(this,0)"><div class="ic">📱</div><div>设备</div></div>
+      <div class="tab" onclick="setTab(this,1)"><div class="ic">👤</div><div>我的</div></div>
+    </div>
+  </div>
+
+  <div class="meta">
+    <h3>主题色令牌（摘自 tokens.json）</h3>
+    <table>
+      <tr><th>角色</th><th>色值</th></tr>
+      <tr><td>背景 background</td><td>#FFFFFF</td></tr>
+      <tr><td>表面 surface</td><td>#F8FAFC</td></tr>
+      <tr><td>主色 primary</td><td>#2563EB</td></tr>
+      <tr><td>辅助 secondary</td><td>#059669</td></tr>
+      <tr><td>文字主 textPrimary</td><td>#0F172A</td></tr>
+      <tr><td>边框 border</td><td>#E2E8F0</td></tr>
+      <tr><td>成功 success / 警告 warning / 错误 error</td><td>#15803D / #D97706 / #DC2626</td></tr>
+    </table>
+    <div class="swatches" style="margin-top:6px">
+      <div class="swatch" style="background:#FFFFFF">#FFFFFF</div>
+      <div class="swatch" style="background:#F8FAFC">#F8FAFC</div>
+      <div class="swatch" style="background:#2563EB">#2563EB</div>
+      <div class="swatch" style="background:#059669">#059669</div>
+      <div class="swatch" style="background:#0891B2">#0891B2</div>
+      <div class="swatch" style="background:#15803D">#15803D</div>
+    </div>
+    <h3>页面布局（决策 #5 页面结构）</h3>
+    <div class="badge">home/设备</div><div class="badge">me/我的</div>
+    <div class="badge">pages/discover</div><div class="badge">pages/device-info</div><div class="badge">pages/part</div>
+    <p style="font-size:12px;color:var(--textSec);margin-top:6px">设备列表 → 设备详情 → 8 pins（renamable）→ 灯组 → 阶段 → 双层效果 + 时长</p>
+    <h3>导航方式</h3>
+    <p style="font-size:12px;color:var(--textSec);margin-top:6px">底部自定义 tabBar（两 tab，图标+文字，选中态主色高亮）；wx.navigateTo 逐层进入，wx.navigateBack 返回；状态帧只读，不写设备。</p>
+  </div>
+</div>
+<script>
+  function go(id){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById(id).classList.add('active')}
+  function setTab(el,i){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');go(i===0?'p-devices':'p-devices')}
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+{
+  "root": true,
+  "env": {
+    "node": true,
+    "es2021": true
+  },
+  "extends": [
+    "eslint:recommended"
+  ],
+  "parserOptions": {
+    "ecmaVersion": 2021,
+    "sourceType": "module"
+  },
+  "ignorePatterns": [
+    "node_modules/",
+    "dist/",
+    "build/",
+    "__pycache__/",
+    "*.config.json",
+    "*.private.config.json",
+    "firmware/",
+    "api/node_modules/",
+    "api/dist/",
+    "api/prisma/"
+  ],
+  "rules": {
+    "no-undef": "warn",
+    "no-unused-vars": "warn",
+    "no-console": "off",
+    "no-constant-condition": "error",
+    "no-dupe-keys": "error",
+    "no-empty": "warn",
+    "no-eval": "error",
+    "no-extra-semi": "error",
+    "no-fallthrough": "error",
+    "no-redeclare": "error",
+    "no-sparse-arrays": "error",
+    "no-unreachable": "error",
+    "no-unused-expressions": "warn",
+    "no-var": "error",
+    "prefer-const": "warn",
+    "semi": "warn",
+    "eqeqeq": ["warn", "always"]
+  }
+}

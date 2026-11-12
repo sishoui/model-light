@@ -14,7 +14,7 @@
 const S = 5;      // 灯珠正方形边长 mm
 const GAP = 2;    // 间距 mm
 const PITCH = S + GAP;
-const DIM_COLOR = [0x3a, 0x3a, 0x48]; // 暗板色：未被灯组覆盖的颗
+const DIM_COLOR = [0, 0, 0]; // 未被灯组覆盖的颗：纯黑，与固件/render-engine 无残影保持一致
 
 const LAYOUT_SNAKE = 'row-major-snake';
 const LAYOUT_LR = 'row-major-left-right';
@@ -265,11 +265,11 @@ function simulatePin(arr, pinIndex, now, opts = {}) {
     });
   }
 
-  // 每颗：有灯组 → 推演；无 → 暗板色
+  // 每颗：有灯组 → 推演；无 → 黑色（与固件/render-engine 保持一致，未覆盖不残影）
   for (let i = 0; i < n; i++) {
     const g = ownerOf[i];
     if (!g) {
-      out[i * 3] = DIM_COLOR[0]; out[i * 3 + 1] = DIM_COLOR[1]; out[i * 3 + 2] = DIM_COLOR[2];
+      out[i * 3] = 0; out[i * 3 + 1] = 0; out[i * 3 + 2] = 0;
       continue;
     }
     const { stageIndex, tInStage } = resolveStage(g, now);

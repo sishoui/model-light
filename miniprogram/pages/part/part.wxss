@@ -1,0 +1,29 @@
+.page { padding: 20rpx; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16rpx; }
+.toolbar-title { font-size: 32rpx; font-weight: 600; color: #f9fafb; }
+.group-picker { display: flex; gap: 10rpx; align-items: center; }
+.label { color: #9ca3af; font-size: 26rpx; margin-right: 6rpx; }
+.chip {
+  font-size: 24rpx; padding: 6rpx 14rpx; border-radius: 10rpx;
+  border: 1rpx solid #374151; color: #9ca3af;
+}
+.chip.active { border-color: #60a5fa; color: #60a5fa; background: rgba(96,165,250,0.1); }
+.error { color: #f87171; padding: 10rpx 0; text-align: center; }
+.pins { display: flex; flex-wrap: wrap; gap: 16rpx; }
+.pin-card {
+  background: #1f2937; border-radius: 14rpx; padding: 16rpx; border: 1rpx solid #374151;
+  width: 220rpx;
+}
+.pin-header { display: flex; align-items: center; gap: 8rpx; margin-bottom: 12rpx; }
+.pin-title { font-size: 26rpx; font-weight: 600; color: #e5e7eb; flex: 1; }
+.pin-title.renaming { color: #60a5fa; }
+.rename-input { font-size: 24rpx; color: #f9fafb; background: #111827; border: 1rpx solid #60a5fa; border-radius: 8rpx; padding: 4rpx 8rpx; flex: 1; }
+.rename-actions { display: flex; gap: 6rpx; }
+.rename-btn { font-size: 22rpx; color: #9ca3af; }
+.leds { display: flex; flex-wrap: wrap; gap: 6rpx; }
+.led {
+  width: 22rpx; height: 22rpx; border-radius: 6rpx; background: #374151; border: 1rpx solid #4b5563;
+}
+.led.selected { background: #60a5fa; border-color: #3b82f6; }
+.led.occupied { background: #9ca3af; border-color: #6b7280; opacity: 0.55; }
+.footer { margin-top: 20rpx; }
