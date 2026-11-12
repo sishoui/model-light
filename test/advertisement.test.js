@@ -26,6 +26,7 @@ test('parseAdvertisement parses full 9 B manufacturer data', () => {
   const ad = parseAdvertisement('ML-00A1', mfr);
   assert.deepEqual(ad, {
     name: 'ML-00A1',
+    manufacturerId: 0xffff,
     major: 1,
     minor: 3,
     capabilities: 0x1003,
