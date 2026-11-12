@@ -16,6 +16,7 @@ const {
   buildOtaBegin, buildOtaQuery, buildOtaData, buildOtaCommit,
   buildOtaAbort, buildOtaResume, parseOtaEvent,
 } = require('./ota-frames');
+const { createOtaImage } = require('./ota-image');
 
 const OTA_WINDOW = 8; // §2.1：窗口 8 片
 const OTA_PER_ACK_TIMEOUT_MS = 3000; // §4：per-ACK 超时 3 s
@@ -44,8 +45,7 @@ const TRANSFERRING_STATES = new Set([
   OTA_SESSION_PENDING_RESUME, OTA_SESSION_PAUSED,
 ]);
 
-function defaultSetTimeoutMs(fn, ms) { setTimeout(fn, ms); }
-function defaultNow() { return Date.now(); }
+const { defaultSetTimeoutMs, defaultNow, defaultClearTimeoutMs, createTimer } = require('./timer');
 
 // 指纹前缀是否一致（设备 SESSION 只带 8 B sha256 前缀，取最短长度比较；任一方未知则不作废）
 function prefixEqual(a, b) {
@@ -59,6 +59,7 @@ function createOtaSession(transport, {
   chunkSize,
   now = defaultNow,
   setTimeoutMs = defaultSetTimeoutMs,
+  clearTimeoutMs = defaultClearTimeoutMs,
   onEvent,
 } = {}) {
   if (!Number.isInteger(chunkSize) || chunkSize < 4) {
@@ -78,7 +79,7 @@ function createOtaSession(transport, {
   function finishSession(sess, { state, reason, abortSent, silent } = {}) {
     if (sess.settled) return;
     sess.settled = true;
-    sess.timerToken += 1; // 使在途定时器全部失效
+    sess.tmr.clear(); // 使在途定时器全部失效
     if (typeof sess.off === 'function') sess.off();
     const from = sess.state;
     sess.state = state || from;
@@ -104,16 +105,15 @@ function createOtaSession(transport, {
   function suspendSession(sess) {
     if (sess.settled) return;
     const from = sess.state;
-    sess.timerToken += 1; // 取消在途 per-ACK / COMMIT 定时器
+    sess.tmr.clear(); // 取消在途 per-ACK / COMMIT 定时器
     sess.state = OTA_SESSION_PENDING_RESUME;
     emit({ type: 'state', from, to: OTA_SESSION_PENDING_RESUME, state: OTA_SESSION_PENDING_RESUME });
     emit({ type: 'pending-resume', bytesWritten: sess.bytesWritten });
   }
 
   function scheduleAckTimeout(sess) {
-    const token = ++sess.timerToken;
-    setTimeoutMs(() => {
-      if (sess.settled || token !== sess.timerToken) return;
+    sess.tmr.set(() => {
+      if (sess.settled) return;
       onAckTimeout(sess);
     }, OTA_PER_ACK_TIMEOUT_MS);
   }
@@ -140,7 +140,7 @@ function createOtaSession(transport, {
   // 以设备 bytes_written 为准续传（设备是 source of truth）：
   // nextSeq 从设备回的偏移对应片起，窗口以设备偏移重开。
   function resumeFromDevice(sess, bytesWritten) {
-    sess.timerToken += 1; // 失效在途定时器（COMMIT 等待 / per-ACK）
+    sess.tmr.clear(); // 失效在途定时器（COMMIT 等待 / per-ACK）
     sess.settled = false; // 重新激活会话（从 PENDING_RESUME / PAUSED / COMMITTING 恢复）
     sess.bytesWritten = Math.min(Math.max(bytesWritten, 0), sess.imageSize);
     sess.nextSeq = Math.floor(sess.bytesWritten / chunkPayload);
@@ -203,7 +203,6 @@ function createOtaSession(transport, {
     const from = sess.state;
     sess.state = OTA_SESSION_COMMITTING;
     sess.awaitingCommit = true;
-    sess.commitTimerToken = ++sess.timerToken;
     emit({ type: 'state', from, to: OTA_SESSION_COMMITTING, state: OTA_SESSION_COMMITTING });
     writeFrame(sess, buildOtaCommit(0)).catch(() => {});
     // COMMIT 等待 OTA_EVENT(event=2)，按 per-ACK 3 s 超时；超时视为 COMMIT 失败
@@ -228,7 +227,7 @@ function createOtaSession(transport, {
       }
       case EVT_OTA.ACK: {
         sess.stallRounds = 0;
-        sess.timerToken += 1; // 取消在途超时
+        sess.tmr.clear(); // 取消在途超时
         // 累计确认：ackUpTo 及之前片已写入 flash
         sess.pending = sess.pending.filter((s) => s > evt.ackUpTo);
         // nakMask bit i = ackUpTo+1+i 片缺失；bit=0 的片视为已收到，一并丢弃
@@ -290,8 +289,7 @@ function createOtaSession(transport, {
     const sess = {
       state: OTA_SESSION_BEGUN,
       settled: false,
-      timerToken: 0,
-      commitTimerToken: 0,
+      tmr: createTimer(now, setTimeoutMs, clearTimeoutMs),
       awaitingCommit: false,
       imageSize: size,
       totalBytes: size,
@@ -334,7 +332,9 @@ function createOtaSession(transport, {
    * 同一会话期内若指纹与旧会话不匹配，旧会话被静默作废（无错误，不抛出，不通知失败）。
    */
   function begin({ imageSize, sha256, appVersion, crc32Value, data, fingerprint } = {}) {
-    const fp = fingerprint || (sha256 instanceof Uint8Array ? sha256.subarray(0, OTA_FINGERPRINT_PREFIX_LEN) : null);
+    // 五参数图像元数据打包为 OtaImage，ota-commit 与本会话统一使用此类型。
+    const image = createOtaImage({ imageSize, sha256, appVersion, crc32: crc32Value, data });
+    const fp = fingerprint || (image.sha256 ? image.sha256.subarray(0, OTA_FINGERPRINT_PREFIX_LEN) : null);
 
     // 指纹不匹配 → 静默作废旧会话（无错误，不抛出，不通知失败）
     if (active && !active.settled && !prefixEqual(active.fingerprint, fp)) {
@@ -345,12 +345,13 @@ function createOtaSession(transport, {
       return { state: active.state, promise: active.sessionPromise };
     }
 
-    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data || []);
-    const size = imageSize ?? bytes.length;
     const beginFrame = buildOtaBegin(0, {
-      imageSize: size, sha256, appVersion, crc32: crc32Value ?? 0,
+      imageSize: image.imageSize, sha256: image.sha256, appVersion: image.appVersion, crc32: image.crc32,
     });
-    return openSession({ imageSize: size, sha256, appVersion, crc32Value, data: bytes, fingerprint: fp, beginFrame });
+    return openSession({
+      imageSize: image.imageSize, sha256: image.sha256, appVersion: image.appVersion,
+      crc32Value: image.crc32, data: image.data, fingerprint: fp, beginFrame,
+    });
   }
 
   /** 断连后请求续传：发 OTA_QUERY，设备回 SESSION（bytes_written 为 source of truth）。 */
@@ -365,7 +366,7 @@ function createOtaSession(transport, {
     if (active.state === OTA_SESSION_PAUSED) return;
     const from = active.state;
     active.state = OTA_SESSION_PAUSED;
-    active.timerToken += 1; // 取消在途超时
+    active.tmr.clear(); // 取消在途超时
     emit({ type: 'state', from, to: OTA_SESSION_PAUSED, state: OTA_SESSION_PAUSED });
     emit({ type: 'pause' });
   }
@@ -375,7 +376,7 @@ function createOtaSession(transport, {
     if (!active || active.settled || active.state !== OTA_SESSION_PAUSED) return;
     const from = active.state;
     active.state = OTA_SESSION_SENDING;
-    active.timerToken += 1; // 取消在途超时
+    active.tmr.clear(); // 取消在途超时
     emit({ type: 'state', from, to: OTA_SESSION_SENDING, state: OTA_SESSION_SENDING });
     emit({ type: 'resume' });
     reportProgress(active, true);

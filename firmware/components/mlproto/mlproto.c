@@ -16,11 +16,10 @@ void mlproto_adv_manufacturer(uint8_t buf[9], uint8_t run_state)
     buf[8] = 0;
 }
 
-void mlproto_state_frame(uint8_t buf[13], uint8_t mode,
+void mlproto_state_frame(uint8_t buf[12], uint8_t mode,
                          uint16_t arrangement_version, uint32_t arrangement_crc32,
                          uint8_t brightness_limit, uint8_t token_holder,
-                         uint8_t error_code, uint8_t temperature, uint8_t flags,
-                         uint8_t ota_progress)
+                         uint8_t error_code, uint8_t temperature, uint8_t flags)
 {
     buf[0] = mode;
     buf[1] = (uint8_t)(arrangement_version & 0xFF);
@@ -34,7 +33,6 @@ void mlproto_state_frame(uint8_t buf[13], uint8_t mode,
     buf[9] = error_code;
     buf[10] = temperature;
     buf[11] = flags;
-    buf[12] = ota_progress; /* §7.1: 1 B progress after flags */
 }
 
 void mlproto_device_info(uint8_t buf[10], uint8_t fw_major, uint8_t fw_minor,

@@ -40,7 +40,7 @@ static void test_state_frame_layout(void)
     memset(b, 0xAA, sizeof b);
     mlproto_state_frame(b, MLPROTO_MODE_PLAYBACK,
                         0x0201, 0x04030201u,
-                        30, 0, 0x00, 42, 0x02, 0);
+                        30, 0, 0x00, 42, 0x02);
     assert(b[0] == 0);
     assert(b[1] == 0x01 && b[2] == 0x02);
     assert(b[3] == 0x01 && b[4] == 0x02 && b[5] == 0x03 && b[6] == 0x04);
@@ -55,7 +55,7 @@ static void test_state_frame_idle_boot(void)
 {
     /* F1 acceptance: mode=0, tokenHolder=0, errorCode=0x00 */
     uint8_t b[MLPROTO_STATE_LEN];
-    mlproto_state_frame(b, MLPROTO_MODE_PLAYBACK, 0, 0, 30, 0, 0x00, 0, 0, 0);
+    mlproto_state_frame(b, MLPROTO_MODE_PLAYBACK, 0, 0, 30, 0, 0x00, 0, 0);
     assert(b[0] == 0 && b[8] == 0 && b[9] == 0x00);
 }
 

@@ -21,9 +21,7 @@ const STATE = {
   SUSPENDED: 'suspended',// 持有者断连，令牌挂起保留中
 };
 
-function defaultNow() { return Date.now(); }
-function defaultSetTimeoutMs(fn, ms) { return setTimeout(fn, ms); }
-function defaultClearTimeoutMs(id) { clearTimeout(id); }
+const { defaultNow, defaultSetTimeoutMs, defaultClearTimeoutMs, createTimer } = require('./timer');
 
 function createTokenStateMachine({
   now = defaultNow,
@@ -41,23 +39,23 @@ function createTokenStateMachine({
   let suspendedHolder = null;     // 挂起中保留的原持有者
   let suspendedSince = null;      // 挂起开始时间
 
-  let releaseTimer = null;        // 30 s 无心跳释放定时器
-  let probeTimer = null;          // PROBE 5 s 定时器
-  let suspendTimer = null;        // 60 s 挂起过期定时器
+  let releaseTimer = createTimer(now, setTimeoutMs, clearTimeoutMs);  // 30 s 无心跳释放定时器
+  let probeTimer = createTimer(now, setTimeoutMs, clearTimeoutMs);    // PROBE 5 s 定时器
+  let suspendTimer = createTimer(now, setTimeoutMs, clearTimeoutMs);  // 60 s 挂起过期定时器
 
   let pendingRequest = null;      // { requesterId, resolve, settled } 待决 PROBE 请求
 
   function emit(e) { effects.push(e); }
 
-  function clearTimer(ref) {
-    if (ref === null) return;
-    clearTimeoutMs(ref);
+  function clearTimer(tmr) {
+    if (!tmr) return;
+    tmr.clear();
   }
 
   function clearAllTimers() {
-    clearTimer(releaseTimer); releaseTimer = null;
-    clearTimer(probeTimer); probeTimer = null;
-    clearTimer(suspendTimer); suspendTimer = null;
+    clearTimer(releaseTimer);
+    clearTimer(probeTimer);
+    clearTimer(suspendTimer);
   }
 
   function setState(id, st) { connections[id] = st; }
@@ -71,15 +69,14 @@ function createTokenStateMachine({
     if (holder === id) holder = null;
     setState(id, undefined);
     delete connections[id];
-    clearTimer(releaseTimer); releaseTimer = null;
+    clearTimer(releaseTimer);
     emit({ type: 'released', connectionId: id });
     emit({ type: 'revoke', connectionId: id });
   }
 
   function scheduleRelease() {
     clearTimer(releaseTimer);
-    releaseTimer = setTimeoutMs(() => {
-      releaseTimer = null;
+    releaseTimer.set(() => {
       if (holder !== null && now() - lastHeartbeatAt >= HEARTBEAT_RELEASE_MS) {
         doRelease(holder);
       }
@@ -90,12 +87,11 @@ function createTokenStateMachine({
   function startSuspend(id) {
     holder = null;
     lastHeartbeatAt = 0;
-    clearTimer(releaseTimer); releaseTimer = null;
+    clearTimer(releaseTimer);
     suspendedHolder = id;
     suspendedSince = now();
     setState(id, STATE.SUSPENDED);
-    suspendTimer = setTimeoutMs(() => {
-      suspendTimer = null;
+    suspendTimer.set(() => {
       if (suspendedHolder === id) {
         doRelease(id);
         suspendedHolder = null;
@@ -107,7 +103,7 @@ function createTokenStateMachine({
   /* 挂起期内同连接恢复持有：不走 PROBE，直接授权 */
   function tryResume(id) {
     if (suspendedHolder !== null && id === suspendedHolder && isWithinRetain()) {
-      clearTimer(suspendTimer); suspendTimer = null;
+      clearTimer(suspendTimer);
       suspendedHolder = null;
       suspendedSince = null;
       holder = id;
@@ -186,8 +182,7 @@ function createTokenStateMachine({
       }
       pendingRequest = { requesterId: id, resolve, settled: false };
       const holderId = holder;
-      probeTimer = setTimeoutMs(() => {
-        probeTimer = null;
+      probeTimer.set(() => {
         if (pendingRequest && pendingRequest.requesterId === id && !pendingRequest.settled) {
           pendingRequest.settled = true;
           pendingRequest = null;
@@ -200,7 +195,7 @@ function createTokenStateMachine({
       Promise.resolve(onProbeDecision(holderId, id)).then((answer) => {
         if (!pendingRequest || pendingRequest.requesterId !== id || pendingRequest.settled) return;
         pendingRequest.settled = true;
-        clearTimer(probeTimer); probeTimer = null;
+        clearTimer(probeTimer);
         if (answer === 'yes') {
           const oldHolder = holder;
           holder = id;
@@ -231,7 +226,7 @@ function createTokenStateMachine({
     if (m === 2 && pendingRequest) {
       const { requesterId, resolve } = pendingRequest;
       pendingRequest.settled = true;
-      clearTimer(probeTimer); probeTimer = null;
+      clearTimer(probeTimer);
       pendingRequest = null;
       emit({ type: 'deny', connectionId: requesterId, reason: 'busy' });
       resolve();

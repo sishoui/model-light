@@ -15,6 +15,7 @@ const { DEVICE_NAME_RE, parseAdvertisement } = require('./advertisement');
 const { computeChunkSize, MTU_REQUEST_LADDER } = require('./chunk-size');
 const { parseDeviceInfo } = require('./device-info');
 const { parseStatusFrame } = require('./status-frame');
+const { defaultSetTimeoutMs, defaultClearTimeout, defaultClearInterval, defaultNow, createTimer } = require('./timer');
 
 const SERVICE_UUID = '7c9f0000-1b2a-4c3d-9e8f-000000000000';
 const CHAR_STATUS = '7c9f0004-1b2a-4c3d-9e8f-000000000000';
@@ -28,19 +29,6 @@ const STATUS_FRAME_LEN = 12;
 
 // CHAR_COMMAND 上的查询状态指令（与固件 QueryState 对齐）
 const CMD_QUERY_STATE = 0x09;
-
-function defaultSetTimeoutMs(fn, ms) {
-  setTimeout(fn, ms);
-}
-function defaultClearTimeout(t) {
-  clearTimeout(t);
-}
-function defaultClearInterval(t) {
-  clearInterval(t);
-}
-function defaultNow() {
-  return Date.now();
-}
 
 function toBytes(v) {
   if (v instanceof Uint8Array) return v;
@@ -126,8 +114,8 @@ function createBleTransport(transport, opts = {}) {
   // 读状态等待（MTU 低时 QueryState → StateReport）
   let stateResolver = null;
   let stateRejecter = null;
-  let stateTimer = null;
   let stateSettled = false;
+  const tmr = createTimer(now, setTimeoutMs, clearTimeout);
 
   // 入站重组：收到原始字节后拼帧，解析为状态帧后分发
   const reassembler = createInboundReassembler((frame) => {
@@ -135,8 +123,7 @@ function createBleTransport(transport, opts = {}) {
     if (!parsed) return;
     if (stateResolver && !stateSettled) {
       stateSettled = true;
-      clearTimeout(stateTimer);
-      stateTimer = null;
+      tmr.clear();
       const r = stateResolver;
       stateResolver = null;
       stateRejecter = null;
@@ -146,7 +133,7 @@ function createBleTransport(transport, opts = {}) {
   });
 
   function endReadStateWaiting() {
-    if (stateTimer) { clearTimeout(stateTimer); stateTimer = null; }
+    tmr.clear();
     stateResolver = null;
     stateRejecter = null;
     stateSettled = false;
@@ -168,8 +155,7 @@ function createBleTransport(transport, opts = {}) {
   function cancelReadState(reason) {
     if (stateRejecter && !stateSettled) {
       stateSettled = true;
-      clearTimeout(stateTimer);
-      stateTimer = null;
+      tmr.clear();
       const rej = stateRejecter;
       stateResolver = null;
       stateRejecter = null;
@@ -226,12 +212,11 @@ function createBleTransport(transport, opts = {}) {
       stateResolver = resolve;
       stateRejecter = reject;
       stateSettled = false;
-      stateTimer = setTimeoutMs(() => {
+      tmr.set(() => {
         if (!stateSettled) {
           stateSettled = true;
           stateResolver = null;
           stateRejecter = null;
-          stateTimer = null;
           reject(new Error('读状态超时'));
         }
       }, readTimeoutMs);
