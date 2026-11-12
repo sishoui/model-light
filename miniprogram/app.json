@@ -1,5 +1,9 @@
 {
   "pages": [
+    "pages/discover/discover",
+    "pages/device-info/device-info",
+    "pages/part/part",
+    "pages/me/me",
     "pages/devices/devices",
     "pages/device/device",
     "pages/pin/pin",
@@ -8,6 +12,17 @@
     "pages/preview/preview",
     "pages/ota/ota"
   ],
+  "tabBar": {
+    "custom": true,
+    "color": "#9ca3af",
+    "selectedColor": "#60a5fa",
+    "backgroundColor": "#111827",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/discover/discover", "text": "设备" },
+      { "pagePath": "pages/me/me", "text": "我的" }
+    ]
+  },
   "window": {
     "navigationBarTitleText": "模型灯效",
     "navigationBarBackgroundColor": "#1f2937",
