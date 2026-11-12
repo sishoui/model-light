@@ -9,13 +9,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// 列名按 migrations/ 里的 snake_case 映射；迁移 SQL 是权威来源。
 model User {
   id          BigInt   @id @default(autoincrement())
   openid      String   @unique @db.VarChar(64)
   nickname    String?  @db.VarChar(32)
-  avatarUrl   String?  @db.VarChar(512)
-  createdAt   DateTime @default(now()) @db.DateTime(3)
-  lastLoginAt DateTime @default(now()) @db.DateTime(3)
+  avatarUrl   String?  @map("avatar_url") @db.VarChar(512)
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  lastLoginAt DateTime @default(now()) @map("last_login_at") @db.DateTime(3)
 
   refreshTokens RefreshToken[]
 
@@ -23,16 +24,16 @@ model User {
 }
 
 model Device {
-  mlId           String    @id @db.Char(7)
-  displayName    String?   @db.VarChar(32)
-  fwVersion      String?   @db.VarChar(16)
-  payloadVersion Int?
-  pinsJson       Json?
-  previewJson    Json?
+  mlId           String    @id @map("ml_id") @db.Char(7)
+  displayName    String?   @map("display_name") @db.VarChar(32)
+  fwVersion      String?   @map("fw_version") @db.VarChar(16)
+  payloadVersion Int?      @map("payload_version")
+  pinsJson       Json?     @map("pins_json")
+  previewJson    Json?     @map("preview_json")
   rev            Int       @default(0)
-  lastPushedBy   BigInt?
-  pushedAt       DateTime?
-  createdAt      DateTime  @default(now()) @db.DateTime(3)
+  lastPushedBy   BigInt?   @map("last_pushed_by")
+  pushedAt       DateTime? @map("pushed_at")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.DateTime(3)
 
   backup DeviceBackup?
 
@@ -40,13 +41,13 @@ model Device {
 }
 
 model DeviceBackup {
-  mlId            String   @id @db.Char(7)
-  arrangement     Bytes    @db.MediumBlob
-  arrangementCrc32 Int
-  arrangementLen  Int
-  lastGood        Bytes?   @db.MediumBlob
-  lastGoodRev     Int?
-  updatedAt       DateTime @default(now()) @db.DateTime(3)
+  mlId             String   @id @map("ml_id") @db.Char(7)
+  arrangement      Bytes    @db.MediumBlob
+  arrangementCrc32 Int      @map("arrangement_crc32")
+  arrangementLen   Int      @map("arrangement_len")
+  lastGood         Bytes?   @map("last_good") @db.MediumBlob
+  lastGoodRev      Int?     @map("last_good_rev")
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.DateTime(3)
 
   device Device @relation(fields: [mlId], references: [mlId])
 
@@ -55,13 +56,14 @@ model DeviceBackup {
 
 model RefreshToken {
   id        BigInt    @id @default(autoincrement())
-  userId    BigInt
-  tokenHash String    @unique @db.Char(64)
-  expiresAt DateTime  @db.DateTime(3)
-  revokedAt DateTime?
-  createdAt DateTime  @default(now()) @db.DateTime(3)
+  userId    BigInt    @map("user_id")
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(3)
+  revokedAt DateTime? @map("revoked_at") @db.DateTime(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
 
   user User @relation(fields: [userId], references: [id])
 
+  @@index([userId])
   @@map("refresh_tokens")
 }
