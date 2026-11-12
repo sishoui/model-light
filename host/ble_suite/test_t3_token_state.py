@@ -43,6 +43,9 @@ from status_frame import (
 from ble_suite.transport import FakeBleakTransport
 
 
+pytestmark = pytest.mark.spec_section("§6")
+
+
 class DeviceSim:
     """微型设备仿真器：在两条 PC 连接之间路由令牌帧，裁决令牌授予与交接。
 
@@ -332,6 +335,7 @@ async def test_disconnect_then_reconnect_within_reserve():
 
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x05")
 async def test_ota_active_blocks_token_handoff_and_writes():
     """7. OTA 进行中 (mode=2 / TRANSMITTING)：拒绝令牌交接，写入被门禁。
 

@@ -34,6 +34,10 @@ from ota_session import (
 )
 from shard_frame import build_ack_frame, crc32, parse_ack, parse_frame
 
+
+pytestmark = pytest.mark.spec_section("§3.4")
+
+
 CHUNK_PAYLOAD = 1024  # OtaSession 默认 chunk_size(1027) - DATA_HEADER(3) = 1024
 
 
@@ -300,6 +304,7 @@ async def test_begin_fingerprint_mismatch(fake_transport):
 
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x0A")
 async def test_commit_failed(fake_transport):
     """(4) COMMIT 失败（device ACK status=1）→ result commit-failed，state FAILED；
     设备已 esp_ota_abort，主机不再发 ABORT。"""

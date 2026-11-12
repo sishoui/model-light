@@ -259,6 +259,8 @@ def build_status_frame(
     (0x0A, "CRC 不符（OTA）"),
     (0x0B, "版本被拒（OTA）"),
 ])
+@pytest.mark.spec_section("§2.9")
+@pytest.mark.error_code("0x08-0x0B")
 def test_status_error_code_mapping_0x08_to_0x0b(code, expected):
     """spec §2.9 / §5.2：0x08-0x0B 错误码与人类可读消息映射。"""
     assert StatusErrorCode(code).name in (
@@ -281,6 +283,7 @@ def test_status_error_code_mapping_0x08_to_0x0b(code, expected):
 # =========================================================================== #
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x08")
 async def test_commit_failed_device_already_aborted(fake_transport):
     """(1) COMMIT 应答 status=1（设备已 esp_ota_abort）：
     result commit-failed / FAILED，bytes_written==len(img)；
@@ -317,6 +320,7 @@ async def test_commit_failed_device_already_aborted(fake_transport):
     StatusErrorCode.OTA_CRC_MISMATCH,      # 0x0A CRC 不符
     StatusErrorCode.OTA_VERSION_REJECTED,  # 0x0B 版本被拒
 ])
+@pytest.mark.error_code("0x08-0x0B")
 async def test_commit_failed_each_error_code_aborts_not_set_boot(
     fake_transport, fail_reason
 ):

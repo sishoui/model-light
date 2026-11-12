@@ -17,6 +17,9 @@ import pytest
 from ble_suite.transport import BleTransport, FakeBleakTransport  # noqa: F401
 
 
+pytestmark = pytest.mark.spec_section("transport")
+
+
 def test_suite_package_imports():
     """(a) ble_suite 包可导入，暴露传输层接口与假/真实传输层。"""
     transport_mod = importlib.import_module("ble_suite.transport")

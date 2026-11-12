@@ -59,8 +59,11 @@ from status_frame import (
     StatusFrame,
     StatusMode,
     StatusSubscription,
-    StatusTokenHolder,
-)
+    StatusTokenHolder,)
+
+
+pytestmark = pytest.mark.spec_section("§6")
+
 
 CHUNK_PAYLOAD = 1024  # OtaSession 默认 chunk_size(1027) - DATA_HEADER(3) = 1024
 
@@ -493,6 +496,7 @@ async def run_ota(h: _Harness, image: bytes, app_version: int,
 # =========================================================================== #
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x05")
 async def test_ota_busy_rejects_token_handoff():
     """(1) OTA 进行中，请求方 B 请求令牌 -> BUSY 0x05，B 保持只读，不交接。"""
     h = _Harness()
@@ -537,6 +541,7 @@ async def test_ota_busy_rejects_token_handoff():
 
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x05")
 async def test_realtime_param_busy_not_silently_dropped():
     """(2) 实时参数包（...0002）在 OTA 中被拒收：BUSY 0x05，error_code 上报。"""
     h = _Harness()
@@ -575,6 +580,7 @@ async def test_realtime_param_busy_not_silently_dropped():
 
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x05")
 async def test_arrangement_write_busy_during_ota():
     """(3) 编排写入（...0003）在 OTA 中被拒：Sender 得到 BUSY，0x05 透传，
     线上不发 START 帧；OTA 结束后正常下发。"""
@@ -659,6 +665,7 @@ async def test_other_connection_readonly_no_auto_disconnect():
 
 
 @pytest.mark.asyncio
+@pytest.mark.error_code("0x05")
 async def test_ota_channel_continues_during_busy_gates():
     """(5) OTA 通道（...0006）在 OTA 进行中不受闸门影响，DATA/COMMIT 正常。
 

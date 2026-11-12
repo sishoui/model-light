@@ -37,6 +37,10 @@ from shard_frame import (
     parse_ack,
     parse_frame,
 )
+
+
+pytestmark = pytest.mark.spec_section("§2.2")
+
 from arrangement import (
     Arrangement,
     ArrangementError,
@@ -233,6 +237,7 @@ async def test_happy_path_all_chunks_acked_and_committed(fake_transport):
     assert last["status"] == 0
 
 
+@pytest.mark.error_code("0x02")
 def test_crc_mismatch_nak_no_commit_previous_kept():
     """(2) START crc 不匹配 -> NAK status != 0，不提交，上一份保持原样。"""
     data = make_valid_arrangement_bytes()
@@ -269,6 +274,7 @@ def test_crc_mismatch_nak_no_commit_previous_kept():
     assert naks[-1]["status"] != StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x02")
 def test_pixel_overlap_nak_no_commit():
     """(3) 编排里像素重叠 -> on_complete 返回 False -> NAK，不提交。"""
     data = make_overlap_arrangement_bytes()
@@ -300,6 +306,7 @@ def test_pixel_overlap_nak_no_commit():
     assert naks[-1]["status"] != 0
 
 
+@pytest.mark.error_code("0x0B")
 def test_version_incompatible_nak_no_commit():
     """(4) payloadVersion 不兼容 -> validate 失败 -> NAK，不提交。"""
     data = make_valid_arrangement_bytes()

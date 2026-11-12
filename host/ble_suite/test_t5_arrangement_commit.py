@@ -56,6 +56,9 @@ from arrangement import (
 from status_frame import StatusErrorCode
 
 
+pytestmark = pytest.mark.spec_section("§2.2")
+
+
 # ---------------------------------------------------------------------------
 # 测试夹具：有效编排字节
 # ---------------------------------------------------------------------------
@@ -298,6 +301,7 @@ async def test_happy_path_full_commit(fake_transport):
     assert last["status"] == StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x02")
 def test_length_mismatch_nak_no_commit_previous_kept():
     """(2) START totalLen != 实际重组长度 -> NAK，on_complete 未被调用，
     无提交，上一份保持原样。"""
@@ -323,6 +327,7 @@ def test_length_mismatch_nak_no_commit_previous_kept():
     assert naks[-1]["status"] != StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x02")
 def test_crc32_mismatch_nak_no_commit_previous_kept():
     """(3) 整份 CRC32 不匹配 -> NAK，on_complete 未被调用，
     无提交，上一份保持原样。"""
@@ -346,6 +351,7 @@ def test_crc32_mismatch_nak_no_commit_previous_kept():
     assert naks[-1]["status"] != StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x02")
 def test_decode_failure_nak_no_commit_previous_kept():
     """(4) 截断/畸形 TLV -> decode 抛出 -> on_complete 返回 False -> NAK，
     无提交，上一份保持原样。"""
@@ -374,6 +380,7 @@ def test_decode_failure_nak_no_commit_previous_kept():
     assert naks[-1]["status"] != StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x02")
 def test_pixel_overlap_nak_no_commit_previous_kept():
     """(5) 像素重叠 -> validate_structure 抛出 OVERLAP -> on_complete 返回 False
     -> NAK，无提交，上一份保持原样。"""
@@ -401,6 +408,7 @@ def test_pixel_overlap_nak_no_commit_previous_kept():
     assert naks[-1]["status"] != StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x0B")
 def test_version_incompatible_nak_no_commit_previous_kept():
     """(6) payloadVersion != PAYLOAD_VERSION -> validate 抛出 VERSION -> NAK，
     无提交，上一份保持原样。（版本兼容链路的一个分支）"""
@@ -459,6 +467,7 @@ async def test_nak_nakmask_retransmit_then_commit(fake_transport):
     assert last is not None and not last["is_nak"] and last["status"] == StatusErrorCode.OK
 
 
+@pytest.mark.error_code("0x02")
 def test_failed_commit_keeps_previous_playback_uninterrupted():
     """(8) 播放不中断：一次失败提交后，之前已提交的编排仍完整保留；
     随后仍可继续提交新编排（系统未卡死）。"""

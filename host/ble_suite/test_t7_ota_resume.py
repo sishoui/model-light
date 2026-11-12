@@ -34,6 +34,10 @@ from ota_session import (
 )
 from shard_frame import crc32, parse_ack, parse_frame
 
+
+pytestmark = pytest.mark.spec_section("§3.4")
+
+
 CHUNK_PAYLOAD = 1024  # OtaSession 默认 chunk_size(1027) - DATA_HEADER(3) = 1024 B/片
 
 

@@ -34,8 +34,11 @@ from status_frame import (
     StatusFlags,
     StatusFrame,
     StatusMode,
-    parse_status_frame,
-)
+    parse_status_frame,)
+
+
+pytestmark = pytest.mark.spec_section("§7.2")
+
 
 CHUNK_PAYLOAD = 1024  # OtaSession 默认 chunk_size(1027) - DATA_HEADER(3) = 1024
 

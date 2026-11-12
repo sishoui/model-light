@@ -38,6 +38,9 @@ from status_frame import (
     STATUS_FRAME_LEN,
 )
 
+pytestmark = pytest.mark.spec_section("§2.9")
+
+
 # -- 测试辅助 ---------------------------------------------------------
 
 def build_status_frame(
@@ -173,6 +176,7 @@ def test_token_holder_enum():
     assert parse_status_frame(build_status_frame(token_holder=7)).token_holder_enum == StatusTokenHolder.NONE
 
 
+@pytest.mark.error_code("0x02")
 def test_flags_and_error_properties():
     """flags、is_ok、error_message。"""
     parsed = parse_status_frame(build_status_frame(error_code=0x02, flags=0x03))
