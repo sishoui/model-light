@@ -1,0 +1,43 @@
+<view class="page">
+  <view class="toolbar">
+    <view class="title">{{name || '设备信息'}}</view>
+    <button
+      class="conn-btn"
+      type="{{connected ? 'default' : 'primary'}}"
+      loading="{{connecting}}"
+      bindtap="{{connected ? 'onTapDisconnect' : 'connect'}}"
+    >
+      {{connected ? '断开' : '连接'}}
+    </button>
+  </view>
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <view wx:if="{{!connected}}" class="empty">
+    <text>点击“连接”建立与设备的 BLE 会话并读取状态。</text>
+  </view>
+
+  <view wx:if="{{connected}}" class="card">
+    <view class="row">
+      <text class="label">设备 ID</text>
+      <text class="value monospace">{{deviceId}}</text>
+    </view>
+    <view class="row">
+      <text class="label">名称</text>
+      <text class="value">{{name || '-'}}</text>
+    </view>
+    <view wx:if="{{state}}" class="row">
+      <text class="label">运行模式</text>
+      <text class="value">{{state.mode === 0 ? '回放' : state.mode === 1 ? '实时' : state.mode === 2 ? '传输中' : '错误'}}</text>
+    </view>
+    <view wx:if="{{state}}" class="row">
+      <text class="label">令牌持有者</text>
+      <text class="value">{{state.tokenHolder === 1 ? '本机' : state.tokenHolder === 2 ? '其他连接' : '无'}}</text>
+    </view>
+  </view>
+
+  <view class="actions" wx:if="{{connected}}">
+    <button type="primary" bindtap="onTapPin">进入 8 引脚（可命名）</button>
+    <button bindtap="onTapGroup">进入灯组</button>
+  </view>
+</view>
