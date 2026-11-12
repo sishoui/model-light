@@ -35,6 +35,7 @@ test('FIN and RESET frames are 3 B with correct cmd', () => {
 });
 
 test('parseAck decodes ACK and NAK; rejects wrong length/cmd', () => {
+  // 布局：cmd(1) + ackUpTo(2 LE) + nakMask(2 LE) + status(1) = 6 B（与 firmware ble.c xfer_send 一致）
   const b = new Uint8Array([0x05, 0x07, 0x00, 0x03, 0x00, 0x00]);
   const ack = parseAck(b);
   assert.deepEqual(ack, { cmd: 0x05, ackUpTo: 7, nakMask: 3, status: 0, isNak: false });
