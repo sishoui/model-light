@@ -16,6 +16,7 @@ const BLACK = [0, 0, 0];
 
 const { resolveStage, stageColorAt } = require('./preview');
 const { EFFECTS } = require('./effect-schema');
+const { validatePixelExclusivity } = require('./pixel-exclusivity');
 
 /** 灯组总时长 = 各阶段时长之和（ms）。 */
 function groupTotalMs(group) {
@@ -48,38 +49,6 @@ function createFrameClock({ now = () => Date.now(), intervalMs = FRAME_INTERVAL_
     intervalMs,
     fps: FPS,
   };
-}
-
-/**
- * 像素归属互斥校验：同一 pin 内，每颗灯珠至多属于一个灯组。
- * 任意两个灯组范围重叠 -> 抛错（拒绝整份编排）。
- * 不同 pin 之间互不影响。
- * @param {object} arr 编排
- */
-function validatePixelExclusivity(arr) {
-  const pins = arr && arr.pins;
-  if (!Array.isArray(pins)) {
-    throw new Error('arr.pins 必须是数组');
-  }
-  pins.forEach((pin, pi) => {
-    if (!pin) return;
-    const n = pin.length || 0;
-    const used = new Uint8Array(n > 0 ? n : 1);
-    (pin.groups || []).forEach((g, gi) => {
-      (g.ranges || []).forEach((r) => {
-        const start = Math.max(0, r.start);
-        const end = Math.min(n, r.end);
-        for (let i = start; i < end; i += 1) {
-          if (used[i]) {
-            throw new Error(
-              `pin[${pi}] 像素重叠: 灯珠 ${i} 被多个灯组占用（group ${gi}），拒绝整份编排`
-            );
-          }
-          used[i] = 1;
-        }
-      });
-    });
-  });
 }
 
 /**

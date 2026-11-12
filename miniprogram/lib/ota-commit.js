@@ -13,6 +13,8 @@
 // 参照 miniprogram/lib/arrangement-sender.js 与 miniprogram/lib/ota-session.js。
 
 const { crc32 } = require('./crc32');
+const { createOtaImage } = require('./ota-image');
+const { defaultSetTimeoutMs, defaultNow } = require('./timer');
 
 const NVS_PERSIST_EVERY = 16 * 1024; // 每 16 KB 落盘一次
 const NVS_PERSIST_ALIGN = 4 * 1024;  // 仅在 4 KB 对齐的 bytesWritten 落盘
@@ -41,9 +43,6 @@ const STATE_TO_BLOB = {
 };
 
 const TRANSFERRING_STATES = new Set([ST_BEGIN, ST_DATA, ST_COMMIT, ST_RESUME]);
-
-function defaultSetTimeoutMs(fn, ms) { setTimeout(fn, ms); }
-function defaultNow() { return Date.now(); }
 
 function buildBlob({ sha256Prefix, totalLen, bytesWritten, crc32Value, state }) {
   const b = new Uint8Array(NVS_BLOB_LEN);
@@ -182,16 +181,16 @@ function createOtaCommit({
       return { ok: false, state: ST_FAILED, reason: 'no-token' };
     }
 
-    const bytes = img instanceof Uint8Array ? img : new Uint8Array(img || []);
-    const size = sizeOpt ?? bytes.length;
+    // 五参数图像元数据打包为 OtaImage，ota-session 与本模块统一使用此类型。
+    const image = createOtaImage({ imageSize: sizeOpt, sha256: shaOpt, appVersion: verOpt, crc32: crcOpt, data: img });
 
-    imageSize = size;
-    totalLen = size;
+    totalLen = image.imageSize;
     bytesWritten = 0;
-    sha256 = shaOpt instanceof Uint8Array ? shaOpt : null;
-    crc32Value = crcOpt ?? 0;
-    appVersion = verOpt || '';
-    data = bytes;
+    imageSize = image.imageSize;
+    sha256 = image.sha256;
+    crc32Value = image.crc32;
+    appVersion = image.appVersion;
+    data = image.data;
     state = ST_BEGIN;
 
     // crash-right-after-BEGIN 仍保留会话（固件侧同理）
@@ -246,13 +245,9 @@ function createOtaCommit({
     if (settled) return;
     settled = true;
     state = ST_FAILED;
-    try { await abortFlash(); } catch (e) {}
+    try { await flashAbort(); } catch (e) {}
     try { await erase(); } catch (e) {}
     emit({ type: 'failed', reason: 'aborted', state: ST_FAILED, abortSent: true });
-  }
-
-  async function abortFlash() {
-    await flashAbort();
   }
 
   /** 断电/断连后从 NVS 持久化点续传（掉电最多重传 16 KB）。 */

@@ -32,20 +32,21 @@ enum {
 #define MLPROTO_VENDOR_ID_TEST 0xFFFFu
 
 #define MLPROTO_ADV_MFR_LEN   9  /* 2 B vendor + 7 B payload */
-#define MLPROTO_STATE_LEN     13 /* 12 B v1 frame + 1 B OTA progress (F7, §7.1) */
+#define MLPROTO_STATE_LEN     12 /* strict 12 B v1 state frame (spec §2.9) */
 #define MLPROTO_DEVINFO_LEN   10 /* fw(2) + proto(2) + caps(2) + deviceId(4) */
 
 /* 9 B manufacturer data:
  * [0..1] vendor ID LE, [2] major, [3] minor, [4..5] caps LE, [6] run state. */
 void mlproto_adv_manufacturer(uint8_t buf[MLPROTO_ADV_MFR_LEN], uint8_t run_state);
 
-/* 13 B full state frame (spec §2.9 + §7.1: buf[12] = OTA progress 0-100,
- * meaningful only while mode=2; 0 otherwise). */
+/* 12 B full state frame (spec §2.9):
+ * mode(1) arrangementVersion(2 LE) arrangementCrc32(4 LE)
+ * brightnessLimit(1) tokenHolder(1) errorCode(1) temperature(1) flags(1).
+ * No OTA progress byte. */
 void mlproto_state_frame(uint8_t buf[MLPROTO_STATE_LEN], uint8_t mode,
                          uint16_t arrangement_version, uint32_t arrangement_crc32,
                          uint8_t brightness_limit, uint8_t token_holder,
-                         uint8_t error_code, uint8_t temperature, uint8_t flags,
-                         uint8_t ota_progress);
+                         uint8_t error_code, uint8_t temperature, uint8_t flags);
 
 /* Device info characteristic (...0005): fwMajor(1) fwMinor(1) protoMajor(1)
  * protoMinor(1) caps(2 LE) deviceId(4 LE). */

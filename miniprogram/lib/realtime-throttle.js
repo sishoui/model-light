@@ -3,12 +3,9 @@
 // send 失败静默（§2.3 无 ACK 通道，错误只走状态帧错误码）。
 
 const { buildRealtimeFrame } = require('./realtime-frame');
+const { defaultSetTimeoutMs, defaultClearTimeoutMs, createTimer } = require('./timer');
 
 const REALTIME_INTERVAL_MS = 50;
-
-function defaultSetTimeoutMs(fn, ms) {
-  setTimeout(fn, ms);
-}
 
 /**
  * @param {object} opts { send(frame), now(), setTimeoutMs(fn, ms), intervalMs }
@@ -16,25 +13,17 @@ function defaultSetTimeoutMs(fn, ms) {
  * @returns {{ push(params), flush() }}
  *   push：窗口外立即发；窗口内只记最新 pending（中间值丢弃），窗口到期自动 flush 最新值。
  */
-function createRealtimeThrottle({ send, now = () => Date.now(), setTimeoutMs = defaultSetTimeoutMs, intervalMs = REALTIME_INTERVAL_MS }) {
+function createRealtimeThrottle({ send, now = () => Date.now(), setTimeoutMs = defaultSetTimeoutMs, clearTimeoutMs = defaultClearTimeoutMs, intervalMs = REALTIME_INTERVAL_MS }) {
   let lastSentAt = -Infinity;
   let pending = null;
   let sending = false;
-  let timerToken = 0;
-
-  function cancelTimer() {
-    timerToken += 1;
-  }
+  const tmr = createTimer(now, setTimeoutMs, clearTimeoutMs);
 
   function armWindowTimer() {
-    cancelTimer();
-    const token = ++timerToken;
+    tmr.clear();
     const deadline = lastSentAt + intervalMs;
     const delay = Math.max(0, deadline - now());
-    setTimeoutMs(() => {
-      if (token !== timerToken) return;
-      fireWindow();
-    }, delay);
+    tmr.set(() => { fireWindow(); }, delay);
   }
 
   function fireWindow() {

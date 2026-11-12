@@ -6,6 +6,8 @@
 const { crc32 } = require('./crc32');
 const { decode } = require('./arrangement');
 const { negotiateProtocol } = require('./device-protocol');
+const { hasPixelOverlap } = require('./pixel-exclusivity');
+const { defaultSetTimeoutMs, defaultClearTimeoutMs, defaultNow, createTimer } = require('./timer');
 
 const DEBOUNCE_MS = 2000;
 
@@ -16,26 +18,6 @@ const NAK_STATUS = {
   PIXEL_OVERLAP: 0x06,  // 灯组像素重叠
   VERSION_MISMATCH: 0x07, // 固件版本不符
 };
-
-function defaultSetTimeoutMs(fn, ms) { setTimeout(fn, ms); }
-function defaultClearTimeoutMs(handle) { clearTimeout(handle); }
-const defaultNow = () => Date.now();
-
-/** 像素归属互斥：同一 pin 内，任意灯珠只能属于一个灯组（灯组间与灯组内均算）。 */
-function hasPixelOverlap(decoded) {
-  for (const pin of decoded.pins) {
-    const occupied = new Set();
-    for (const group of pin.groups) {
-      for (const r of group.ranges) {
-        for (let i = r.start; i < r.end; i += 1) {
-          if (occupied.has(i)) return true;
-          occupied.add(i);
-        }
-      }
-    }
-  }
-  return false;
-}
 
 /**
  * 纯函数：FIN 后按顺序校验编排。
@@ -105,7 +87,7 @@ function createCommitManager(opts = {}) {
     onNak, onSaved,
   } = opts;
 
-  let timer = null;
+  const tmr = createTimer(now, setTimeoutMs, clearTimeoutMs);
   let pendingBytes = null;
   let pendingDecoded = null;
   const key = `arrangement:${deviceName}`;
@@ -125,15 +107,14 @@ function createCommitManager(opts = {}) {
       if (typeof onNak === 'function') onNak(result.nakStatus);
       pendingBytes = null;
       pendingDecoded = null;
-      if (timer !== null) { clearTimeoutMs(timer); timer = null; }
+      tmr.clear();
       return { ok: false, reason: result.reason, nakStatus: result.nakStatus };
     }
     // 全部通过：整体写 NVS，去抖 debounceMs（只保留最新一份）
     pendingBytes = bytes;
     pendingDecoded = result.decoded;
-    if (timer !== null) clearTimeoutMs(timer);
-    timer = setTimeoutMs(() => {
-      timer = null;
+    tmr.clear();
+    tmr.set(() => {
       const savedBytes = pendingBytes;
       const savedDecoded = pendingDecoded;
       pendingBytes = null;
@@ -148,7 +129,7 @@ function createCommitManager(opts = {}) {
 
   /** 立即落盘待写入的编排（跳过去抖，供测试或页面卸载前调用）。 */
   function flush() {
-    if (timer !== null) { clearTimeoutMs(timer); timer = null; }
+    tmr.clear();
     const savedBytes = pendingBytes;
     const savedDecoded = pendingDecoded;
     pendingBytes = null;
@@ -162,7 +143,7 @@ function createCommitManager(opts = {}) {
   }
 
   function isPending() {
-    return timer !== null || pendingBytes !== null;
+    return tmr.isActive() || pendingBytes !== null;
   }
 
   return { commit, flush, isPending, debounceMs };

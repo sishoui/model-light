@@ -637,9 +637,8 @@ void ble_notify_command_to(uint16_t conn, const uint8_t *frame, uint16_t len)
 void ble_push_status(void)
 {
     /* tokenHolder is per-connection perspective (§2.9), so build one frame
-     * per connection. Frame is 13 B: mode + arrVersion + arrCrc32 +
-     * brightnessLimit + tokenHolder + errorCode + temperature + flags +
-     * OTA progress (§7.1). */
+     * per connection. Frame is 12 B: mode + arrVersion + arrCrc32 +
+     * brightnessLimit + tokenHolder + errorCode + temperature + flags. */
     for (size_t i = 0; i < s_conn_count; i++) {
         uint8_t frame[MLPROTO_STATE_LEN];
         build_status_frame(frame, s_conn_handles[i]);
@@ -650,8 +649,8 @@ void ble_push_status(void)
     }
 }
 
-/* Build one per-connection status frame. OTA 进行中: mode=2 + progress
- * (§7.1); the 1% throttle is applied by the caller that decides to send. */
+/* Build one per-connection status frame (strict 12 B, spec §2.9).
+ * OTA 进行中以 mode=2 体现；进度不再占用状态帧第 13 字节。 */
 static void build_status_frame(uint8_t frame[MLPROTO_STATE_LEN], uint16_t conn)
 {
     uint8_t mode = frame_run_mode();
@@ -664,8 +663,7 @@ static void build_status_frame(uint8_t frame[MLPROTO_STATE_LEN], uint16_t conn)
                         mlt_perspective(s_mlt, conn),
                         mlt_error_code(s_mlt,
                                        (uint32_t)(esp_timer_get_time() / 1000)),
-                        0, ble_flags(),
-                        mlota_active(s_ota) ? mlota_progress(s_ota) : 0);
+                        0, ble_flags());
 }
 
 /* F7 §7.1: OTA 期间进度按 1% 节流——只有百分比变化时才发状态帧。
