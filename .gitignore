@@ -1,9 +1,19 @@
+# Build artifacts / caches
+__pycache__/
+*.pyc
+*.pyo
 node_modules/
 dist/
-.env
+build/
 *.log
 
-build/
+# Private / local config (not for commit)
+eim_config.toml
+.env
+api/.env
+miniprogram/project.config.json
+miniprogram/project.private.config.json
 
-# server-only: rebinding caddy ports when host 80/443 are taken (docs/deploy.md)
-docker-compose.override.yml
+# OS
+.DS_Store
+Thumbs.db
