@@ -2,54 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [master, spec-implementation]
+    branches: [master, wayfinder/**]
   pull_request:
 
 jobs:
-  tests:
+  host-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --workspaces --include-workspace-root
-      - name: Prisma generate (client types)
-        run: npx prisma generate --schema api/prisma/schema.prisma
-      - name: Backend e2e (jest)
-        run: npm run test:api
-      - name: Miniprogram libs (node:test)
-        run: npm run test:mini
-
-  bootstrap-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --workspaces --include-workspace-root
-      - name: Prisma generate (client types)
-        run: npx prisma generate --schema api/prisma/schema.prisma
-      - name: Build api
-        run: npm run build --workspace api
-      - name: DI bootstrap smoke (real Nest container)
-        env:
-          DATABASE_URL: mysql://smoke:smoke@127.0.0.1:1/smoke
-        run: BOOTSTRAP_ONLY=1 node api/dist/main.js
-
-  firmware-host-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure & build host tests
+          python-version: "3.12"
+      - name: Install dependencies
         run: |
-          for comp in mlarr mlproto mltoken mlrt mlota; do
-            if [ -d "firmware/components/$comp/host_tests" ]; then
-              cmake -S "firmware/components/$comp/host_tests" -B "build/$comp"
-              cmake --build "build/$comp"
-              ctest --test-dir "build/$comp" --output-on-failure
-            fi
-          done
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio
+      - name: Run host unit tests
+        run: python -m pytest host/ -q
