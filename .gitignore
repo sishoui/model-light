@@ -5,5 +5,10 @@ dist/
 
 build/
 
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # server-only: rebinding caddy ports when host 80/443 are taken (docs/deploy.md)
 docker-compose.override.yml
