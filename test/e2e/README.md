@@ -75,7 +75,7 @@ test/e2e/
 │   ├── lib/
 │   │   ├── schema.js      # 用例 schema 校验
 │   │   ├── executor.js    # setup/steps/teardown 步骤分发
-│   │   ├── assertions.js  # serial / console / statusFrame / bleWrite
+│   │   ├── assertions.js  # serial / console / statusFrame / bleWrite / mockState
 │   │   ├── session.js     # automator + daemon HTTP 动作面（注入 mock）
 │   │   ├── daemon.js      # ASCII junction + daemon 启动 + health 等待
 │   │   ├── devtools.js    # cli close/auto + automator.connect
