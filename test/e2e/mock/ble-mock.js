@@ -125,6 +125,10 @@ function installBleMock(wxApi, options = {}) {
   if (!wxApi || typeof wxApi !== 'object') {
     throw new Error('ble-mock: wxApi 必传（DevTools 里传 globalThis.wx）');
   }
+  // 幂等：重复安装先清理旧实例（定时器/监听/状态不叠加；DevTools 重注入友好）
+  if (typeof globalThis !== 'undefined' && globalThis.__bleMock && typeof globalThis.__bleMock.dispose === 'function') {
+    try { globalThis.__bleMock.dispose(); } catch (e) { /* 旧实例清理失败不阻断新安装 */ }
+  }
   const baseUrl = String(options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
   const setTimeoutMs = options.setTimeoutMs || ((fn, ms) => setTimeout(fn, ms));
   const clearTimeoutFn = options.clearTimeout || ((id) => clearTimeout(id));

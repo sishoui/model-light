@@ -436,6 +436,31 @@ test('setBLEMTU/getBLEMTU 记忆协商结果；readBLECharacteristicValue 返回
 
 // ---- 与真实 ble.js 适配层的端到端 seam ------------------------------------------
 
+test('重复 install 幂等：先 dispose 旧实例（定时器/监听/状态不叠加）', async (t) => {
+  const timers = makeFakeTimers();
+  const wx = makeFakeWx();
+  const ctl1 = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  t.after(() => ctl1.dispose());
+
+  // 旧实例留下状态
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  assert.equal(ctl1.getState().connected, true);
+
+  const ctl2 = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  assert.equal(globalThis.__bleMock, ctl2, '__bleMock 指向新实例');
+  assert.equal(ctl1.getState().connected, false, '旧实例已被 dispose');
+  assert.equal(ctl2.getState().connected, false, '新实例状态干净');
+
+  // 旧实例的定时器不再触发：只应有新实例的 500 ms 轮询
+  let polls = 0;
+  const origRequest = wx.request;
+  wx.request = (opts) => { if (opts.url.endsWith('/api/ble/status')) polls += 1; return origRequest(opts); };
+  timers.advance(500);
+  await tick();
+  assert.equal(polls, 1, '仅新实例轮询（旧 interval 已清）');
+  wx.request = origRequest;
+});
+
 test('ble.js createBleClient 跑通 mock：扫描→连接→状态帧→写→读→MTU', async (t) => {
   const timers = makeFakeTimers();
   let statusHex = '000000000000006400001900';
