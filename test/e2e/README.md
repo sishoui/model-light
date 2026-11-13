@@ -94,12 +94,17 @@ test/e2e/
 {
   "id": "ble-01",
   "name": "BLE-01 扫描 → 连接 → 状态帧",
+  "daemons": ["A"],            // 可选；缺省只有 A。双 daemon 用例见 ble-06
   "setup":    [ /* Step */ ],
   "steps":    [ /* Step */ ],
   "assertions": [ /* Assertion */ ],
   "teardown": [ /* Step */ ]
 }
 ```
+
+`daemons` 声明用例需要的 daemon 实例：`A` 是主实例（COM6 串口 + HTTP 19000），
+其余实例（B…）自动 `--no-serial` 且 HTTP 端口依次 +1（B=19001）。runner 并发
+启动全部实例（设备一旦被 A 连上就停止广播，串行启动 B 会扫不到）。
 
 Step（`action` 之一）：
 
@@ -110,17 +115,18 @@ Step（`action` 之一）：
 | `input` | `selector`、`value` | 输入框赋值 |
 | `evaluate` | `code`（函数体）、`args`、`saveAs` | DevTools 运行时执行；返回值可存 ctx |
 | `waitForSerial` | `pattern`（正则，支持 `{{点路径}}` 插值）、`timeoutMs`、`minCount` | 轮询 `/api/serial/assert` 直到命中且 count ≥ minCount |
-| `waitForStatus` | `fields`、`timeoutMs`、`saveAs` | 轮询 `/api/ble/status` 直到帧字段全部匹配；帧存 ctx |
-| `waitForBle` | `timeoutMs` | 轮询 `/api/health` 直到 daemon BLE 链路 connected |
+| `waitForStatus` | `fields`、`timeoutMs`、`daemon`（默认 `A`）、`saveAs` | 轮询指定 daemon 的 `/api/ble/status` 直到帧字段全部匹配；帧存 ctx |
+| `waitForBle` | `timeoutMs`、`daemon`（默认 `A`） | 轮询指定 daemon 的 `/api/health` 直到 BLE 链路 connected |
+| `daemonWrite` | `daemon`（默认 `A`）、`characteristic`、`data`（hex）、`saveAs` | 直接向指定 daemon 发原始 BLE 写（第二部手机 = 另一 daemon 的 bleak 连接） |
 | `waitMs` | `ms` | 等待 |
 
 Assertion（`type` 之一）：
 
 | type | 参数 | 判定 |
 |---|---|---|
-| `serial` | `pattern`（正则）、`minCount` | daemon 串口缓冲命中 |
+| `serial` | `pattern`（正则）、`minCount`、`maxCount`（上限，证明“没有多余授予”） | daemon 串口缓冲命中且 count 在 [minCount, maxCount] |
 | `console` | `level`（默认 error）、`pattern` | 指定级别无命中 |
-| `statusFrame` | `hexLength`（可选，字节数）、`fields`、`timeoutMs` | 轮询 `/api/ble/status` 直到收到帧且字段全部匹配（帧异步刷新，旧值先到会继续等）；`fields` 值支持 `{{点路径}}` 插值 |
+| `statusFrame` | `hexLength`（可选，字节数）、`fields`、`daemon`（默认 `A`）、`timeoutMs` | 轮询指定 daemon 的 `/api/ble/status` 直到收到帧且字段全部匹配（帧异步刷新，旧值先到会继续等）；`fields` 值支持 `{{点路径}}` 插值 |
 | `bleWrite` | `short`/`characteristic`、`data`（hex 前缀）、`minCount` | mock `getCapturedWrites()` 命中（`short`/`data` 支持插值） |
 | `mockState` | `fields` | mock `getState()` 快照字段全部匹配（连接/扫描/连接次数等） |
 
@@ -135,6 +141,10 @@ Assertion（`type` 之一）：
   直连；断言固件侧出现第二次 `ble: connect #`、两次 REQ_TOKEN、mock 扫描次数不增。
 - `ble-04-push-arrangement.json`：等令牌空闲 → 改灯组/阶段（页面 store + encode）→
   推送；断言串口 `commit v<base+1>`、状态帧 `arrangementVersion` 同步递增、编排写 ...0003。
+- `ble-06-token-handover.json`：双 daemon（A 持令牌 → B 请求 → A 停心跳 → B 获令牌）。
+  A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
+  发 REQ_TOKEN。断言串口 `token released` / `token holder 0 -> N`、GRANT outcome 0/1
+  与两端状态帧的 per-connection `tokenHolder`（A=2、B=1）。
 
 ## 已知边界
 
@@ -154,3 +164,9 @@ Assertion（`type` 之一）：
   闭合。
 - 默认不烧录；改固件后用 `--flash`。
 - `npm run test:mini` 里的 preview/realtime 基线失败与本目录无关。
+- **双 daemon 的已知环境限制（#85 实测）**：Windows 的蓝牙栈对同一 BLE 外设
+  同一时刻只维持一个 GATT 会话。A 连上后，第二个 bleak 客户端即使扫描到设备，
+  `connect()` 也只会拿到 Windows 缓存的标准服务（GAP/DIS），固件串口不会出现
+  第二条 `ble: connect #2`。因此 BLE-06 在本机（单蓝牙适配器）无法建立第二条真实
+  链路；需要第二块 BLE 适配器或第二台主机才能完成 live 验收。`--address` 直连
+  不能绕过（bleak WinRT 仍需设备在广播或已缓存）。

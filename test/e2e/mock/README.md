@@ -35,6 +35,9 @@ DevTools 模拟器里扮演真实 ESP32-C3（ML-8DCC）的 BLE 外设：小程�
 
 - `debugDisconnect()` —— 触发 `onBLEConnectionStateChange` 断开事件，并 POST
   `/api/ble/reconnect` 让 daemon 的真实 BLE 链路断开重连（#84 断连重连用）
+- `setWritePaused(paused, characteristic?)` —— 写暂停钩子（#85 BLE-06）：
+  `true` 屏蔽全部写、`true + '0001'` 只屏蔽命令通道、`false` 恢复。暂停期间写仍被
+  截获、对上层仍成功（连接保持），但不 POST daemon——模拟持有方停止发心跳
 - `getCapturedWrites()` —— 全部截获写入 `[{characteristic, short, data(hex), ts, http}]`
 - `getState()` —— `{connected, deviceId, mtu, notifySubs, lastStatusHex, capturedWrites,
   scanCount, connectionCount, lastFrameSeq}`

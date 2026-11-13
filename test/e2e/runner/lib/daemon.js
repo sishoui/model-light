@@ -44,6 +44,31 @@ function tailLines(text, n = 40) {
   return text.split(/\r?\n/).filter(Boolean).slice(-n);
 }
 
+/** daemon 命令行参数（纯函数，单测覆盖）。noSerial=#85 双 daemon 的第二实例。 */
+function daemonCliArgs({
+  daemonPath,
+  name = 'ML-',
+  port = 'COM6',
+  httpPort = DEFAULT_HTTP_PORT,
+  noSerial = false,
+  address = null,
+}) {
+  const args = [daemonPath, '--name', name, '--port', port, '--http-port', String(httpPort)];
+  if (noSerial) args.push('--no-serial');
+  if (address) args.push('--address', address);
+  return args;
+}
+
+/**
+ * /api/health 是否代表 daemon 就绪（纯函数）。默认要求 BLE 连接 + 串口打开 +
+ * 串口已有日志（ESP32 在说话）；--no-serial 实例没有串口，只看 BLE。
+ */
+function daemonHealthy(health, { noSerial = false } = {}) {
+  if (!health || health.ok !== true || !health.ble || !health.ble.connected) return false;
+  if (noSerial) return true;
+  return Boolean(health.serial && health.serial.open && health.serial.lines > 0);
+}
+
 /**
  * 启动 daemon 并等 /api/health 就绪（ble 已连接 + 串口已开 + 串口有日志）。
  * @returns {Promise<{ proc, baseUrl, http, output(): string, stop(): Promise<void> }>}
@@ -55,6 +80,8 @@ async function startDaemon({
   name = 'ML-',
   port = 'COM6',
   httpPort = DEFAULT_HTTP_PORT,
+  noSerial = false,
+  address = null,
   healthTimeoutMs = 60000,
   log = () => {},
 }) {
@@ -65,7 +92,7 @@ async function startDaemon({
   let output = '';
   const proc = spawn(
     python,
-    [daemonPath, '--name', name, '--port', port, '--http-port', String(httpPort)],
+    daemonCliArgs({ daemonPath, name, port, httpPort, noSerial, address }),
     { cwd: asciiRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
   );
   const onChunk = (buf) => {
@@ -89,28 +116,32 @@ async function startDaemon({
     }
     try {
       const health = await http.get('/api/health');
-      if (health && health.ok === true && health.ble && health.ble.connected && health.serial && health.serial.open) {
+      if (daemonHealthy(health, { noSerial })) {
         // 串口有行 = ESP32 在说话（boot log / status push / mtu 等），否则明确报错。
-        if (health.serial.lines > 0) {
+        if (noSerial) {
+          log(`[runner] daemon（BLE-only）就绪：BLE ${health.ble.deviceName || ''} @ ${health.ble.address || ''}`);
+        } else {
           log(`[runner] daemon 就绪：BLE ${health.ble.deviceName || ''} @ ${health.ble.address || ''}，串口 ${health.serial.port}`);
-          return {
-            proc,
-            baseUrl: `http://127.0.0.1:${httpPort}`,
-            http,
-            output: () => output,
-            async stop() {
-              if (exited) return;
-              await new Promise((resolve) => {
-                const timer = setTimeout(() => {
-                  try { proc.kill('SIGKILL'); } catch { /* ignore */ }
-                  resolve();
-                }, 3000);
-                proc.on('exit', () => { clearTimeout(timer); resolve(); });
-                try { proc.kill(); } catch { clearTimeout(timer); resolve(); }
-              });
-            },
-          };
         }
+        return {
+          proc,
+          baseUrl: `http://127.0.0.1:${httpPort}`,
+          http,
+          output: () => output,
+          async stop() {
+            if (exited) return;
+            await new Promise((resolve) => {
+              const timer = setTimeout(() => {
+                try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+                resolve();
+              }, 3000);
+              proc.on('exit', () => { clearTimeout(timer); resolve(); });
+              try { proc.kill(); } catch { clearTimeout(timer); resolve(); }
+            });
+          },
+        };
+      } else if (!noSerial && health && health.ok === true && health.ble && health.ble.connected
+        && health.serial && health.serial.open && !(health.serial.lines > 0)) {
         lastError = new Error(`串口 ${health.serial.port} 打开但 6 s 内无日志（ESP32 可能未在线）`);
       } else {
         lastError = new Error(`/api/health 未就绪：${JSON.stringify(health)}`);
@@ -124,4 +155,11 @@ async function startDaemon({
   throw new Error(`daemon 健康检查超时（${healthTimeoutMs} ms）：${lastError && lastError.message}\n${tailLines(output).join('\n')}`);
 }
 
-module.exports = { startDaemon, ensureAsciiJunction, junctionPointsTo, DEFAULT_HTTP_PORT };
+module.exports = {
+  startDaemon,
+  daemonCliArgs,
+  daemonHealthy,
+  ensureAsciiJunction,
+  junctionPointsTo,
+  DEFAULT_HTTP_PORT,
+};

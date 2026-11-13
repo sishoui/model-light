@@ -7,7 +7,7 @@
 // 校验只做结构检查，不执行；runner 启动时先校验，任何一条不合法即环境错误
 // （退出码 2），避免半跑一条坏用例。
 
-const ACTIONS = new Set(['navigate', 'tap', 'input', 'evaluate', 'waitForSerial', 'waitForStatus', 'waitForBle', 'waitMs']);
+const ACTIONS = new Set(['navigate', 'tap', 'input', 'evaluate', 'waitForSerial', 'waitForStatus', 'waitForBle', 'waitMs', 'daemonWrite']);
 const ASSERTION_TYPES = new Set(['serial', 'console', 'statusFrame', 'bleWrite', 'mockState']);
 const CONSOLE_LEVELS = new Set(['log', 'info', 'warn', 'error', 'debug']);
 
@@ -58,10 +58,27 @@ function validateStep(step, where, errors) {
       if (step.timeoutMs != null && !isPositiveNumber(step.timeoutMs)) {
         errors.push(`${where}: timeoutMs 必须是正数`);
       }
+      if (step.daemon != null && !isNonEmptyString(step.daemon)) {
+        errors.push(`${where}: daemon 必须是非空字符串`);
+      }
       break;
     case 'waitForBle':
       if (step.timeoutMs != null && !isPositiveNumber(step.timeoutMs)) {
         errors.push(`${where}: timeoutMs 必须是正数`);
+      }
+      if (step.daemon != null && !isNonEmptyString(step.daemon)) {
+        errors.push(`${where}: daemon 必须是非空字符串`);
+      }
+      break;
+    case 'daemonWrite':
+      if (!isNonEmptyString(step.characteristic)) {
+        errors.push(`${where}: daemonWrite 需要非空 characteristic`);
+      }
+      if (!isNonEmptyString(step.data) || !/^[0-9a-fA-F]+$/.test(step.data) || step.data.length % 2 !== 0) {
+        errors.push(`${where}: daemonWrite 需要偶数长度的 hex data`);
+      }
+      if (step.daemon != null && !isNonEmptyString(step.daemon)) {
+        errors.push(`${where}: daemon 必须是非空字符串`);
       }
       break;
     case 'waitMs':
@@ -87,6 +104,9 @@ function validateAssertion(assertion, where, errors) {
       if (assertion.minCount != null && !isPositiveNumber(assertion.minCount)) {
         errors.push(`${where}: minCount 必须是正数`);
       }
+      if (assertion.maxCount != null && !isPositiveNumber(assertion.maxCount)) {
+        errors.push(`${where}: maxCount 必须是正数`);
+      }
       break;
     case 'console':
       if (assertion.level != null && !CONSOLE_LEVELS.has(assertion.level)) {
@@ -105,6 +125,9 @@ function validateAssertion(assertion, where, errors) {
       }
       if (assertion.timeoutMs != null && !isPositiveNumber(assertion.timeoutMs)) {
         errors.push(`${where}: timeoutMs 必须是正数`);
+      }
+      if (assertion.daemon != null && !isNonEmptyString(assertion.daemon)) {
+        errors.push(`${where}: daemon 必须是非空字符串`);
       }
       break;
     case 'bleWrite':
@@ -143,6 +166,19 @@ function validateCase(caseDef) {
   }
   if (!isNonEmptyString(caseDef.id)) errors.push('缺少非空 id');
   if (!isNonEmptyString(caseDef.name)) errors.push('缺少非空 name');
+  if (caseDef.daemons != null) {
+    if (!Array.isArray(caseDef.daemons)) {
+      errors.push('daemons: 必须是字符串数组');
+    } else {
+      const ids = caseDef.daemons;
+      if (ids.length === 0) errors.push('daemons: 至少需要一个实例');
+      if (new Set(ids).size !== ids.length) errors.push('daemons: 实例 id 不能重复');
+      ids.forEach((id, i) => {
+        if (!isNonEmptyString(id)) errors.push(`daemons[${i}]: 必须是非空字符串`);
+      });
+      if (!ids.includes('A')) errors.push('daemons: 必须包含主实例 A（串口断言与 mock 链路）');
+    }
+  }
   validateStepList(caseDef.setup, 'setup', errors);
   validateStepList(caseDef.steps, 'steps', errors);
   validateStepList(caseDef.teardown, 'teardown', errors);

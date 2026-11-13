@@ -9,6 +9,7 @@ ESP32-C3；订阅 status 特征 notify 存最近一帧；后台线程 pyserial �
 用法：
     python test/e2e/daemon/daemon.py [--name ML-] [--port COM6]
                                      [--http-host 127.0.0.1] [--http-port 19000]
+                                     [--no-serial] [--address MAC]
 
 退出码：
     0 正常退出 / 2 参数错误 / 3 未发现 BLE 设备 / 4 BLE 连接失败
@@ -452,39 +453,62 @@ async def scan_for_device(name_substring: str, timeout: float) -> Optional[Any]:
     return None
 
 
+def ble_device_from_address(address: str, name: str) -> Any:
+    """构造只带地址的 BLEDevice（跳过扫描直接连接，#85 第二实例）。
+
+    bleak WinRT 的 BleakClient 收到 BLEDevice 时直接取其中的蓝牙地址，不再
+    扫描；已连接设备通常已停止广播，这是第二实例唯一的连接途径。
+    """
+    try:
+        from bleak.backends.device import BLEDevice  # 延迟导入
+    except ImportError as exc:  # pragma: no cover - 环境缺失
+        raise RuntimeError("bleak 未安装：pip install bleak") from exc
+    return BLEDevice(address, name, None)
+
+
 def fatal(code: int, message: str) -> int:
     print(f"[daemon][fatal] {message}", file=sys.stderr, flush=True)
     return code
 
 
 async def serve(args: argparse.Namespace) -> int:
-    """启动全流程：扫描 → 连接 → 特征检查 → 串口 → HTTP → 常驻。"""
+    """启动全流程：扫描（或 --address 直连）→ 连接 → 特征检查 → 串口 → HTTP → 常驻。"""
     loop = asyncio.get_running_loop()
-    print(
-        f"[daemon] 扫描 BLE 设备（名称包含 '{args.name}'，超时 {args.scan_timeout}s）...",
-        flush=True,
-    )
-    try:
-        device = await scan_for_device(args.name, args.scan_timeout)
-    except RuntimeError as exc:
-        return fatal(EXIT_CONNECT_FAILED, str(exc))
-    if device is None:
-        return fatal(
-            EXIT_NO_DEVICE,
-            f"未发现名称包含 '{args.name}' 的 BLE 设备（扫描 {args.scan_timeout}s）；"
-            "请确认 ESP32 已上电并在广播",
+    if args.address:
+        # 已连接的设备通常不再广播：第二实例（#85 BLE-06）用主实例拿到的 MAC 直连。
+        # 注意：必须包成 BLEDevice 对象——bleak WinRT 收到字符串会先扫描找设备，
+        # 而设备已不广播必然找不到；BLEDevice 直接带出蓝牙地址，跳过扫描。
+        print(f"[daemon] 使用指定地址 {args.address}（跳过扫描）", flush=True)
+        device = ble_device_from_address(args.address, args.name)
+        device_name = args.name
+    else:
+        print(
+            f"[daemon] 扫描 BLE 设备（名称包含 '{args.name}'，超时 {args.scan_timeout}s）...",
+            flush=True,
         )
-
-    device_name = device.name or args.name
-    print(f"[daemon] 发现设备 {device_name} @ {device.address}", flush=True)
+        try:
+            device = await scan_for_device(args.name, args.scan_timeout)
+        except RuntimeError as exc:
+            return fatal(EXIT_CONNECT_FAILED, str(exc))
+        if device is None:
+            return fatal(
+                EXIT_NO_DEVICE,
+                f"未发现名称包含 '{args.name}' 的 BLE 设备（扫描 {args.scan_timeout}s）；"
+                "请确认 ESP32 已上电并在广播",
+            )
+        device_name = device.name or args.name
+        print(f"[daemon] 发现设备 {device_name} @ {device.address}", flush=True)
 
     # 串口先开：BLE 连接期的日志（ble: mtu ...）不能被丢。
-    try:
-        monitor = SerialMonitor.open(
-            args.port, baudrate=args.baud, buffer_lines=args.buffer_lines
-        )
-    except SerialOpenError as exc:
-        return fatal(EXIT_SERIAL_FAILED, str(exc))
+    # --no-serial（#85 双 daemon 的第二实例）：不碰串口，COM6 由 daemon A 独占。
+    monitor: Optional[SerialMonitor] = None
+    if not args.no_serial:
+        try:
+            monitor = SerialMonitor.open(
+                args.port, baudrate=args.baud, buffer_lines=args.buffer_lines
+            )
+        except SerialOpenError as exc:
+            return fatal(EXIT_SERIAL_FAILED, str(exc))
 
     # 传 BLEDevice 对象（而非地址字符串）：bleak WinRT 后端直连更可靠。
     transport = DaemonBleTransport(device, device_name=device_name)
@@ -494,11 +518,16 @@ async def serve(args: argparse.Namespace) -> int:
         CHR_COMMAND: core.on_command_frame,
         CHR_SEQBLOCK: core.on_seqblock_frame,
     })
+
+    def close_monitor() -> None:
+        if monitor is not None:
+            monitor.close()
+
     try:
         print(f"[daemon] 连接 {device_name} ...", flush=True)
         await asyncio.wait_for(transport.connect(), timeout=args.connect_timeout)
     except Exception as exc:
-        monitor.close()
+        close_monitor()
         try:
             await transport.disconnect()
         except Exception:
@@ -508,11 +537,11 @@ async def serve(args: argparse.Namespace) -> int:
     try:
         missing = transport.missing_characteristics(CHARACTERISTICS)
     except Exception as exc:
-        monitor.close()
+        close_monitor()
         await transport.disconnect()
         return fatal(EXIT_INCOMPLETE_CHARACTERISTICS, f"读取设备特征失败: {exc}")
     if missing:
-        monitor.close()
+        close_monitor()
         await transport.disconnect()
         return fatal(
             EXIT_INCOMPLETE_CHARACTERISTICS,
@@ -525,13 +554,14 @@ async def serve(args: argparse.Namespace) -> int:
     try:
         httpd = make_http_server(core, args.http_host, args.http_port)
     except OSError as exc:
-        monitor.close()
+        close_monitor()
         await transport.disconnect()
         return fatal(
             EXIT_HTTP_BIND_FAILED, f"无法监听 {args.http_host}:{args.http_port}: {exc}"
         )
 
-    monitor.start()
+    if monitor is not None:
+        monitor.start()
     http_thread = threading.Thread(
         target=httpd.serve_forever, name="daemon-http", daemon=True
     )
@@ -542,10 +572,13 @@ async def serve(args: argparse.Namespace) -> int:
         " POST /api/serial/assert | POST /api/serial/clear | GET /api/health",
         flush=True,
     )
-    print(
-        f"[daemon] 串口监控: {args.port}（环形缓冲 {args.buffer_lines} 行），Ctrl+C 退出",
-        flush=True,
-    )
+    if monitor is not None:
+        print(
+            f"[daemon] 串口监控: {args.port}（环形缓冲 {args.buffer_lines} 行），Ctrl+C 退出",
+            flush=True,
+        )
+    else:
+        print("[daemon] BLE-only 模式（--no-serial）：不打开串口", flush=True)
 
     try:
         await asyncio.Event().wait()
@@ -553,7 +586,7 @@ async def serve(args: argparse.Namespace) -> int:
         httpd.shutdown()
         http_thread.join(timeout=3)
         httpd.server_close()
-        monitor.close()
+        close_monitor()
         await transport.disconnect()
         print("[daemon] 已退出", flush=True)
     return EXIT_OK
@@ -570,10 +603,20 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--baud", type=int, default=115200, help="串口波特率（USB CDC 忽略，默认 115200）"
     )
     parser.add_argument("--scan-timeout", type=float, default=15.0, help="BLE 扫描超时秒数（默认 15）")
+    parser.add_argument(
+        "--address",
+        default=None,
+        help="跳过扫描直连指定 MAC（已连接的设备不再广播时，第二实例用）",
+    )
     parser.add_argument("--connect-timeout", type=float, default=10.0, help="BLE 连接超时秒数（默认 10）")
     parser.add_argument("--buffer-lines", type=int, default=2000, help="串口环形缓冲行数（默认 2000）")
     parser.add_argument("--http-host", default="127.0.0.1", help="HTTP 监听地址（默认 127.0.0.1）")
     parser.add_argument("--http-port", type=int, default=19000, help="HTTP 监听端口（默认 19000）")
+    parser.add_argument(
+        "--no-serial",
+        action="store_true",
+        help="BLE-only 模式：不打开串口（#85 双 daemon 的第二实例，COM6 由另一实例独占）",
+    )
     return parser.parse_args(argv)
 
 
@@ -596,8 +639,9 @@ class DaemonCore:
     协程提交到 attach_loop() 挂接的事件循环（bleak 客户端绑定该 loop）。
     """
 
-    def __init__(self, ble: Any, serial_monitor: "SerialMonitor") -> None:
+    def __init__(self, ble: Any, serial_monitor: Optional["SerialMonitor"]) -> None:
         self._ble = ble
+        # None = BLE-only 模式（#85 双 daemon 的第二实例；串口由另一实例独占）。
         self._serial = serial_monitor
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._started_at = time.monotonic()
@@ -698,7 +742,7 @@ class DaemonCore:
                 "deviceName": getattr(self._ble, "device_name", None),
                 "address": getattr(self._ble, "address", None),
             },
-            "serial": self._serial.snapshot(),
+            "serial": self._serial.snapshot() if self._serial is not None else None,
             "uptimeSeconds": round(time.monotonic() - self._started_at, 3),
         }
 
@@ -706,6 +750,8 @@ class DaemonCore:
 
     @_guard
     def handle_serial_assert(self, payload: Any) -> tuple[int, dict]:
+        if self._serial is None:
+            raise ApiError(503, "串口监控未启用（--no-serial）")
         if not isinstance(payload, dict):
             raise ApiError(400, "请求体必须是 JSON 对象")
         pattern = payload.get("pattern")
@@ -721,6 +767,8 @@ class DaemonCore:
 
     @_guard
     def handle_serial_clear(self, payload: Any = None) -> tuple[int, dict]:
+        if self._serial is None:
+            raise ApiError(503, "串口监控未启用（--no-serial）")
         cleared = self._serial.clear()
         return 200, {"ok": True, "cleared": cleared}
 

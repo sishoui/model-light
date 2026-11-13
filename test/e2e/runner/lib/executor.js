@@ -43,17 +43,22 @@ async function runStep(step, session, ctx) {
       return;
     }
     case 'waitForStatus': {
-      const frame = await session.waitForStatus(step.fields || {}, step.timeoutMs || 5000);
+      const frame = await session.waitForStatus(step.fields || {}, step.timeoutMs || 5000, step.daemon || 'A');
       if (step.saveAs) ctx[step.saveAs] = frame;
       return { value: frame };
     }
     case 'waitForBle': {
-      await session.waitForBleConnected(step.timeoutMs || 20000);
+      await session.waitForBleConnected(step.timeoutMs || 20000, step.daemon || 'A');
       return;
     }
     case 'waitMs': {
       await sleep(step.ms);
       return;
+    }
+    case 'daemonWrite': {
+      const value = await session.daemonWrite(step.daemon || 'A', step.characteristic, step.data);
+      if (step.saveAs) ctx[step.saveAs] = value;
+      return { value };
     }
     default:
       throw new StepError(`未知 action: ${step.action}`, step);

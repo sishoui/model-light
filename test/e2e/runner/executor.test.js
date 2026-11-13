@@ -17,6 +17,7 @@ function fakeSession(overrides = {}) {
     waitForSerial: overrides.waitForSerial || rec('waitForSerial'),
     waitForStatus: overrides.waitForStatus || rec('waitForStatus'),
     waitForBleConnected: overrides.waitForBleConnected || rec('waitForBleConnected'),
+    daemonWrite: overrides.daemonWrite || rec('daemonWrite'),
     ...overrides,
   };
 }
@@ -66,7 +67,7 @@ test('waitForStatus 轮询字段并把帧写入 saveAs', async () => {
   });
   const ctx = {};
   await runStep({ action: 'waitForStatus', fields: { tokenHolder: 0 }, timeoutMs: 1000, saveAs: 'st' }, s, ctx);
-  assert.deepStrictEqual(calls[0], [{ tokenHolder: 0 }, 1000]);
+  assert.deepStrictEqual(calls[0], [{ tokenHolder: 0 }, 1000, 'A']);
   assert.deepStrictEqual(ctx.st, { parsed: { tokenHolder: 0 } });
 });
 
@@ -74,7 +75,7 @@ test('waitForBle 调 session 等 daemon BLE 就绪', async () => {
   const calls = [];
   const s = fakeSession({ waitForBleConnected: async (...args) => { calls.push(args); return { ok: true }; } });
   await runStep({ action: 'waitForBle', timeoutMs: 3000 }, s, {});
-  assert.deepStrictEqual(calls[0], [3000]);
+  assert.deepStrictEqual(calls[0], [3000, 'A']);
 });
 
 test('waitMs 真的等待', async () => {
@@ -82,6 +83,16 @@ test('waitMs 真的等待', async () => {
   const t0 = Date.now();
   await runStep({ action: 'waitMs', ms: 30 }, s, {});
   assert.ok(Date.now() - t0 >= 25);
+});
+
+test('daemonWrite 向指定 daemon 发原始 BLE 写（默认 A）', async () => {
+  const s = fakeSession();
+  await runStep({ action: 'daemonWrite', daemon: 'B', characteristic: '0001', data: '10' }, s, {});
+  assert.deepStrictEqual(s.calls[0], ['daemonWrite', 'B', '0001', '10']);
+
+  const s2 = fakeSession();
+  await runStep({ action: 'daemonWrite', characteristic: '0001', data: '10' }, s2, {});
+  assert.deepStrictEqual(s2.calls[0], ['daemonWrite', 'A', '0001', '10']);
 });
 
 test('runSteps 记录每步耗时并遇错抛 StepError', async () => {

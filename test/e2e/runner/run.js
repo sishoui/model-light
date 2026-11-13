@@ -14,9 +14,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { startDaemon } = require('./lib/daemon');
+const { startDaemons } = require('./lib/daemons');
 const { startDevtools, connectAutomator, DEFAULT_CLI, DEFAULT_AUTO_PORT } = require('./lib/devtools');
-const { createHttpClient } = require('./lib/http');
 const { E2ESession } = require('./lib/session');
 const { runCase } = require('./lib/runner');
 const { buildReport, writeReport, writeJUnitReport, exitCodeFor } = require('./lib/report');
@@ -136,17 +135,22 @@ async function main() {
   const results = [];
   for (const caseDef of cases) {
     const startedAt = new Date();
-    let daemon = null;
+    let daemons = null;
     let devtools = null;
     let session = null;
     log(`\n[runner] === ${caseDef.id} ${caseDef.name} ===`);
     try {
-      daemon = await startDaemon({
+      daemons = await startDaemons({
+        caseDef,
         repoRoot: REPO_ROOT,
         asciiRoot: opts.asciiRoot,
-        name: 'ML-',
         log,
       });
+      const primary = daemons.A;
+      const sessionDaemons = {};
+      for (const [id, d] of Object.entries(daemons)) {
+        sessionDaemons[id] = { http: d.http, baseUrl: d.baseUrl };
+      }
 
       devtools = await startDevtools({
         cliPath: opts.cliPath,
@@ -156,8 +160,13 @@ async function main() {
       });
 
       const mini = await connectAutomator(`ws://127.0.0.1:${opts.autoPort}`);
-      const http = createHttpClient(daemon.baseUrl);
-      session = new E2ESession({ mini, http, mockSource, baseUrl: daemon.baseUrl });
+      session = new E2ESession({
+        mini,
+        http: primary.http,
+        mockSource,
+        baseUrl: primary.baseUrl,
+        daemons: sessionDaemons,
+      });
 
       // 先注入再重扫：discover 首次 onShow 跑在 mock 注入前（真 wx，模拟器无
       // 设备），页面方法驱动一次 stopScan→startScan 让 mock 的 ML-8DCC 进列表。
@@ -170,7 +179,9 @@ async function main() {
         reportsDir: REPORTS_DIR,
         junitDir: opts.junitDir || REPORTS_DIR,
         environment: {
-          daemon: { port: 'COM6', http: daemon.baseUrl },
+          daemons: Object.fromEntries(
+            Object.entries(daemons).map(([id, d]) => [id, { http: d.baseUrl, bleOnly: id !== 'A' }])
+          ),
           devtools: { project: miniprogramDir, autoPort: opts.autoPort },
         },
       });
@@ -191,7 +202,11 @@ async function main() {
       if (!opts.keepOpen) {
         try { if (session) await session.disconnect(); } catch { /* ignore */ }
         try { if (devtools) await devtools.close(); } catch { /* ignore */ }
-        try { if (daemon) await daemon.stop(); } catch { /* ignore */ }
+        try {
+          if (daemons) {
+            for (const d of Object.values(daemons)) await d.stop();
+          }
+        } catch { /* ignore */ }
       } else {
         log('[runner] --keep-open：daemon / DevTools 保留，手动收尾');
         try { if (session) await session.disconnect(); } catch { /* ignore */ }

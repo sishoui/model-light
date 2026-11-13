@@ -22,6 +22,8 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
 | `--connect-timeout` | `10` | 连接超时秒数 |
 | `--buffer-lines` | `2000` | 串口环形缓冲行数 |
 | `--http-host` / `--http-port` | `127.0.0.1` / `19000` | HTTP 监听 |
+| `--no-serial` | 关 | BLE-only 模式：不打开串口（#85 双 daemon 的第二实例；COM6 由 A 独占） |
+| `--address` | 无 | 跳过扫描直连指定 MAC（已连接设备不再广播时用；必须配 `--no-serial` 给第二实例） |
 
 退出码：`0` 正常 / `2` 参数错误 / `3` 未发现 BLE 设备 / `4` 连接失败 /
 `5` 特征不齐（缺 6 特征之一）/ `6` 串口打开失败（被占用）/ `7` HTTP 端口被占。
@@ -37,7 +39,7 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
 | `/api/ble/reconnect` | POST | —（空体可） | `{"ok": true, "connected": bool}`（断开旧 client → 等底层链路释放 → 重连并重新订阅 notify） |
 | `/api/serial/assert` | POST | `{"pattern": "<regex>"}` | `{"ok": true, "matched": bool, "count", "lines": [...]}` |
 | `/api/serial/clear` | POST | —（空体可） | `{"ok": true, "cleared": <n>}` |
-| `/api/health` | POST/GET | — | `{"ok": true, "ble": {...}, "serial": {...}, "uptimeSeconds"}` |
+| `/api/health` | POST/GET | — | `{"ok": true, "ble": {...}, "serial": {...} \| null, "uptimeSeconds"}` |
 
 - `characteristic` 接受 `0001`..`0006` 短号或完整 UUID（大小写任意）。
   写入按特征能力选 `response`：realtime/seqblock 只支持 write-without-response。
@@ -49,7 +51,7 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
   返回，实现先丢掉旧 client、等 6 s 让底层链路释放，再 connect（固件侧才会出现
   第二次 `ble: connect`）。
 - 错误响应统一为 `{"ok": false, "error": "..."}`：400 参数错 / 502 BLE 写入或重连失败 /
-  503 BLE 未连接 / 404 未知路径。
+  503 BLE 未连接或串口监控未启用（`--no-serial`）/ 404 未知路径。
 
 ## curl 示例（硬件在环）
 

@@ -207,3 +207,50 @@ test('capturedWrites 透传 mock 控制钩子结果', async () => {
   const s = new E2ESession({ mini, http: {}, mockSource: '' });
   assert.deepStrictEqual(await s.capturedWrites(), [{ short: '0001', data: '10' }]);
 });
+
+test('daemonWrite 向指定 daemon 的 /ble/write 发原始写（#85 双 daemon）', async () => {
+  const calls = [];
+  const httpA = { post: async (...args) => { calls.push(['A', ...args]); return { ok: true }; } };
+  const httpB = { post: async (...args) => { calls.push(['B', ...args]); return { ok: true }; } };
+  const s = new E2ESession({
+    mini: {}, http: httpA, mockSource: '', baseUrl: 'http://127.0.0.1:19000',
+    daemons: {
+      A: { http: httpA, baseUrl: 'http://127.0.0.1:19000' },
+      B: { http: httpB, baseUrl: 'http://127.0.0.1:19001' },
+    },
+  });
+  const body = await s.daemonWrite('B', '0001', '10');
+  assert.strictEqual(body.ok, true);
+  assert.deepStrictEqual(calls, [['B', '/ble/write', { characteristic: '0001', data: '10' }]]);
+});
+
+test('daemonWrite 默认走 A，未知 daemon 报错', async () => {
+  const calls = [];
+  const httpA = { post: async (...args) => { calls.push(args); return { ok: true }; } };
+  const s = new E2ESession({ mini: {}, http: httpA, mockSource: '' });
+  await s.daemonWrite('A', '0001', '10');
+  assert.deepStrictEqual(calls, [['/ble/write', { characteristic: '0001', data: '10' }]]);
+  await assert.rejects(s.daemonWrite('B', '0001', '10'), /daemon B/);
+});
+
+test('status/waitForStatus/waitForBleConnected 支持 daemon 选择', async () => {
+  const calls = [];
+  const httpA = {
+    get: async (path) => { calls.push(['A', path]); return { ok: true, received: true, hex: '00', parsed: { tokenHolder: 1 } }; },
+  };
+  const httpB = {
+    get: async (path) => {
+      calls.push(['B', path]);
+      if (path === '/api/health') return { ok: true, ble: { connected: true } };
+      return { ok: true, received: true, hex: '00', parsed: { tokenHolder: 2 } };
+    },
+  };
+  const s = new E2ESession({
+    mini: {}, http: httpA, mockSource: '',
+    daemons: { A: { http: httpA, baseUrl: 'a' }, B: { http: httpB, baseUrl: 'b' } },
+  });
+  assert.strictEqual((await s.status('B')).parsed.tokenHolder, 2);
+  assert.strictEqual((await s.waitForStatus({ tokenHolder: 2 }, 1000, 'B')).parsed.tokenHolder, 2);
+  assert.strictEqual((await s.waitForBleConnected(1000, 'B')).ok, true);
+  assert.ok(calls.every(([id]) => id === 'B'));
+});

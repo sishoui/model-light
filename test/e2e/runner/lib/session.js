@@ -36,13 +36,22 @@ class E2ESession {
    * @param {string} opts.mockSource ble-mock.js 全文（module.exports 守卫已去掉）
    * @param {string} [opts.baseUrl]
    */
-  constructor({ mini, http, mockSource, baseUrl = 'http://127.0.0.1:19000' }) {
+  constructor({ mini, http, mockSource, baseUrl = 'http://127.0.0.1:19000', daemons }) {
     this.mini = mini;
     this.http = http;
     this.mockSource = mockSource;
     this.baseUrl = baseUrl;
+    // #85 双 daemon：id → { http, baseUrl }；缺省只有主实例 A。
+    this.daemons = daemons || { A: { http, baseUrl } };
     this.consoleEntries = [];
     this.exceptionEntries = [];
+  }
+
+  /** 取指定 daemon 的 HTTP 客户端（A = 主实例，带串口）。 */
+  daemonHttp(daemonId = 'A') {
+    const d = this.daemons[daemonId];
+    if (!d || !d.http) throw new Error(`未知 daemon ${daemonId}（已知 ${Object.keys(this.daemons).join(', ')}）`);
+    return d.http;
   }
 
   /** 订阅 console/exception（需要在执行步骤前调用）。 */
@@ -219,31 +228,41 @@ class E2ESession {
   }
 
   /** 等 daemon 的 BLE 链路就绪（/api/health.ble.connected）。 */
-  async waitForBleConnected(timeoutMs = 20000) {
+  async waitForBleConnected(timeoutMs = 20000, daemonId = 'A') {
+    const http = this.daemonHttp(daemonId);
     return poll(
       async () => {
-        const body = await this.http.get('/api/health');
+        const body = await http.get('/api/health');
         return body && body.ok === true && body.ble && body.ble.connected ? body : null;
       },
-      { timeoutMs, intervalMs: 200, label: 'daemon BLE 就绪' }
+      { timeoutMs, intervalMs: 200, label: `daemon ${daemonId} BLE 就绪` }
     );
   }
 
-  async status() {
-    return this.http.get('/api/ble/status');
+  /** 向指定 daemon 发原始 BLE 写（#85：第二手机 = 另一 daemon 的 bleak 连接）。 */
+  async daemonWrite(daemonId, characteristic, data) {
+    const body = await this.daemonHttp(daemonId).post('/ble/write', { characteristic, data });
+    if (!body || body.ok !== true) {
+      throw new Error(`daemon ${daemonId} BLE 写失败：${JSON.stringify(body)}`);
+    }
+    return body;
+  }
+
+  async status(daemonId = 'A') {
+    return this.daemonHttp(daemonId).get('/api/ble/status');
   }
 
   /** 轮询状态帧直到 received 且 fields 全部匹配（帧异步刷新）。 */
-  async waitForStatus(fields = {}, timeoutMs = 5000) {
+  async waitForStatus(fields = {}, timeoutMs = 5000, daemonId = 'A') {
     return poll(
       async () => {
-        const body = await this.status();
+        const body = await this.status(daemonId);
         if (!body || body.ok !== true || !body.received) return null;
         const parsed = body.parsed || {};
         const ok = Object.entries(fields).every(([k, v]) => parsed[k] === v);
         return ok ? body : null;
       },
-      { timeoutMs, intervalMs: 200, label: `状态帧字段 ${JSON.stringify(fields)}` }
+      { timeoutMs, intervalMs: 200, label: `daemon ${daemonId} 状态帧字段 ${JSON.stringify(fields)}` }
     );
   }
 

@@ -20,9 +20,10 @@ async function runAssertion(assertion, session, ctx = {}) {
       const pattern = interpolateValue(assertion.pattern, ctx);
       const body = await session.serialAssert(pattern);
       const minCount = assertion.minCount || 1;
+      const maxCount = assertion.maxCount != null ? assertion.maxCount : Infinity;
       return {
         type: 'serial',
-        pass: body.matched === true && body.count >= minCount,
+        pass: body.matched === true && body.count >= minCount && body.count <= maxCount,
         detail: { pattern, count: body.count, lines: body.lines },
       };
     }
@@ -44,6 +45,7 @@ async function runAssertion(assertion, session, ctx = {}) {
 
     case 'statusFrame': {
       const timeoutMs = assertion.timeoutMs || 5000;
+      const daemonId = assertion.daemon || 'A';
       const wantLength = assertion.hexLength;
       const fields = {};
       for (const [key, value] of Object.entries(assertion.fields || {})) {
@@ -59,18 +61,18 @@ async function runAssertion(assertion, session, ctx = {}) {
       try {
         // 帧是异步刷新的（REQ_TOKEN 授予后台账 tokenHolder 0→1），轮询到字段
         // 匹配为止；超时取最后帧做失败明细，只有连帧都拿不到（daemon 挂）才抛。
-        body = await poll(() => session.status().then((s) => (matches(s) ? s : null)), {
+        body = await poll(() => session.status(daemonId).then((s) => (matches(s) ? s : null)), {
           timeoutMs,
           intervalMs: 200,
-          label: '状态帧',
+          label: `daemon ${daemonId} 状态帧`,
         });
       } catch (e) {
-        const last = await session.status().catch(() => null);
+        const last = await session.status(daemonId).catch(() => null);
         if (!last) throw e;
         body = last;
       }
       if (!body || body.ok !== true || !body.received || typeof body.hex !== 'string') {
-        return { type: 'statusFrame', pass: false, detail: { hex: null, hexLength: 0, parsed: {}, errors: ['未收到状态帧'] } };
+        return { type: 'statusFrame', daemon: daemonId, pass: false, detail: { hex: null, hexLength: 0, parsed: {}, errors: ['未收到状态帧'] } };
       }
       const hexLength = body.hex.length / 2;
       const parsed = body.parsed || {};
@@ -85,8 +87,9 @@ async function runAssertion(assertion, session, ctx = {}) {
       }
       return {
         type: 'statusFrame',
+        daemon: daemonId,
         pass: fieldErrors.length === 0,
-        detail: { hex: body.hex, hexLength, parsed, errors: fieldErrors },
+        detail: { daemon: daemonId, hex: body.hex, hexLength, parsed, errors: fieldErrors },
       };
     }
 

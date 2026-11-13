@@ -145,6 +145,8 @@ function installBleMock(wxApi, options = {}) {
     scanCount: 0,
     connectionCount: 0,
     lastFrameSeq: 0,
+    writePaused: false,       // 全部写暂停（BLE-06：A 停心跳让出令牌）
+    writePausedChars: new Set(), // 按特征短号暂停（'0001' = 只屏蔽命令通道）
   };
   const deviceFoundHandlers = new Set();
   const connectionStateHandlers = new Set();
@@ -266,6 +268,10 @@ function installBleMock(wxApi, options = {}) {
   };
   wxApi.offBLECharacteristicValueChange = (h) => { valueChangeHandlers.delete(h); };
 
+  function isWritePaused(short) {
+    return state.writePaused || state.writePausedChars.has(short);
+  }
+
   wxApi.writeBLECharacteristicValue = (opts = {}) => {
     if (!requireConnection(opts)) return;
     const uuid = CHAR_BY_NORM.get(normUuid(opts.characteristicId));
@@ -274,6 +280,14 @@ function installBleMock(wxApi, options = {}) {
     const hex = toHex(bytes);
     const record = { characteristic: uuid, short: shortOf(uuid), data: hex, ts: Date.now(), http: 'pending' };
     state.capturedWrites.push(record);
+
+    // BLE-06 钩子：暂停时写仍被截获、对上层仍算成功（连接保持），但不转发给
+    // daemon——模拟持有方停止发心跳（固件侧 30 s 无心跳后释放令牌）。
+    if (isWritePaused(record.short)) {
+      record.http = 'paused';
+      succeed(opts, { written: hex.length / 2, paused: true });
+      return;
+    }
 
     // 截获后转发 daemon：不可达或非 2xx 一律走 fail（让上层重试逻辑可见，不静默吞）
     wxApi.request({
@@ -403,6 +417,26 @@ function installBleMock(wxApi, options = {}) {
       return { disconnected: was };
     },
     getCapturedWrites() { return state.capturedWrites.map((w) => ({ ...w })); },
+    /**
+     * 写暂停钩子（#85 BLE-06）：A 持令牌时停心跳但不掉线。
+     * setWritePaused(true) 屏蔽全部写；setWritePaused(true, '0001') 只屏蔽命令通道；
+     * setWritePaused(false) 清除全部暂停。
+     */
+    setWritePaused(paused, characteristic) {
+      if (!paused) {
+        state.writePaused = false;
+        state.writePausedChars.clear();
+        return { writePaused: false, writePausedChars: [] };
+      }
+      if (characteristic) {
+        const raw = String(characteristic);
+        const short = /^000[1-6]$/i.test(raw) ? raw.toLowerCase() : shortOf(raw);
+        state.writePausedChars.add(short);
+      } else {
+        state.writePaused = true;
+      }
+      return { writePaused: state.writePaused, writePausedChars: Array.from(state.writePausedChars) };
+    },
     getState() {
       return {
         connected: state.connected,
@@ -414,6 +448,8 @@ function installBleMock(wxApi, options = {}) {
         scanCount: state.scanCount,
         connectionCount: state.connectionCount,
         lastFrameSeq: state.lastFrameSeq,
+        writePaused: state.writePaused,
+        writePausedChars: Array.from(state.writePausedChars),
       };
     },
     dispose() {
@@ -431,6 +467,8 @@ function installBleMock(wxApi, options = {}) {
       state.deviceId = null;
       state.mtu = null;
       state.lastFrameSeq = 0;
+      state.writePaused = false;
+      state.writePausedChars.clear();
     },
   };
 

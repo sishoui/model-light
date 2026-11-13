@@ -351,6 +351,142 @@ class TestBleReconnect:
         assert "adapter busy" in body["error"]
 
 
+class TestNoSerialMode:
+    """#85：双 daemon 时第二实例 BLE-only（--no-serial），串口由 daemon A 独占。"""
+
+    def test_parse_args_no_serial_default_false(self):
+        assert daemon_mod.parse_args([]).no_serial is False
+        assert daemon_mod.parse_args(["--no-serial"]).no_serial is True
+
+    def test_parse_args_address_default_none(self):
+        assert daemon_mod.parse_args([]).address is None
+        assert daemon_mod.parse_args(["--address", "CC:8D:A2:C2:56:62"]).address == "CC:8D:A2:C2:56:62"
+
+    def test_health_reports_null_serial_without_monitor(self, fake_ble):
+        core = DaemonCore(fake_ble, None)
+        status, body = core.handle_health()
+        assert status == 200
+        assert body["ok"] is True
+        assert body["ble"]["connected"] is True
+        assert body["serial"] is None
+
+    def test_serial_endpoints_return_503_without_monitor(self, fake_ble):
+        core = DaemonCore(fake_ble, None)
+        status, body = core.handle_serial_assert({"pattern": "mtu"})
+        assert status == 503
+        assert body["ok"] is False
+        status, body = core.handle_serial_clear()
+        assert status == 503
+        assert body["ok"] is False
+
+    def test_serve_no_serial_skips_serial_open(self, capsys, monkeypatch):
+        """--no-serial 启动不触碰 SerialMonitor（COM6 已被 daemon A 独占）。"""
+        opened = []
+
+        class ForbiddenMonitor:
+            def __init__(self, *args, **kwargs):
+                opened.append(self)
+
+            @classmethod
+            def open(cls, *args, **kwargs):
+                raise AssertionError("--no-serial 不应打开串口")
+
+        class FakeServer:
+            server_address = ("127.0.0.1", 0)
+
+            def serve_forever(self):
+                return None
+
+            def shutdown(self):
+                return None
+
+            def server_close(self):
+                return None
+
+        class FakeEvent:
+            async def wait(self):
+                return True
+
+        async def fake_scan(name_substring, timeout):
+            return SimpleNamespace(name="ML-8DCC", address="AA:BB:CC:DD:EE:FF")
+
+        async def ok_connect(self):
+            self._connected = True
+
+        async def ok_disconnect(self):
+            self._connected = False
+
+        monkeypatch.setattr(daemon_mod, "scan_for_device", fake_scan)
+        monkeypatch.setattr(daemon_mod, "SerialMonitor", ForbiddenMonitor)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "connect", ok_connect)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "disconnect", ok_disconnect)
+        monkeypatch.setattr(
+            daemon_mod.DaemonBleTransport, "missing_characteristics", lambda self, expected: []
+        )
+        monkeypatch.setattr(daemon_mod, "make_http_server", lambda *a, **k: FakeServer())
+        monkeypatch.setattr(daemon_mod.asyncio, "Event", FakeEvent)
+
+        rc = daemon_mod.main(["--no-serial", "--scan-timeout", "0.1", "--connect-timeout", "0.1"])
+        assert rc == daemon_mod.EXIT_OK
+        assert opened == []
+
+    def test_serve_address_skips_scan(self, capsys, monkeypatch):
+        """--address 直连已知 MAC：A 已连接后设备不再广播，B 不能依赖扫描。"""
+        scanned = []
+
+        class FakeServer:
+            server_address = ("127.0.0.1", 0)
+
+            def serve_forever(self):
+                return None
+
+            def shutdown(self):
+                return None
+
+            def server_close(self):
+                return None
+
+        class FakeEvent:
+            async def wait(self):
+                return True
+
+        async def forbidden_scan(name_substring, timeout):
+            scanned.append(True)
+            return None
+
+        async def ok_connect(self):
+            self._connected = True
+
+        async def ok_disconnect(self):
+            self._connected = False
+
+        seen = {}
+
+        class RecordingTransport(daemon_mod.DaemonBleTransport):
+            def __init__(self, address, **kwargs):
+                seen["address"] = address
+                super().__init__(address, **kwargs)
+
+        monkeypatch.setattr(daemon_mod, "scan_for_device", forbidden_scan)
+        monkeypatch.setattr(daemon_mod, "DaemonBleTransport", RecordingTransport)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "connect", ok_connect)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "disconnect", ok_disconnect)
+        monkeypatch.setattr(
+            daemon_mod.DaemonBleTransport, "missing_characteristics", lambda self, expected: []
+        )
+        monkeypatch.setattr(daemon_mod, "make_http_server", lambda *a, **k: FakeServer())
+        monkeypatch.setattr(daemon_mod.asyncio, "Event", FakeEvent)
+
+        rc = daemon_mod.main([
+            "--address", "CC:8D:A2:C2:56:62",
+            "--no-serial", "--scan-timeout", "0.1", "--connect-timeout", "0.1",
+        ])
+        assert rc == daemon_mod.EXIT_OK
+        assert scanned == []
+        assert seen["address"].address == "CC:8D:A2:C2:56:62"
+        assert seen["address"].name == "ML-"
+
+
 # =================================================================== 切片 3
 # POST /api/serial/assert 与 /api/serial/clear：环形缓冲上的正则断言。
 
@@ -730,6 +866,7 @@ class TestStartup:
         assert args.http_host == "127.0.0.1"
         assert args.http_port == 19000
         assert args.scan_timeout == 15.0
+        assert args.no_serial is False
 
     def test_no_device_exits_with_code_3(self, capsys, monkeypatch):
         async def fake_scan(name_substring, timeout):

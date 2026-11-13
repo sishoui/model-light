@@ -17,6 +17,14 @@ test('serial 断言：minCount 生效', async () => {
   assert.strictEqual((await runAssertion({ type: 'serial', pattern: 'x', minCount: 2 }, s)).pass, false);
 });
 
+test('serial 断言：maxCount 上限生效（BLE-06：证明无多余授予）', async () => {
+  const s = { serialAssert: async () => ({ ok: true, matched: true, count: 2, lines: ['grant', 'grant'] }) };
+  assert.strictEqual((await runAssertion({ type: 'serial', pattern: 'grant', maxCount: 2 }, s)).pass, true);
+  assert.strictEqual((await runAssertion({ type: 'serial', pattern: 'grant', maxCount: 1 }, s)).pass, false);
+  const s0 = { serialAssert: async () => ({ ok: true, matched: false, count: 0, lines: [] }) };
+  assert.strictEqual((await runAssertion({ type: 'serial', pattern: 'grant', maxCount: 0 }, s0)).pass, false);
+});
+
 test('serial 断言：pattern 支持 {{ctx}} 插值', async () => {
   const s = { serialAssert: async () => ({ ok: true, matched: true, count: 1, lines: ['ble: commit v2 chunks=1'] }) };
   const r = await runAssertion({ type: 'serial', pattern: 'commit v{{arr.version}} chunks=' }, s, { arr: { version: 2 } });
@@ -96,6 +104,20 @@ test('statusFrame 断言：超时未收到帧 → 失败（不抛错）', async 
   const r = await runAssertion({ type: 'statusFrame', timeoutMs: 60 }, s);
   assert.strictEqual(r.pass, false);
   assert.deepStrictEqual(r.detail.errors, ['未收到状态帧']);
+});
+
+test('statusFrame 断言：daemon 选择 B（#85 双 daemon，per-connection tokenHolder）', async () => {
+  const calls = [];
+  const s = {
+    status: async (daemonId) => {
+      calls.push(daemonId);
+      return { ok: true, received: true, hex: '000000000000006400000100', parsed: { tokenHolder: 1 } };
+    },
+  };
+  const r = await runAssertion({ type: 'statusFrame', daemon: 'B', fields: { tokenHolder: 1 }, timeoutMs: 200 }, s);
+  assert.strictEqual(r.pass, true);
+  assert.deepStrictEqual(calls, ['B']);
+  assert.strictEqual(r.detail.daemon, 'B');
 });
 
 test('mockState 断言：按 fields 匹配 getState() 快照', async () => {

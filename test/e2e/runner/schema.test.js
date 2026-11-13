@@ -91,3 +91,55 @@ test('非对象输入', () => {
   assert.strictEqual(validateCase(null).ok, false);
   assert.strictEqual(validateCase([]).ok, false);
 });
+
+test('双 daemon 用例：接受 daemons 列表，缺 A / 重复 / 空串报错', () => {
+  const c = validCase();
+  c.daemons = ['A', 'B'];
+  assert.strictEqual(validateCase(c).ok, true);
+
+  const noA = validCase();
+  noA.daemons = ['B'];
+  assert.ok(validateCase(noA).errors.some((e) => e.includes('A')));
+
+  const dup = validCase();
+  dup.daemons = ['A', 'A'];
+  assert.ok(validateCase(dup).errors.some((e) => e.includes('重复')));
+
+  const bad = validCase();
+  bad.daemons = ['A', ''];
+  assert.ok(validateCase(bad).errors.some((e) => e.includes('daemons')));
+});
+
+test('daemonWrite 步骤：校验 characteristic/data/daemon', () => {
+  const c = validCase();
+  c.steps = [{ action: 'daemonWrite', daemon: 'B', characteristic: '0001', data: '10' }];
+  assert.strictEqual(validateCase(c).ok, true);
+
+  const bad = validCase();
+  bad.steps = [
+    { action: 'daemonWrite', daemon: 'B' },
+    { action: 'daemonWrite', characteristic: '0001' },
+    { action: 'daemonWrite', characteristic: '0001', data: 'zz' },
+  ];
+  const r = validateCase(bad);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('characteristic')));
+  assert.ok(r.errors.some((e) => e.includes('data')));
+});
+
+test('serial maxCount 与 statusFrame/waitForStatus/waitForBle 的 daemon 字段', () => {
+  const c = validCase();
+  c.assertions = [
+    { type: 'serial', pattern: 'x', maxCount: 2 },
+    { type: 'statusFrame', daemon: 'B', fields: { tokenHolder: 1 } },
+  ];
+  c.steps = [
+    { action: 'waitForStatus', daemon: 'B', fields: {} },
+    { action: 'waitForBle', daemon: 'B' },
+  ];
+  assert.strictEqual(validateCase(c).ok, true);
+
+  const bad = validCase();
+  bad.assertions = [{ type: 'serial', pattern: 'x', maxCount: 0 }];
+  assert.ok(validateCase(bad).errors.some((e) => e.includes('maxCount')));
+});

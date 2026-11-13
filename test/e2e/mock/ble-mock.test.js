@@ -275,6 +275,82 @@ test('daemon 不可达（request fail）→ writeBLECharacteristicValue fail 回
   assert.equal(ctl.getCapturedWrites()[0].http, 'network-error');
 });
 
+test('setWritePaused(true) 暂停转发：写仍被截获但不 POST daemon（A 停心跳）', async (t) => {
+  const timers = makeFakeTimers();
+  const wx = makeFakeWx();
+  const ctl = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  t.after(() => ctl.dispose());
+
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  ctl.setWritePaused(true);
+
+  let ok = false;
+  let failErr = null;
+  wx.writeBLECharacteristicValue({
+    deviceId: DEVICE_ID,
+    serviceId: SERVICE_UUID,
+    characteristicId: CHAR_COMMAND,
+    value: new Uint8Array([0x15]).buffer,
+    success: () => { ok = true; },
+    fail: (e) => { failErr = e; },
+  });
+  await tick();
+
+  assert.equal(ok, true, '暂停时写仍成功返回（连接保持）');
+  assert.equal(failErr, null);
+  assert.equal(wx.calls.length, 0, '暂停时不应 POST /ble/write');
+  const writes = ctl.getCapturedWrites();
+  assert.equal(writes.length, 1, '暂停写仍被截获记录');
+  assert.equal(writes[0].http, 'paused');
+  assert.equal(ctl.getState().writePaused, true);
+});
+
+test('setWritePaused 支持按特征暂停：只屏蔽 0001，其他特征照常转发', async (t) => {
+  const timers = makeFakeTimers();
+  const wx = makeFakeWx();
+  const ctl = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  t.after(() => ctl.dispose());
+
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  ctl.setWritePaused(true, '0001');
+
+  wx.writeBLECharacteristicValue({
+    deviceId: DEVICE_ID, serviceId: SERVICE_UUID, characteristicId: CHAR_COMMAND,
+    value: new Uint8Array([0x15]).buffer,
+  });
+  await tick();
+  assert.equal(wx.calls.length, 0, '0001 被暂停');
+
+  wx.writeBLECharacteristicValue({
+    deviceId: DEVICE_ID, serviceId: SERVICE_UUID, characteristicId: '7c9f0002-1b2a-4c3d-9e8f-000000000000',
+    value: new Uint8Array([0x01]).buffer,
+  });
+  await tick();
+  assert.equal(wx.calls.length, 1, '其他特征照常转发');
+  assert.equal(wx.calls[0].data.characteristic, '0002');
+});
+
+test('setWritePaused(false) 恢复转发；dispose 清理暂停状态', async (t) => {
+  const timers = makeFakeTimers();
+  const wx = makeFakeWx();
+  const ctl = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  ctl.setWritePaused(true);
+  assert.equal(ctl.getState().writePaused, true);
+
+  ctl.setWritePaused(false);
+  assert.equal(ctl.getState().writePaused, false);
+
+  wx.writeBLECharacteristicValue({
+    deviceId: DEVICE_ID, serviceId: SERVICE_UUID, characteristicId: CHAR_COMMAND,
+    value: new Uint8Array([0x15]).buffer,
+  });
+  await tick();
+  assert.equal(wx.calls.length, 1, '恢复后转发');
+  ctl.dispose();
+});
+
 // ---- 状态帧轮询 ---------------------------------------------------------------
 
 test('每 500 ms 轮询 /api/ble/status，hex 变化时派发 onBLECharacteristicValueChange（0004）', async (t) => {
