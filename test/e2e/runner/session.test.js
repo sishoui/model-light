@@ -75,21 +75,56 @@ test('navigate 失败 → 抛错带 errMsg', async () => {
   await assert.rejects(s.navigate('/pages/x/x'), /navigateTo:fail page/);
 });
 
-test('restartDiscoverScan 驱动页面方法 stopScan→startScan', async () => {
+test('restartDiscoverScan 驱动页面方法 stopScan→startScan（devices 非空即成功）', async () => {
   const calls = [];
   const mini = {
-    evaluate: async (src) => {
-      calls.push(src);
-      if (calls.length === 1) return null; // 页面未就绪
-      return { scanning: true };
+    evaluate: async (src, ...args) => {
+      calls.push({ src, args });
+      if (src.includes('getCurrentPages()')) {
+        return {
+          route: 'pages/discover/discover',
+          scanning: false, // setData 时序不可靠：扫描中标志未同步也不能判失败
+          deviceCount: 1,
+          scanCount: 1,
+          triggered: true,
+          relaunched: false,
+          error: null,
+        };
+      }
+      return { scanCount: 0 }; // mock 基线
     },
   };
   const s = new E2ESession({ mini, http: {}, mockSource: '' });
   const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
-  assert.deepStrictEqual(st, { scanning: true });
-  assert.ok(calls[0].includes("p.route !== 'pages/discover/discover'"));
-  assert.ok(calls[0].includes('await p.stopScan()'));
-  assert.ok(calls[0].includes('await p.startScan()'));
+  assert.strictEqual(st.deviceCount, 1);
+  const probe = calls.find((c) => c.src.includes('wx.reLaunch'));
+  assert.ok(probe, '重扫探测代码应包含 reLaunch 分支');
+  assert.ok(probe.src.includes('await p.stopScan()'));
+  assert.ok(probe.src.includes('await p.startScan()'));
+  assert.ok(probe.src.includes('getCurrentPages()'), 'reLaunch 后应用 route 稳定轮询');
+  assert.ok(!probe.src.includes('setTimeout(resolve, 300)'), '固定 300 ms 等待已被 route 稳定轮询替代');
+});
+
+test('restartDiscoverScan 判定用 mock scanCount 增长（scanning=false 且 devices 空也成功）', async () => {
+  const mini = {
+    evaluate: async (src) => {
+      if (src.includes('getCurrentPages()')) {
+        return {
+          route: 'pages/discover/discover',
+          scanning: false,
+          deviceCount: 0,
+          scanCount: 6,
+          triggered: true,
+          relaunched: false,
+          error: null,
+        };
+      }
+      return { scanCount: 5 }; // mock 基线
+    },
+  };
+  const s = new E2ESession({ mini, http: {}, mockSource: '' });
+  const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
+  assert.strictEqual(st.scanCount, 6);
 });
 
 test('restartDiscoverScan 不在 discover 页时先 reLaunch 再重扫', async () => {
@@ -97,16 +132,59 @@ test('restartDiscoverScan 不在 discover 页时先 reLaunch 再重扫', async (
   const mini = {
     evaluate: async (src) => {
       calls.push(src);
-      if (calls.length === 1) return null; // 触发 reLaunch
-      return { scanning: true };
+      if (src.includes('getCurrentPages()')) {
+        return {
+          route: 'pages/discover/discover',
+          scanning: true,
+          deviceCount: 0,
+          scanCount: null,
+          triggered: true,
+          relaunched: true,
+          error: null,
+        };
+      }
+      return null; // 无 mock 钩子 → 退化为 scanning 判定
     },
   };
   const s = new E2ESession({ mini, http: {}, mockSource: '' });
   const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
-  assert.deepStrictEqual(st, { scanning: true });
-  assert.ok(calls[0].includes("wx.reLaunch({"));
-  assert.ok(calls[0].includes("url: '/pages/discover/discover'"));
-  assert.ok(calls[0].includes('await p2.startScan()'));
+  assert.strictEqual(st.scanning, true);
+  assert.ok(calls.some((src) => src.includes('wx.reLaunch({')));
+  assert.ok(calls.some((src) => src.includes("url: '/pages/discover/discover'")));
+});
+
+test('restartDiscoverScan 超时抛错带 discover 重扫归因（scanning 恒 false 不黑洞）', async () => {
+  const mini = {
+    evaluate: async (src) => {
+      if (src.includes('getCurrentPages()')) {
+        return {
+          route: 'pages/discover/discover',
+          scanning: false,
+          deviceCount: 0,
+          scanCount: 0, // 无增长、无设备、scanning=false → 应继续重试到超时
+          triggered: true,
+          relaunched: false,
+          error: null,
+        };
+      }
+      return { scanCount: 0 };
+    },
+  };
+  const s = new E2ESession({ mini, http: {}, mockSource: '' });
+  await assert.rejects(
+    s.restartDiscoverScan({ timeoutMs: 300 }),
+    /discover 重扫失败：等待超时（300 ms）：discover 重扫/
+  );
+});
+
+test('evaluate 超时归因（mini.evaluate 悬挂不让 poll 无限等待）', async () => {
+  const s = new E2ESession({
+    mini: { evaluate: () => new Promise(() => {}) },
+    http: {},
+    mockSource: '',
+    evaluateTimeoutMs: 80,
+  });
+  await assert.rejects(s.evaluate('return 1;'), /evaluate 超时（80 ms）/);
 });
 
 test('normalizeConsoleEntry 处理多种形态', () => {

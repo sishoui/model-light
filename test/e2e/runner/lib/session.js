@@ -7,6 +7,21 @@ const { poll } = require('./util');
 
 const NAV_METHODS = new Set(['navigateTo', 'redirectTo', 'switchTab', 'reLaunch']);
 
+const EVALUATE_TIMEOUT_MS = 10000; // 单次 evaluate 上限：悬挂时归因超时，不让 poll 45 s 黑洞（#96）
+
+/**
+ * 给 promise 包超时：mini.evaluate 在 DevTools 运行时忙（刚重启、webview 重建、
+ * reLaunch 中途）时可能长时间不返回；race 超时后错误归因到具体 evaluate 步骤，
+ * poll 可继续重试或带原因报错。
+ */
+function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`evaluate 超时（${timeoutMs} ms）：${label}`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** automator 的 console 事件对象归一成 {type, text, raw}。 */
 function normalizeConsoleEntry(entry) {
   if (entry == null) return { type: 'log', text: '', raw: entry };
@@ -35,13 +50,15 @@ class E2ESession {
    * @param {object} opts.http   createHttpClient 返回值
    * @param {string} opts.mockSource ble-mock.js 全文（module.exports 守卫已去掉）
    * @param {string} [opts.baseUrl]
+   * @param {number} [opts.evaluateTimeoutMs] 单次 evaluate 超时（默认 10 s，#96）
    */
-  constructor({ mini, http, mockSource, cloudMockSource = '', baseUrl = 'http://127.0.0.1:19000', daemons }) {
+  constructor({ mini, http, mockSource, cloudMockSource = '', baseUrl = 'http://127.0.0.1:19000', daemons, evaluateTimeoutMs = EVALUATE_TIMEOUT_MS }) {
     this.mini = mini;
     this.http = http;
     this.mockSource = mockSource;
     this.cloudMockSource = cloudMockSource;
     this.baseUrl = baseUrl;
+    this.evaluateTimeoutMs = evaluateTimeoutMs;
     // #85 双 daemon：id → { http, baseUrl }；缺省只有主实例 A。
     this.daemons = daemons || { A: { http, baseUrl } };
     this.consoleEntries = [];
@@ -112,11 +129,15 @@ class E2ESession {
    * 参数列表必须是“简单”的（命名参数，不能 ...rest）：函数体首条语句是
    * 'use strict' 指令时，非简单参数列表会让整个函数 SyntaxError（ble-mock
    * 全文以 'use strict' 开头，注入即靠这条）。
+   *
+   * #96：mini.evaluate 悬挂时加超时包裹（默认 10 s，见 EVALUATE_TIMEOUT_MS），
+   * 超时错误带步骤标签（代码首行），poll 的重试与超时归因都基于它。
    */
-  async evaluate(code, args = []) {
+  async evaluate(code, args = [], { timeoutMs = this.evaluateTimeoutMs } = {}) {
     const params = args.map((_, i) => `__e2eArg${i}`).join(', ');
     const src = `async function(${params}) {\n${code}\n}`;
-    return this.mini.evaluate(src, ...args);
+    const label = String(code).trim().split('\n')[0].slice(0, 60) || 'evaluate';
+    return withTimeout(this.mini.evaluate(src, ...args), timeoutMs, label);
   }
 
   async currentPath() {
@@ -155,18 +176,31 @@ class E2ESession {
    * 让 discover 页重扫一次（runner 注入 mock 后的准备动作）：automator 的
    * reLaunch 在本机环境坏，页面方法驱动等效于用户点“扫描设备”按钮。
    * 上一次用例可能停在设备页：先 reLaunch 回 discover（tabBar 页）。
+   *
+   * #96 加固：成功判定不再只看 p.data.scanning——setData 时序与半初始化页面
+   * 上该标志不可靠（连续用例切换时曾 45 s 超时）。改用客观信号：ble-mock
+   * 的 scanCount 比重扫前增长（mock 确实收到 startBluetoothDevicesDiscovery），
+   * 或 devices 列表非空（扫描端到端可用）；mock 钩子缺失时才退化到 scanning。
+   * reLaunch 后的固定 300 ms 等待换成 getCurrentPages 轮询直到 route 稳定。
    */
   async restartDiscoverScan({ timeoutMs = 45000 } = {}) {
     try {
+      // 重扫前 mock 基线：注入后、扫描前的 scanCount（钩子不可用时为 null）
+      let baselineScanCount = null;
+      try {
+        const st = await this.mockState();
+        if (st && typeof st.scanCount === 'number') baselineScanCount = st.scanCount;
+      } catch { /* 无 mock 钩子 → 退化为 scanning 判定 */ }
+
+      let triggered = false; // 当前页是否已显式 stopScan→startScan 过
       return await poll(async () => {
         const st = await this.evaluate(`
           const pages = getCurrentPages();
-          const p = pages[pages.length - 1];
-          if (!p) return null;
-          if (p.route !== 'pages/discover/discover') {
+          let p = pages[pages.length - 1];
+          let relaunched = false;
+          if (!p || p.route !== 'pages/discover/discover') {
             // 上次用例可能停在设备页；runtime 的 wx.reLaunch 比 switchTab 稳
-            // （automator 自带路由调用在本机坏）。reLaunch 后显式再扫一次，
-            // 不依赖 onShow 时序。
+            // （automator 自带路由调用在本机坏）。
             await new Promise((resolve) => {
               wx.reLaunch({
                 url: '/pages/discover/discover',
@@ -174,24 +208,50 @@ class E2ESession {
                 fail: () => resolve(),
               });
             });
-            await new Promise((resolve) => setTimeout(resolve, 300));
-            const pages2 = getCurrentPages();
-            const p2 = pages2[pages2.length - 1];
-            if (!p2 || p2.route !== 'pages/discover/discover') {
-              return { route: p2 && p2.route, scanning: false, relaunched: true };
+            // #96：固定 300 ms 在 webview 重建慢时不够；轮询等 discover 页出现（≤6 s）
+            const deadline = Date.now() + 6000;
+            for (;;) {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              const ps = getCurrentPages();
+              p = ps[ps.length - 1];
+              if ((p && p.route === 'pages/discover/discover') || Date.now() >= deadline) break;
             }
-            await p2.stopScan();
-            await p2.startScan();
-            return { route: p2.route, scanning: !!p2.data.scanning, relaunched: true };
+            relaunched = true;
           }
-          await p.stopScan();
-          await p.startScan();
-          return { route: p.route, scanning: !!p.data.scanning, relaunched: false };
-        `);
-        if (st) {
-          console.log(`[e2e] discover 重扫：route=${st.route} scanning=${st.scanning} relaunched=${st.relaunched}`);
+          if (!p) return { route: null, triggered: __e2eArg0, error: 'getCurrentPages 为空' };
+          let scanError = null;
+          if (relaunched || !__e2eArg0) {
+            // 显式再扫一次，不依赖 onShow 时序；页面方法抛错时归因返回，交给
+            // poll 重试（半销毁页面上 data/方法可能抛，evaluate 不黑洞）。
+            try { await p.stopScan(); } catch (e) { scanError = String((e && e.message) || e); }
+            if (!scanError) {
+              try { await p.startScan(); } catch (e) { scanError = String((e && e.message) || e); }
+            }
+          }
+          const ms = globalThis.__bleMock && typeof globalThis.__bleMock.getState === 'function'
+            ? globalThis.__bleMock.getState() : null;
+          return {
+            route: p.route,
+            scanning: !!p.data.scanning,
+            deviceCount: Array.isArray(p.data.devices) ? p.data.devices.length : 0,
+            scanCount: ms && typeof ms.scanCount === 'number' ? ms.scanCount : null,
+            triggered: !scanError,
+            relaunched,
+            error: scanError,
+          };
+        `, [triggered]);
+        if (!st) return null;
+        triggered = st.triggered === true;
+        if (st.error) {
+          console.log(`[e2e] discover 重扫步骤出错（重试）：${st.error}`);
+          return null;
         }
-        return st && st.scanning ? st : null;
+        console.log(`[e2e] discover 重扫：route=${st.route} scanning=${st.scanning} devices=${st.deviceCount} scanCount=${st.scanCount} relaunched=${!!st.relaunched}`);
+        const onDiscover = st.route === 'pages/discover/discover';
+        const mockRestarted = baselineScanCount != null && typeof st.scanCount === 'number' && st.scanCount > baselineScanCount;
+        const hasDevices = st.deviceCount > 0;
+        const scanningFallback = baselineScanCount == null && st.scanning === true;
+        return onDiscover && (mockRestarted || hasDevices || scanningFallback) ? st : null;
       }, { timeoutMs, intervalMs: 1000, label: 'discover 重扫' });
     } catch (e) {
       throw new Error(`discover 重扫失败：${e.message}${e.cause ? `；原因：${e.cause.message}` : ''}`);
