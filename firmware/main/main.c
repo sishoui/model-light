@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "frame_task.h"
@@ -37,6 +38,19 @@ void app_main(void)
     if (ble_start() != 0) {
         ESP_LOGE(TAG, "BLE start failed; halting");
         return;
+    }
+
+    /* spec §3.4 / #94: a freshly OTA'd app boots PENDING_VERIFY. Once the
+     * core app is up, confirm it so the bootloader does not roll back to the
+     * other slot on the next reset. Idempotent: no-op when already VALID. */
+    esp_ota_img_states_t ota_st;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(),
+                                    &ota_st) == ESP_OK &&
+        ota_st == ESP_OTA_IMG_PENDING_VERIFY) {
+        esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+        ESP_LOGI(TAG, "app state PENDING_VERIFY -> %s",
+                 err == ESP_OK ? "VALID (rollback cancelled)"
+                               : "cancel FAILED");
     }
 
     xTaskCreatePinnedToCore(frame_task, "frame", 4096, NULL,

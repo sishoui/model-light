@@ -130,6 +130,12 @@ static int ota_flash_set_boot(void *user)
     if (esp_ota_set_boot_partition(s_part) != ESP_OK) {
         return -1;
     }
+    /* #94: also confirm the running (old) app before rebooting into the new
+     * image. Idempotent with the boot-time confirmation in main.c: when the
+     * state is already VALID this is a no-op. */
+    if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) {
+        ESP_LOGW(TAG, "confirm running app failed (non-fatal)");
+    }
     ESP_LOGI(TAG, "ota set_boot ok, rebooting");
     return 0;
 }
