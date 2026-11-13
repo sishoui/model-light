@@ -19,7 +19,7 @@ const { startDevtools, connectAutomator, DEFAULT_CLI, DEFAULT_AUTO_PORT } = requ
 const { createHttpClient } = require('./lib/http');
 const { E2ESession } = require('./lib/session');
 const { runCase } = require('./lib/runner');
-const { buildReport, writeReport, exitCodeFor } = require('./lib/report');
+const { buildReport, writeReport, writeJUnitReport, exitCodeFor } = require('./lib/report');
 const { flashFirmware } = require('./lib/firmware');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -35,6 +35,7 @@ function parseArgs(argv) {
     autoPort: DEFAULT_AUTO_PORT,
     cliPath: DEFAULT_CLI,
     keepOpen: false,
+    junitDir: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -44,6 +45,7 @@ function parseArgs(argv) {
     else if (a === '--ascii-root') opts.asciiRoot = argv[++i];
     else if (a === '--auto-port') opts.autoPort = Number(argv[++i]);
     else if (a === '--cli-path') opts.cliPath = argv[++i];
+    else if (a === '--junit') opts.junitDir = argv[++i] || null;
     else if (a === '--help' || a === '-h') opts.help = true;
     else throw new Error(`未知参数：${a}`);
   }
@@ -84,8 +86,8 @@ function log(...args) {
   console.log(...args);
 }
 
-/** 环境错误也要留报告（status=error，退出码 2）。 */
-function writeEnvErrorReport(caseDef, error, startedAt) {
+/** 环境错误也要留报告（status=error，退出码 2）。JSON 与 JUnit 同目录规则一致。 */
+function writeEnvErrorReport(caseDef, error, startedAt, junitDir) {
   const report = buildReport({
     caseDef,
     status: 'error',
@@ -94,7 +96,9 @@ function writeEnvErrorReport(caseDef, error, startedAt) {
     environment: { error: String(error && error.message ? error.message : error) },
     error: String(error && error.stack ? error.stack : error),
   });
-  return writeReport(REPORTS_DIR, report);
+  const reportPath = writeReport(REPORTS_DIR, report);
+  const junitPath = writeJUnitReport(junitDir || REPORTS_DIR, report);
+  return { reportPath, junitPath };
 }
 
 async function main() {
@@ -106,7 +110,7 @@ async function main() {
     return 2;
   }
   if (opts.help) {
-    console.log('用法：node test/e2e/runner/run.js [--case <id>] [--flash] [--keep-open] [--ascii-root <dir>] [--auto-port <n>]');
+    console.log('用法：node test/e2e/runner/run.js [--case <id>] [--flash] [--keep-open] [--ascii-root <dir>] [--auto-port <n>] [--junit <dir>]');
     return 0;
   }
 
@@ -164,6 +168,7 @@ async function main() {
       const result = await runCase(caseDef, {
         session,
         reportsDir: REPORTS_DIR,
+        junitDir: opts.junitDir || REPORTS_DIR,
         environment: {
           daemon: { port: 'COM6', http: daemon.baseUrl },
           devtools: { project: miniprogramDir, autoPort: opts.autoPort },
@@ -171,14 +176,16 @@ async function main() {
       });
       log(`[runner] ${caseDef.id} → ${result.report.status}（退出码 ${result.exitCode}）`);
       log(`[runner] 报告：${result.reportPath}`);
+      log(`[runner] JUnit：${result.junitPath}`);
       for (const a of result.report.assertions) {
         log(`[runner]   断言 ${a.type} ${a.pass ? 'PASS' : 'FAIL'}`);
       }
       results.push(result.exitCode);
     } catch (e) {
-      const reportPath = writeEnvErrorReport(caseDef, e, startedAt);
+      const { reportPath, junitPath } = writeEnvErrorReport(caseDef, e, startedAt, opts.junitDir);
       console.error(`[runner] ${caseDef.id} 环境错误：${e.message}`);
       console.error(`[runner] 报告：${reportPath}`);
+      console.error(`[runner] JUnit：${junitPath}`);
       results.push(2);
     } finally {
       if (!opts.keepOpen) {

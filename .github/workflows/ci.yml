@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, spec-implementation, wayfinder/**]
+    branches: [master, spec-implementation, wayfinder/**, e2e/**]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -72,3 +73,33 @@ jobs:
           pip install pytest pytest-asyncio
       - name: Run host unit tests
         run: python -m pytest host/ -q
+
+  e2e-smoke:
+    # E2E 无硬件冒烟：只跑 runner / mock / daemon 的无硬件单测与关键文件检查。
+    # 真实 E2E 需要 DevTools + 真机 + COM6，不在 CI 里执行（见 test/e2e/README.md）。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (root only, skip api workspace)
+        run: |
+          npm ci --workspaces=false --include-workspace-root
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio
+      - name: E2E runner + mock unit tests (node:test)
+        run: node --test "test/e2e/runner/*.test.js" "test/e2e/mock/*.test.js"
+      - name: E2E daemon unit tests (pytest)
+        run: python -m pytest test/e2e/daemon -q
+      - name: Key E2E files present
+        run: |
+          set -e
+          for f in test/e2e/mock/ble-mock.js test/e2e/daemon/daemon.py; do
+            test -f "$f" || { echo "::error::缺少关键文件 $f"; exit 1; }
+          done
+          ls test/e2e/cases/*.json >/dev/null || { echo "::error::test/e2e/cases 下没有用例 JSON"; exit 1; }

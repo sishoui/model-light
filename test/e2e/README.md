@@ -36,7 +36,33 @@ npm run test:e2e -- --flash
 ```
 
 退出码：`0` 全绿 / `1` 有断言失败 / `2` 环境错误（daemon、DevTools、schema 等）。
-JSON 报告落在 `test/e2e/reports/<caseId>-<timestamp>.json`。
+
+## 报告（JSON + JUnit XML）
+
+每个用例产出两份报告，落在 `test/e2e/reports/`（`--junit <dir>` 可把 JUnit XML
+单独输出到别的目录，JSON 不变）：
+
+- `<caseId>-<timestamp>.json` —— 完整运行记录（setup/steps/teardown 日志、
+  断言明细、console 错误、环境信息、退出码映射所需字段）。
+- `<caseId>-<timestamp>.junit.xml` —— JUnit XML，供 CI 与趋势分析：
+  - 根 `<testsuites>` 聚合；每个用例一个 `<testsuite name="<用例 id>">`；
+  - 每条断言一个 `<testcase>`（`classname` = 用例 id，name 带序号与断言摘要）；
+  - 失败断言附 `<failure message="断言失败: <type>">`，元素文本是实际值
+    （断言 detail 的 JSON 序列化，如串口命中 count / 状态帧 parsed 字段）；
+  - 环境错误（daemon/DevTools/schema，断言未跑）合成单个带 `<error>` 的
+    testcase；步骤抛错但断言全过时合成单个 `<failure>`，保证 XML 的
+    failures/errors 与 JSON 报告的 status 一致。
+
+## CI 门禁（.github/workflows/ci.yml）
+
+- `host-tests`：`python -m pytest host/ -q`（host/ble_suite T1–T11，无硬件）。
+- `e2e-smoke`：E2E 无硬件冒烟——`npm ci` 后跑 runner/mock 的 node:test 单测
+  与 `pytest test/e2e/daemon`，再检查关键文件存在（`mock/ble-mock.js`、
+  `daemon/daemon.py`、`cases/*.json`）。**不执行真实 E2E**（CI 无 DevTools /
+  真机 / COM6）；真实 E2E 在本机手工运行，产物报告（JSON/JUnit XML）可归档
+  到 CI 做趋势分析。
+- 触发：push（master / spec-implementation / wayfinder/** / e2e/**）、所有
+  PR，以及 `workflow_dispatch` 手动触发。
 
 ## 目录结构
 
@@ -54,7 +80,7 @@ test/e2e/
 │   │   ├── daemon.js      # ASCII junction + daemon 启动 + health 等待
 │   │   ├── devtools.js    # cli close/auto + automator.connect
 │   │   ├── firmware.js    # --flash（robocopy + idf.py）
-│   │   ├── report.js      # JSON 报告 + 退出码映射
+│   │   ├── report.js      # JSON / JUnit XML 报告 + 退出码映射
 │   │   └── util.js        # sleep / poll / 插值
 │   └── *.test.js          # node:test 单测（假 automator + 假 HTTP）
 ├── daemon/                # #81 Python daemon（HTTP BLE 桥 + 串口断言）

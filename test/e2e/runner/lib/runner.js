@@ -4,12 +4,13 @@
 const { validateCase } = require('./schema');
 const { runSteps } = require('./executor');
 const { runAssertions } = require('./assertions');
-const { buildReport, writeReport, exitCodeFor } = require('./report');
+const { buildReport, writeReport, writeJUnitReport, exitCodeFor } = require('./report');
 
 /**
  * @param {object} caseDef 已解析的用例 JSON
- * @param {object} deps { session, reportsDir, environment?, now? }
- * @returns {Promise<{ exitCode: number, report: object, reportPath: string }>}
+ * @param {object} deps { session, reportsDir, junitDir?, environment?, now? }
+ *                        junitDir 缺省时 JUnit XML 与 JSON 同目录。
+ * @returns {Promise<{ exitCode: number, report: object, reportPath: string, junitPath: string }>}
  */
 async function runCase(caseDef, deps) {
   const { session, reportsDir } = deps;
@@ -75,7 +76,8 @@ async function runCase(caseDef, deps) {
     error: state.error ? String(state.error.message || state.error) : null,
   });
   const reportPath = writeReport(reportsDir, full);
-  return { exitCode: exitCodeFor(state.status), report: full, reportPath };
+  const junitPath = writeJUnitReport(deps.junitDir || reportsDir, full);
+  return { exitCode: exitCodeFor(state.status), report: full, reportPath, junitPath };
 }
 
 module.exports = { runCase };
