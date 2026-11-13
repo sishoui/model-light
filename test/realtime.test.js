@@ -1,6 +1,6 @@
 // 实时参数通道手机侧 — spec.md §2.3
 // Realtime := pin(1) + groupIndex(1) + stageIndex(1) + layer(1) + paramIdx(1) + valueLen(1) + value(valueLen)
-// 最短 7 B（valueLen 为 0 无意义），整数/枚举 8 B，颜色 9 B。永远单帧不分片。
+// 最短 6 B（valueLen 为 0 空帧），整数/枚举/布尔 7 B（valueLen 1），颜色 [a,b] 8 B，[a,b,c] 9 B。永远单帧不分片。
 // 节流 50 ms（20 Hz）：最新值覆盖，窗口内中间值丢弃。
 
 const test = require('node:test');
@@ -13,26 +13,37 @@ test('buildRealtimeFrame: 颜色 value 3B → 9 B 帧', () => {
   assert.deepEqual(Array.from(f), [0, 1, 0, 0, 0, 3, 200, 60, 30]);
 });
 
-test('buildRealtimeFrame: 整数 value → u16 LE，8 B 帧', () => {
-  const f = buildRealtimeFrame({ pin: 2, groupIndex: 0, stageIndex: 3, layer: 1, paramIdx: 2, value: 1000 });
-  assert.deepEqual(Array.from(f), [2, 0, 3, 1, 2, 2, 0xE8, 0x03]);
+test('buildRealtimeFrame: 颜色 value 2B → 8 B 帧', () => {
+  const f = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [10, 20] });
+  assert.deepEqual(Array.from(f), [0, 0, 0, 0, 0, 2, 10, 20]);
 });
 
-test('buildRealtimeFrame: 数值钳制到 u16、非法参数抛错', () => {
+test('buildRealtimeFrame: 整数 value → u8，7 B 帧', () => {
+  const f = buildRealtimeFrame({ pin: 2, groupIndex: 0, stageIndex: 3, layer: 1, paramIdx: 2, value: 232 });
+  assert.deepEqual(Array.from(f), [2, 0, 3, 1, 2, 1, 0xE8]);
+});
+
+test('buildRealtimeFrame: 数值钳制到 u8、非法参数抛错', () => {
   assert.deepEqual(
     Array.from(buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: 70000 })),
-    [0, 0, 0, 0, 0, 2, 0xff, 0xff],
+    [0, 0, 0, 0, 0, 1, 0xff],
   );
   assert.throws(() => buildRealtimeFrame({ pin: 8, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: 1 }));
   assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 2, paramIdx: 0, value: 1 }));
-  assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [1, 2] }));
+  assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 256, value: 1 }));
+  assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [1, 2, 3, 4] }));
   assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: 'x' }));
 });
 
-test('帧长边界 7..9 B（§2.3 永远单帧，value 最短 1 B）', () => {
-  assert.ok(REALTIME_MIN_LEN === 7 && REALTIME_MAX_LEN === 9);
+test('帧长边界 6..9 B（§2.3 永远单帧，valueLen 可为 0）', () => {
+  assert.ok(REALTIME_MIN_LEN === 6 && REALTIME_MAX_LEN === 9);
   const bool = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: false });
   assert.equal(bool.length, 7); // bool 1 B
+});
+
+test('buildRealtimeFrame: valueLen 为 0 → 6 B 空帧', () => {
+  const f = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [] });
+  assert.deepEqual(Array.from(f), [0, 0, 0, 0, 0, 0]);
 });
 
 test('throttle: 50 ms 窗口内多次更新只发最新值', async () => {

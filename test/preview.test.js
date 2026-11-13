@@ -119,9 +119,9 @@ test('simulatePin: bg.solid 填满灯组覆盖的颗数，未覆盖颗为暗色'
   const c = simulatePin(arr, 0, 0, { groupIndex: 0, scope: 'group' });
   assert.equal(c.length, 10 * 3);
   assert.deepEqual([...c.slice(2 * 3, 3 * 3)], [255, 0, 0]);
-  // 未覆盖颗（0,1 与 6..9）= 暗板色 #3a3a48
-  assert.deepEqual([...c.slice(0, 3)], [0x3a, 0x3a, 0x48]);
-  assert.deepEqual([...c.slice(7 * 3, 8 * 3)], [0x3a, 0x3a, 0x48]);
+  // 未覆盖颗（0,1 与 6..9）= 纯黑（DIM_COLOR 与固件 memset 0 对齐，无残影）
+  assert.deepEqual([...c.slice(0, 3)], [0, 0, 0]);
+  assert.deepEqual([...c.slice(7 * 3, 8 * 3)], [0, 0, 0]);
 });
 
 test('simulatePin: 动态层覆盖背景层（dy.scan 扫过处为动态色）', () => {
