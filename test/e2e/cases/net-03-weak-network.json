@@ -1,0 +1,48 @@
+{
+  "id": "net-03",
+  "name": "NET-03 弱网：备份请求网络失败/延迟 → 静默重试一次，不崩溃、BLE 不受影响",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; if (!c) throw new Error('cloud-mock 未注入'); c.reset(); c.setScenario({ login: { responses: [{ status: 401, body: { error: { code: 'AUTH_INVALID' } } }] }, put: { responses: [{ networkError: true }, { status: 200, delayMs: 1200, body: { rev: 3, previousRev: 2 } }] } }); wx.clearStorageSync(); const token = c.issueToken({ ttlMs: 3600e3 }); wx.setStorageSync('cloudSession', JSON.stringify({ accessToken: token, refreshToken: 'e2e-refresh-old', user: null, savedAt: Date.now() })); const app = getApp(); return { loggedIn: app.cloudAuth.isLoggedIn(), usable: app.cloudAuth.hasUsableAccess() };",
+      "saveAs": "env"
+    }
+  ],
+  "steps": [
+    { "action": "waitMs", "ms": 600 },
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitForStatus", "fields": {}, "timeoutMs": 10000 },
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; const deadline = Date.now() + 12000; while (Date.now() < deadline) { const st = c.getState(); if (st.counts.put >= 2 && st.last.put && st.last.put.status === 200) break; await new Promise((r) => setTimeout(r, 100)); } const st = c.getState(); const reqs = c.getRequests(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { counts: st.counts, last: st.last, putNetworkErrors: reqs.filter((r) => r.route === 'put' && r.networkError).length, putStatuses: reqs.filter((r) => r.route === 'put').map((r) => r.status), connected: !!(p && p.data.connected), loggedIn: getApp().cloudAuth.isLoggedIn() };",
+      "saveAs": "weakNet"
+    }
+  ],
+  "assertions": [
+    { "type": "cloudRequest", "method": "PUT", "path": "/v1/devices/ML-8DCC/backup", "minCount": 2 },
+    { "type": "cloudState", "fields": { "last.put.status": 200 }, "minCounts": { "counts.put": 2 } },
+    {
+      "type": "runtime",
+      "code": "const app = getApp(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; const reqs = globalThis.__cloudMock.getRequests(); return { connected: !!(p && p.data.connected), loggedIn: app.cloudAuth.isLoggedIn(), putNetworkErrors: reqs.filter((r) => r.route === 'put' && r.networkError).length, putStatuses: reqs.filter((r) => r.route === 'put').map((r) => String(r.status)).join(',') };",
+      "fields": { "connected": true, "loggedIn": true, "putNetworkErrors": 1 },
+      "patterns": { "putStatuses": "null,200" }
+    },
+    { "type": "statusFrame", "hexLength": 12, "timeoutMs": 8000 },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": []
+}

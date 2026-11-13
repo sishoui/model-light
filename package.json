@@ -8,12 +8,14 @@
   "scripts": {
     "test": "npm run test:api && npm run test:mini",
     "test:api": "npm test --workspace api",
-    "test:mini": "node --test \"test/*.test.js\"",
+    "test:mini": "node --test \"test/*.test.js\" \"test/e2e/mock/*.test.js\" \"test/e2e/runner/*.test.js\" \"test/e2e/ota-fixture/*.test.js\"",
+    "test:e2e": "node test/e2e/runner/run.js",
     "test:mini:vitest": "vitest run",
     "lint": "eslint miniprogram/lib/"
   },
   "devDependencies": {
-    "vitest": "^5.1.0",
-    "eslint": "^8.57.0"
+    "eslint": "^8.57.0",
+    "miniprogram-automator": "^0.13.0",
+    "vitest": "^5.1.0"
   }
 }

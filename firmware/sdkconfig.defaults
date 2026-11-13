@@ -36,3 +36,15 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # §7.2 recommendation: keep the RMT ISR IRAM-resident so flash
 # erase/write during OTA does not stall the (paused) LED output.
 CONFIG_RMT_ISR_IRAM_SAFE=y
+
+# Custom partition table (docs/spec.md §3.4): no factory, dual 1.5 MiB OTA
+# slots ota_0/ota_1 defined in partitions.csv. Without this the build falls
+# back to single-app (factory only) and esp_ota_get_next_update_partition()
+# returns NULL, so OTA BEGIN fails with MLOTA_ERR_FLASH (issue #79).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ESP32-C3FH4 has 4 MB flash. partitions.csv ends at 0x330000, which does not
+# fit the ESP-IDF default 2 MB flash size.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"

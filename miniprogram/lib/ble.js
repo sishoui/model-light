@@ -116,20 +116,30 @@ function createBleClient(wxApi) {
   }
 
   /**
+   * 订阅某个特征的 notify，返回解绑函数。
+   * 命令(0001)/编排 ACK(0003)/OTA(0006) 三处共用：回调收原始 Uint8Array，
+   * 订阅失败静默（与 §2.3 无 ACK 通道一致），解绑同步生效。
+   */
+  function _notifyWatcher(characteristicId, callback) {
+    const handler = (res) => callback(new Uint8Array(res.value));
+    wxApi.onBLECharacteristicValueChange(handler);
+    call(wxApi, 'notifyBLECharacteristicValueChange', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId,
+      state: true,
+    }).catch(() => {});
+    return () => {
+      wxApi.offBLECharacteristicValueChange(handler);
+    };
+  }
+
+  /**
    * §2.5：订阅命令通道（...0001）notify——令牌 GRANT / PROBE 下行。
    * 回调收原始 Uint8Array（cmd + seq(2) + payload）。
    */
   function onCommandNotify(callback) {
-    const handler = (res) => callback(new Uint8Array(res.value));
-    wxApi.onBLECharacteristicValueChange(handler);
-    return call(wxApi, 'notifyBLECharacteristicValueChange', {
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_COMMAND,
-      state: true,
-    }).then(() => () => {
-      wxApi.offBLECharacteristicValueChange(handler);
-    });
+    return _notifyWatcher(CHAR_COMMAND, callback);
   }
 
   /**
@@ -137,16 +147,7 @@ function createBleClient(wxApi) {
    * 回调收 parseAck 后的原始 Uint8Array，由调用方解析。
    */
   function onSequenceNotify(callback) {
-    const handler = (res) => callback(new Uint8Array(res.value));
-    wxApi.onBLECharacteristicValueChange(handler);
-    return call(wxApi, 'notifyBLECharacteristicValueChange', {
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_SEQUENCE,
-      state: true,
-    }).then(() => () => {
-      wxApi.offBLECharacteristicValueChange(handler);
-    });
+    return _notifyWatcher(CHAR_SEQUENCE, callback);
   }
 
   /** §2.3：实时参数包写 ...0002（writeNoResponse，单帧 ≤ 9 B，无 ACK） */
@@ -155,6 +156,21 @@ function createBleClient(wxApi) {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId: CHAR_REALTIME,
+      value: bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      writeType: 'writeNoResponse',
+    });
+  }
+
+  /**
+   * §2.5 命令通道写 ...0001（令牌 REQ/GRANT/HEARTBEAT/PROBE_YES、工厂重置）。
+   * token-client 依赖 `ble.write(bytes)` 这个入口。
+   */
+  function writeCommand(bytes) {
+    return call(wxApi, 'writeBLECharacteristicValue', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_COMMAND,
       value: bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
         ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
       writeType: 'writeNoResponse',
@@ -197,16 +213,7 @@ function createBleClient(wxApi) {
    * §3 OTA：订阅 ...0006 notify（ACK / SESSION / EVENT / RESUME_OK 下行）。
    */
   function onOtaNotify(callback) {
-    const handler = (res) => callback(new Uint8Array(res.value));
-    wxApi.onBLECharacteristicValueChange(handler);
-    return call(wxApi, 'notifyBLECharacteristicValueChange', {
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_OTA,
-      state: true,
-    }).then(() => () => {
-      wxApi.offBLECharacteristicValueChange(handler);
-    });
+    return _notifyWatcher(CHAR_OTA, callback);
   }
 
   /** §3：OTA 固件字节写 ...0006（writeNoResponse；iOS 退化为带响应写也兼容） */
@@ -239,6 +246,7 @@ function createBleClient(wxApi) {
     onSequenceNotify,
     writeSequence,
     writeRealtime,
+    write: writeCommand,
     onOtaNotify,
     writeOta,
     negotiateChunkSize,

@@ -1,0 +1,58 @@
+{
+  "id": "cloud-01",
+  "name": "CLOUD-01 已登录 + 有编排 → 连上设备自动上推；失败静默并记 pending",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; if (!c) throw new Error('cloud-mock 未注入'); c.reset(); c.setScenario({ login: { responses: [{ status: 200, body: () => ({ accessToken: c.issueToken({ ttlMs: 3600e3 }), expiresIn: 3600, refreshToken: 'e2e-refresh-1', refreshExpiresIn: 2592000, user: { id: '1', nickname: 'E2E', avatarUrl: null } }) }] }, put: { responses: [{ status: 200, body: { rev: 1, previousRev: 0 } }] } }); wx.clearStorageSync(); const pins = []; for (let i = 0; i < 8; i++) pins.push({ length: i === 0 ? 10 : 0, name: i === 0 ? 'E2E' : '', groups: [] }); pins[0].groups = [{ ranges: [{ start: 0, end: 10, reverse: false }], stages: [{ durationMs: 1000, fadeInMs: 0, layers: [{ role: 0, effectId: 0, params: [255, 0, 0] }] }] }]; wx.setStorageSync('arrangement:ML-8DCC', JSON.stringify({ version: 1, payloadVersion: 1, schemaVersion: 1, pins })); return { seeded: true, storage: !!wx.getStorageSync('arrangement:ML-8DCC') };",
+      "saveAs": "env"
+    }
+  ],
+  "steps": [
+    {
+      "action": "evaluate",
+      "code": "const app = getApp(); app.silentLogin(); const deadline = Date.now() + 5000; while (Date.now() < deadline) { if (app.cloudAuth.isLoggedIn()) break; await new Promise((r) => setTimeout(r, 100)); } return { loggedIn: app.cloudAuth.isLoggedIn() };",
+      "saveAs": "login"
+    },
+    { "action": "waitMs", "ms": 600 },
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitForStatus", "fields": {}, "timeoutMs": 10000 },
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; const deadline = Date.now() + 8000; while (Date.now() < deadline) { const st = c.getState(); if (st.counts.put >= 1 && st.last.put && st.last.put.status === 200) break; await new Promise((r) => setTimeout(r, 100)); } const st = c.getState(); const reqs = c.getRequests().filter((r) => r.route === 'put' && r.status === 200); return { counts: st.counts, last: st.last, putBodyLength: reqs.length && reqs[0].requestBody ? String(reqs[0].requestBody.arrangement || '').length : 0, putCrc: reqs.length && reqs[0].requestBody ? reqs[0].requestBody.crc32 : null };",
+      "saveAs": "pushResult"
+    },
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; c.setScenario({ put: { responses: [{ status: 500, body: { error: { code: 'INTERNAL', message: 'mock failure' } } }] } }); const app = getApp(); const bytes = new Uint8Array([0x01, 0x00, 0x01, 0x00, 0x08, 0x00]); const result = await app.cloudSync.autoPush({ mlId: 'ML-8DCC', bytes, crc32Value: 7, payloadVersion: 1, fwVersion: '1.0', baseRev: 0 }); const st = c.getState(); return { result, counts: st.counts, last: st.last, pending: app.cloudSync.hasPendingPush('ML-8DCC'), localOnly: app.cloudSync.isLocalOnly(), connected: !!(getApp() && getApp().cloudSync) };",
+      "saveAs": "failureResult"
+    }
+  ],
+  "assertions": [
+    { "type": "cloudRequest", "method": "PUT", "path": "/v1/devices/ML-8DCC/backup", "status": 200, "minCount": 1 },
+    { "type": "cloudRequest", "method": "PUT", "path": "/v1/devices/ML-8DCC/backup", "status": 500, "minCount": 2 },
+    { "type": "cloudState", "fields": { "last.put.status": 500 }, "minCounts": { "counts.put": 3 } },
+    {
+      "type": "runtime",
+      "code": "const app = getApp(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { loggedIn: app.cloudAuth.isLoggedIn(), localOnly: app.cloudSync.isLocalOnly(), pending: app.cloudSync.hasPendingPush('ML-8DCC'), connected: !!(p && p.data.connected) };",
+      "fields": { "loggedIn": true, "localOnly": false, "pending": true, "connected": true }
+    },
+    { "type": "runtime", "code": "const c = globalThis.__cloudMock; const reqs = c.getRequests().filter((r) => r.route === 'put' && r.status === 200); return { putBodyLength: reqs.length && reqs[0].requestBody ? String(reqs[0].requestBody.arrangement || '').length : 0, putCrc: reqs.length && reqs[0].requestBody ? reqs[0].requestBody.crc32 : null };", "fields": { "putCrc": 2753878970 }, "patterns": { "putBodyLength": "^2[0-9]{2}$" } },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": []
+}

@@ -716,6 +716,25 @@ static void test_progress_percent(void)
     mlota_free(o);
 }
 
+/* ---- cycle 10 (#92): flash begin failure — the SINGLE_APP partition
+ * table left esp_ota_get_next_update_partition() NULL, which surfaces as
+ * 0x08 MLOTA_ERR_FLASH on BEGIN and must leave no session behind ---- */
+
+static void test_begin_flash_failure_reports_0x08(void)
+{
+    mlota_t *o = new_ota();
+    image_init();
+    fbegin_rc = 1; /* no OTA slot available */
+    send_begin(o, 1000);
+    assert(fbegin_called);
+    assert(mlota_state(o) == MLOTA_STATE_IDLE);
+    const uint8_t *ev = find_evt(MLOTA_EVT_EVENT, 0);
+    assert(ev != NULL && ev[1] == 2 && ev[2] == MLOTA_ERR_FLASH);
+    assert(find_evt(MLOTA_EVT_SESSION, 0) == NULL);
+    assert(pv_saved == 0); /* no resumable session on flash failure */
+    mlota_free(o);
+}
+
 int main(void)
 {
     test_begin_opens_session();
@@ -736,6 +755,7 @@ int main(void)
     test_disconnect_pauses_keeps_bytes();
     test_data_out_of_order_gap_nak();
     test_progress_percent();
-    printf("all mlota host tests passed (%d cases)\n", 18);
+    test_begin_flash_failure_reports_0x08();
+    printf("all mlota host tests passed (%d cases)\n", 19);
     return 0;
 }

@@ -755,6 +755,11 @@ int mlarr_rx_active(const mlarr_rx_t *rx)
     return rx->active;
 }
 
+uint16_t mlarr_rx_chunks(const mlarr_rx_t *rx)
+{
+    return rx->chunks_have;   /* contiguous chunks of the live session */
+}
+
 static void send_ack(mlarr_rx_t *rx, uint32_t now_ms)
 {
     /* nakMask: bit i = chunk (ackUpTo + 1 + i) missing, lookback 16 bits.

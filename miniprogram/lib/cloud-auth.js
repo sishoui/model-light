@@ -10,13 +10,15 @@
 // - 任何备份请求 401 → refresh 一次 → 重试一次 → 仍失败转仅本地模式。
 // - 登录失败不影响本地功能：只标 loggedOut，绝不抛出阻塞调用方。
 
+const { base64UrlDecodeUtf8 } = require('./base64');
+
 const ACCESS_SKEW_MS = 60_000; // 提前 1 分钟视为过期
 
 function decodeJwtExp(jwt) {
   const parts = String(jwt).split('.');
   if (parts.length !== 3) return null;
   try {
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    const payload = JSON.parse(base64UrlDecodeUtf8(parts[1]));
     return typeof payload.exp === 'number' ? payload.exp : null;
   } catch (e) {
     return null;

@@ -15,3 +15,11 @@ Five default triage roles, each label string equal to its name (`needs-triage`, 
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Host protocol modules
+
+`host/shard_frame.py`, `host/token_state.py`, `host/status_frame.py`,
+`host/arrangement.py` and `host/ota_session.py` are available on `master` and on
+the `e2e/selftest` integration branch; no branch merge is needed before building
+`host/ble_suite/`. The suite runs headless with
+`python -m pytest host/ -q` (no real BLE device required).

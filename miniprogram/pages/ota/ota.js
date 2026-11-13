@@ -62,6 +62,18 @@ Page({  data: {
     }
   },
 
+  /**
+   * OTA 分片通道适配：ota 发送器需要 write/onOtaFrame（真机走 ...0006，
+   * 与设备页 _arrangementTransport 同模式——ble 客户端暴露的是 writeOta/
+   * onOtaNotify，不能直接当 transport 传）。
+   */
+  _otaTransport() {
+    return {
+      write: (bytes) => this.ble.writeOta(bytes),
+      onOtaFrame: (cb) => this.ble.onOtaNotify(cb),
+    };
+  },
+
   /** 选固件文件（聊天文件 / 最近文件） */
   chooseFirmware() {
     wx.chooseMessageFile({
@@ -99,7 +111,7 @@ Page({  data: {
   async startUpgrade() {
     if (!this._otaBytes || !this.data.connected) return;
     this.setData({ otaState: 'transferring', progress: 0, message: '' });
-    const sender = createOtaSender(this.ble, { chunkSize: this._chunkSize });
+    const sender = createOtaSender(this._otaTransport(), { chunkSize: this._chunkSize });
     this._otaSender = sender;
     const run = sender.start({
       imageSize: this._otaBytes.length,
@@ -119,7 +131,7 @@ Page({  data: {
   resumeUpgrade() {
     if (!this._otaBytes) return;
     this.setData({ otaState: 'transferring', message: '' });
-    const sender = createOtaSender(this.ble, { chunkSize: this._chunkSize });
+    const sender = createOtaSender(this._otaTransport(), { chunkSize: this._chunkSize });
     this._otaSender = sender;
     const run = sender.resume({
       imageSize: this._otaBytes.length,

@@ -218,6 +218,7 @@ void mlarr_rx_poll(mlarr_rx_t *rx, uint32_t now_ms);
 void mlarr_rx_on_disconnect(mlarr_rx_t *rx);
 
 int  mlarr_rx_active(const mlarr_rx_t *rx);
+uint16_t mlarr_rx_chunks(const mlarr_rx_t *rx); /* contiguous DATA chunks of the current session; 0 if none */
 uint16_t mlarr_rx_arrangement_version(const mlarr_rx_t *rx); /* last committed, 0 if none */
 uint32_t mlarr_rx_arrangement_crc32(const mlarr_rx_t *rx);   /* last committed */
 

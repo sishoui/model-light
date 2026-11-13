@@ -70,19 +70,64 @@ Page({
     this._reconnectTimer = null;
     this._lastFrameJson = null; // 界面不抖：帧内容没变就不 setData
     this._disconnectedByUser = false;
+    this._watchConnectionState();
+    const app = getApp();
+    this._appShowHook = () => this.onAppShowReconnect();
+    app._reconnectHook = this._appShowHook; // §2.5：回到前台用缓存 deviceId 直连
     this.connect();
   },
 
   onUnload() {
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
-    if (this._tokenTimer) clearInterval(this._tokenTimer);
-    if (this._offStatus) this._offStatus();
-    this._tokenClient.dispose();
+    this._cleanupBle();
+    if (this._offConnectionState) this._offConnectionState();
+    const app = getApp();
+    if (app && app._reconnectHook === this._appShowHook) app._reconnectHook = null;
     this.ble.disconnect();
   },
 
+  /** §2.5：系统蓝牙断开事件（mock debugDisconnect / 真机关蓝牙）。 */
+  _watchConnectionState() {
+    if (typeof wx.onBLEConnectionStateChange !== 'function') return;
+    const handler = (res) => {
+      if (res && res.connected === false) this.onBleDisconnected();
+    };
+    wx.onBLEConnectionStateChange(handler);
+    this._offConnectionState = () => {
+      if (typeof wx.offBLEConnectionStateChange === 'function') {
+        wx.offBLEConnectionStateChange(handler);
+      }
+    };
+  },
+
+  /** 断连/卸载共用的 BLE 清理：停状态订阅与令牌心跳，释放令牌客户端。 */
+  _cleanupBle() {
+    if (this._offStatus) { this._offStatus(); this._offStatus = null; }
+    if (this._tokenTimer) { clearInterval(this._tokenTimer); this._tokenTimer = null; }
+    if (this._tokenClient) this._tokenClient.dispose();
+  },
+
+  /** 断连处理：停心跳/状态订阅，按 §2.5 退避重连（onAppShow 可立即接管）。 */
+  onBleDisconnected() {
+    if (this._disconnectedByUser) return;
+    this.setData({ connected: false, reconnecting: true });
+    this._cleanupBle();
+    this.scheduleReconnect();
+  },
+
+  /** App.onAppShow 钩子：用缓存 deviceId 直连（不重新扫描）。 */
+  onAppShowReconnect() {
+    if (this._disconnectedByUser) return;
+    if (this.data.connected || !this.deviceId) return;
+    this.connect();
+  },
+
   async connect() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     try {
       await this.ble.connect(this.deviceId);
       resetBackoff(this.backoff);
@@ -151,6 +196,14 @@ Page({
     if (this.store) this.reloadPins(); // 从 pin/group 编辑页返回时刷新
   },
 
+  /** 编排分片通道适配：arrangement-sender 需要 write/onFrame（真机走 ...0003）。 */
+  _arrangementTransport() {
+    return {
+      write: (bytes) => this.ble.writeSequence(bytes),
+      onFrame: (cb) => this.ble.onSequenceNotify(cb),
+    };
+  },
+
   /** §2.5：手动请求令牌（推送/调参前）；结果如实上报，不静默 */
   async requestToken() {
     try {
@@ -201,7 +254,6 @@ Page({
       this.setData({ transferMessage: `编排不完整：${e.message}（本地已保存，可继续编辑）` });
       return;
     }
-    const sender = createArrangementSender(this.ble, { chunkSize: this._chunkSize });
     this._senderActive = true;
     this.setData({ transferring: true, progressLabel: '0%', transferMessage: '' });
     try {
@@ -211,6 +263,7 @@ Page({
         version,
         getStatusFrame: () => this._lastStatusFrame,
         token: this._tokenClient, // 复用页面令牌实例（推送前取、成功后释放）
+        transport: this._arrangementTransport(),
       });
       if (result.ok) {
         this.setData({ transferMessage: '推送成功，设备版本已确认' });
@@ -239,7 +292,7 @@ Page({
   async sendTestArrangement() {
     if (this._senderActive || this.readOnly || !this._chunkSize) return;
     const data = buildTestTlv();
-    const sender = createArrangementSender(this.ble, { chunkSize: this._chunkSize });
+    const sender = createArrangementSender(this._arrangementTransport(), { chunkSize: this._chunkSize });
     this._senderActive = true;
     this.setData({ transferring: true, progressLabel: '0%', transferMessage: '' });
     try {
@@ -356,17 +409,29 @@ Page({
   async writeBytesToDevice(payloadBytes) {
     const frame = this._lastStatusFrame;
     const version = frame ? (frame.arrangementVersion + 1) & 0xffff : 1;
-    const sender = createArrangementSender(this.ble, { chunkSize: this._chunkSize });
-    const result = await sender.send({
-      payloadVersion: 1,
-      protoMajor: TEST_PROTO_MAJOR,
-      protoMinor: TEST_PROTO_MINOR,
-      data: payloadBytes,
-    });
-    if (!result.ok) {
-      const err = new Error(result.reason);
-      err.reason = result.reason;
-      throw err; // restore() 统一转 restore-failed
+    // §2.4：编排写需要令牌。restore 路径同样要拿令牌，否则固件拒绝 0003 写
+    // （E2E #87 发现：没有令牌时 sender 收不到 ACK → restore-failed）。
+    const token = await this._tokenClient.requestToken();
+    if (!token.granted) {
+      const err = new Error('no-token');
+      err.reason = 'no-token';
+      throw err;
+    }
+    try {
+      const sender = createArrangementSender(this._arrangementTransport(), { chunkSize: this._chunkSize });
+      const result = await sender.send({
+        payloadVersion: 1,
+        protoMajor: TEST_PROTO_MAJOR,
+        protoMinor: TEST_PROTO_MINOR,
+        data: payloadBytes,
+      });
+      if (!result.ok) {
+        const err = new Error(result.reason);
+        err.reason = result.reason;
+        throw err; // restore() 统一转 restore-failed
+      }
+    } finally {
+      this._tokenClient.release();
     }
     this.setData({ pushVersion: version });
   },
@@ -374,6 +439,7 @@ Page({
   /** §2.5：退避 1/2/4/8 s 封顶，无限重试 */
   scheduleReconnect() {
     if (this._disconnectedByUser) return;
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     const delay = nextBackoffMs(this.backoff.attempt);
     this.backoff.attempt += 1;
     this.setData({ connected: false, reconnecting: true });

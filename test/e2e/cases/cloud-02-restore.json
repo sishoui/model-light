@@ -1,0 +1,70 @@
+{
+  "id": "cloud-02",
+  "name": "CLOUD-02 设备空编排 + 云端有备份 → 提示一次 → 确认后拉取 TLV 写回设备",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; if (!c) throw new Error('cloud-mock 未注入'); c.reset(); c.setScenario({ login: { responses: [{ status: 200, body: () => ({ accessToken: c.issueToken({ ttlMs: 3600e3 }), expiresIn: 3600, refreshToken: 'e2e-refresh-1', refreshExpiresIn: 2592000, user: { id: '1', nickname: 'E2E', avatarUrl: null } }) }] }, put: { responses: [{ status: 200, body: { rev: 1, previousRev: 0 } }] }, get: { responses: [{ status: 404, body: { error: { code: 'NOT_FOUND' } } }] } }); wx.clearStorageSync(); return { cleared: true };",
+      "saveAs": "env"
+    }
+  ],
+  "steps": [
+    {
+      "action": "evaluate",
+      "code": "const app = getApp(); app.silentLogin(); const deadline = Date.now() + 5000; while (Date.now() < deadline) { if (app.cloudAuth.isLoggedIn()) break; await new Promise((r) => setTimeout(r, 100)); } return { loggedIn: app.cloudAuth.isLoggedIn() };",
+      "saveAs": "login"
+    },
+    { "action": "waitMs", "ms": 600 },
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitForStatus", "fields": {}, "timeoutMs": 10000, "saveAs": "before" },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const deadline = Date.now() + 8000; while (Date.now() < deadline) { if (p && p.data.connected && p._chunkSize) break; await new Promise((r) => setTimeout(r, 100)); } return { connected: !!(p && p.data.connected), chunkSize: p ? p._chunkSize : null, version: p && p._lastStatusFrame ? p._lastStatusFrame.arrangementVersion : null, hinted: wx.getStorageSync('cloudSync:hinted:ML-8DCC') || false, message: p ? (p.data.transferMessage || '') : '' };",
+      "saveAs": "ready"
+    },
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; const pages = getCurrentPages(); const p = pages[pages.length - 1]; const frame = p._lastStatusFrame; const version = (((frame && frame.arrangementVersion) || 0) + 1) & 0xffff; function crc32(bytes) { let c = 0xffffffff; for (let i = 0; i < bytes.length; i++) { c ^= bytes[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); } return (c ^ 0xffffffff) >>> 0; } function buildTlv(ver) { const b = []; const u16 = (v) => { b.push(v & 255, (v >> 8) & 255); }; const u8 = (v) => { b.push(v & 255); }; u16(ver); u16(1); u8(8); u8(10); const name = [0x45, 0x32, 0x45]; for (let i = 0; i < 16; i++) b.push(i < name.length ? name[i] : 0); u8(1); u8(1); u8(1); u8(0); u8(10); u8(0); u16(1000); u8(0); u8(1); u8(0); u16(0); u8(3); b.push(255, 0, 0); for (let pin = 1; pin < 8; pin++) { u8(0); for (let i = 0; i < 16; i++) b.push(0); u8(0); } return new Uint8Array(b); } const bytes = buildTlv(version); const b64 = wx.arrayBufferToBase64(bytes.buffer); const crc = crc32(bytes); c.setScenario({ get: { responses: [{ status: 200, body: { mlId: 'ML-8DCC', rev: 1, payloadVersion: 1, fwVersion: '1.0', arrangement: b64, crc32: crc, byteLength: bytes.length, pushedAt: null, stale: false } }] } }); return { version, crc, byteLength: bytes.length };",
+      "saveAs": "backup"
+    },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; p.restoreFromCloud(); const deadline = Date.now() + 20000; let message = ''; while (Date.now() < deadline) { message = p.data.transferMessage || ''; if (/已从云端恢复|写回设备失败|网络异常|云端没有|无需恢复/.test(message)) break; await new Promise((r) => setTimeout(r, 100)); } return { message, version: p._lastStatusFrame ? p._lastStatusFrame.arrangementVersion : null };",
+      "saveAs": "restoreResult"
+    },
+    {
+      "action": "waitForStatus",
+      "fields": { "arrangementVersion": "{{backup.version}}" },
+      "timeoutMs": 8000,
+      "saveAs": "after"
+    }
+  ],
+  "assertions": [
+    { "type": "cloudRequest", "method": "GET", "path": "/v1/devices/ML-8DCC/backup", "status": 200, "minCount": 1 },
+    { "type": "serial", "pattern": "commit v{{backup.version}}", "minCount": 1 },
+    { "type": "statusFrame", "hexLength": 12, "fields": { "arrangementVersion": "{{backup.version}}" }, "timeoutMs": 8000 },
+    { "type": "bleWrite", "short": "0003", "minCount": 1 },
+    {
+      "type": "runtime",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { message: p.data.transferMessage || '', hinted: wx.getStorageSync('cloudSync:hinted:ML-8DCC') || false, connected: !!p.data.connected, chunkSize: p._chunkSize || null };",
+      "fields": { "hinted": true, "connected": true },
+      "patterns": { "message": "已从云端恢复编排到设备" }
+    },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": []
+}

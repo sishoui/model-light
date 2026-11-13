@@ -106,6 +106,9 @@ static void token_send(void *user, uint16_t conn, uint8_t cmd,
     if (len) {
         f[3] = payload[0];
     }
+    /* §2.5: GRANT_OK/DENIED/BUSY and PROBE all go through here. */
+    ESP_LOGI(TAG, "token tx cmd=0x%02x conn=%u outcome=%u", (unsigned)cmd,
+             (unsigned)conn, len ? (unsigned)payload[0] : 0u);
     ble_notify_command_to(conn, f, n);
 }
 
@@ -131,9 +134,25 @@ static uint16_t om_flat(struct os_mbuf *om, uint8_t *out, uint16_t cap)
     return len;
 }
 
+/* ---- E2E debug log standard (ticket #79) ----
+ * One stable, regex-matchable line per event; see firmware/README.md for the
+ * full catalogue. Payloads are sampled (4 B), never dumped: the 40 FPS frame
+ * clock must not wait on the UART. */
+static void log_rx(const char *chr, const uint8_t *frame, uint16_t len)
+{
+    ESP_LOGI(TAG, "rx chr=%s len=%u data=%02x%02x%02x%02x", chr,
+             (unsigned)len,
+             len > 0 ? (unsigned)frame[0] : 0u,
+             len > 1 ? (unsigned)frame[1] : 0u,
+             len > 2 ? (unsigned)frame[2] : 0u,
+             len > 3 ? (unsigned)frame[3] : 0u);
+}
+
 /* Arrangement transfer session (F2): chunked rx on ...0003, ACK/NAK back
  * on the same characteristic's notify. */
 static mlarr_rx_t *s_rx;
+/* Realtime write log throttle (slider drags are high-rate): 2 lines/s. */
+static uint32_t s_rt_log_ms;
 
 static void xfer_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak,
                       uint8_t status)
@@ -170,6 +189,10 @@ static int xfer_commit(void *user, const uint8_t *buf, uint16_t len,
     /* All validations already passed in mlarr; stage whole blob atomically.
      * NVS write is debounced 2 s in store.c. */
     ml_store_stage(buf, len, version);
+    /* §2.2 atomic commit: version + how many DATA chunks made up the blob. */
+    ESP_LOGI(TAG, "commit v%u chunks=%u len=%u", (unsigned)version,
+             (unsigned)(s_rx != NULL ? mlarr_rx_chunks(s_rx) : 0),
+             (unsigned)len);
     return 0;
 }
 
@@ -189,8 +212,9 @@ static int chr_seqblock_access(uint16_t conn, uint16_t attr,
     }
     /* §2.2 frame cap: cmd(1)+seq(2)+payload — ATT 写上限 512，编排分片
      * 有效载荷上限 259（255 帧 − 3 头部，MLARR_CHUNK_MAX 内取整）。 */
-    uint8_t frame[SEQ_WRITE_FRAME_MAX];
+    uint8_t frame[SEQ_WRITE_FRAME_MAX] = { 0 };
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
+    log_rx("7c9f0003", frame, len);
     if (s_rx != NULL) {
         mlarr_rx_on_frame(s_rx, frame, len,
                           (uint32_t)(esp_timer_get_time() / 1000));
@@ -215,7 +239,10 @@ static void ota_change(void *user)
     (void)user;
     /* §6: OTA 开始/结束会改变令牌语义 — 交接请求在 OTA 期间拒 BUSY。 */
     mlt_set_ota_busy(s_mlt, mlota_active(s_ota));
-    /* §7.1: 1% throttle — only repaint when the percentage moved. */
+    /* State transitions are rare and always worth a line (begin/commit/
+     * abort/pause/fail). The 1% throttle below gates only the repaint. */
+    ESP_LOGI(TAG, "ota state=%u progress=%u%%", (unsigned)mlota_state(s_ota),
+             (unsigned)ble_ota_progress());
     if (ble_ota_progress_changed()) {
         ble_push_status();
         ble_update_adv();
@@ -237,6 +264,16 @@ static void ota_poll_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(100));
         uint8_t st = mlota_state(s_ota);
         mlota_poll(s_ota, (uint32_t)(esp_timer_get_time() / 1000));
+        if (st != mlota_state(s_ota)) {
+            ESP_LOGI(TAG, "ota state %u -> %u", (unsigned)st,
+                     (unsigned)mlota_state(s_ota));
+        }
+        /* §7.1: log every 1% progress step while a transfer is active
+         * (idle 0% is covered by the ota_change state line). */
+        if (mlota_active(s_ota) && ble_ota_progress_changed()) {
+            ESP_LOGI(TAG, "ota progress %u%% (state %u)",
+                     (unsigned)ble_ota_progress(), (unsigned)mlota_state(s_ota));
+        }
         /* PAUSED (stall / disconnect) leaves the transfer — mode=2 clears
          * and playback resumes (§7.2). Signal through the same throttle. */
         if (st != mlota_state(s_ota) && !mlota_active(s_ota)) {
@@ -254,8 +291,15 @@ static int chr_ota_access(uint16_t conn, uint16_t attr,
                           struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     (void)attr; (void)arg;
-    uint8_t frame[MLOTA_BEGIN_PAYLOAD + 3];
+    /* Full-size frame buffer: DATA carries up to MLOTA_CHUNK_MAX bytes, not
+     * just the BEGIN payload (§1). */
+    uint8_t frame[MLOTA_FRAME_MAX] = { 0 };
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
+    /* DATA chunks are high-rate and covered by the progress log; only the
+     * control frames (BEGIN/QUERY/COMMIT/ABORT/RESUME) get a write line. */
+    if (len < 1 || frame[0] != MLOTA_CMD_DATA) {
+        log_rx("7c9f0006", frame, len);
+    }
     mlota_on_frame(s_ota, frame, len,
                    mlt_can_write(s_mlt, conn),
                    (uint32_t)(esp_timer_get_time() / 1000));
@@ -269,9 +313,13 @@ static int chr_command_access(uint16_t conn, uint16_t attr,
                               struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     (void)attr; (void)arg;
-    uint8_t frame[16];
+    uint8_t frame[16] = { 0 };
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
+    log_rx("7c9f0001", frame, len);
     if (len >= 1) {
+        if (frame[0] == MLT_CMD_HEARTBEAT) {
+            ESP_LOGI(TAG, "token heartbeat conn=%u", (unsigned)conn);
+        }
         mlt_on_command(s_mlt, conn, frame, len,
                        (uint32_t)(esp_timer_get_time() / 1000));
     }
@@ -296,10 +344,22 @@ static int chr_realtime_access(uint16_t conn, uint16_t attr,
         ble_raise_error(MLOTA_ERR_BUSY);
         return 0;
     }
-    uint8_t frame[16];
+    uint8_t frame[16] = { 0 };
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
     if (len >= 7) {
-        frame_realtime_packet(frame, len);
+        int applied = frame_realtime_packet(frame, len);
+        /* §2.3 summary: pin/group/stage of the leaf being patched. Throttled
+         * to 2 lines/s — a slider drag sends far more packets than that. */
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (s_rt_log_ms == 0 || now - s_rt_log_ms >= 500) {
+            s_rt_log_ms = now;
+            ESP_LOGI(TAG, "rx chr=7c9f0002 len=%u data=%02x%02x%02x%02x "
+                     "rt pin=%u group=%u stage=%u applied=%d",
+                     (unsigned)len, (unsigned)frame[0], (unsigned)frame[1],
+                     (unsigned)frame[2], (unsigned)frame[3],
+                     (unsigned)frame[0], (unsigned)frame[1],
+                     (unsigned)frame[2], applied);
+        }
         /* mode 0→1 must be visible to the phone right away (§2.9). */
         ble_push_status();
     }
@@ -389,6 +449,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
                 break;
             }
         }
+        if (mlt_holder(s_mlt) == event->disconnect.conn.conn_handle) {
+            ESP_LOGI(TAG, "token holder disconnect conn=%u",
+                     (unsigned)event->disconnect.conn.conn_handle);
+        }
         /* §2.2: 断连即丢弃半份编排，不写 NVS；手机重连后从头重传。 */
         if (s_rx != NULL) {
             mlarr_rx_on_disconnect(s_rx);
@@ -401,6 +465,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         frame_exit_realtime();
         token_change(NULL);
         ble_advertising_start();
+        return 0;
+    case BLE_GAP_EVENT_MTU:
+        /* §2.1 MTU 协商结果: ATT_MTU-3 is the write ceiling. */
+        ESP_LOGI(TAG, "mtu %u (conn %u)", (unsigned)event->mtu.value,
+                 (unsigned)event->mtu.conn_handle);
         return 0;
     default:
         return 0;
@@ -517,7 +586,7 @@ int ble_start(void)
         ESP_LOGE(TAG, "ota state machine alloc failed");
         return -1;
     }
-    xTaskCreatePinnedToCore(ota_poll_task, "otapoll", 2048, NULL,
+    xTaskCreatePinnedToCore(ota_poll_task, "otapoll", 4096, NULL,
                             tskIDLE_PRIORITY + 2, NULL, 0);
 
     ble_hs_cfg.sync_cb = on_sync;
@@ -639,13 +708,27 @@ void ble_push_status(void)
     /* tokenHolder is per-connection perspective (§2.9), so build one frame
      * per connection. Frame is 12 B: mode + arrVersion + arrCrc32 +
      * brightnessLimit + tokenHolder + errorCode + temperature + flags. */
+    int pushed = 0;
+    uint8_t sample[MLPROTO_STATE_LEN] = { 0 };
     for (size_t i = 0; i < s_conn_count; i++) {
         uint8_t frame[MLPROTO_STATE_LEN];
         build_status_frame(frame, s_conn_handles[i]);
         struct os_mbuf *om = ble_hs_mbuf_from_flat(frame, sizeof frame);
         if (om != NULL) {
-            ble_gatts_notify_custom(s_conn_handles[i], s_status_attr_val, om);
+            if (ble_gatts_notify_custom(s_conn_handles[i], s_status_attr_val,
+                                        om) == 0) {
+                if (pushed == 0) {
+                    memcpy(sample, frame, sizeof sample);
+                }
+                pushed++;
+            }
         }
+    }
+    if (pushed > 0) {
+        ESP_LOGI(TAG, "status push n=%d mode=%u v%u token=%u err=0x%02x",
+                 pushed, (unsigned)sample[0],
+                 (unsigned)(sample[1] | (sample[2] << 8)),
+                 (unsigned)sample[8], (unsigned)sample[9]);
     }
 }
 

@@ -1,0 +1,31 @@
+{
+  "id": "auth-01",
+  "name": "AUTH-01 首次启动静默登录（mock wx.login + mock 后端）",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; if (!c) throw new Error('cloud-mock 未注入'); c.reset(); c.setScenario({ login: { responses: [{ status: 200, body: () => ({ accessToken: c.issueToken({ ttlMs: 3600e3 }), expiresIn: 3600, refreshToken: 'e2e-refresh-1', refreshExpiresIn: 2592000, user: { id: '1', nickname: 'E2E', avatarUrl: null } }) }] } }); wx.clearStorageSync(); return { cleared: true, hasBle: !!globalThis.__bleMock };",
+      "saveAs": "env"
+    }
+  ],
+  "steps": [
+    {
+      "action": "evaluate",
+      "code": "const app = getApp(); const c = globalThis.__cloudMock; app.silentLogin(); const deadline = Date.now() + 5000; while (Date.now() < deadline) { if (app.cloudAuth.isLoggedIn()) break; await new Promise((r) => setTimeout(r, 100)); } return { loggedIn: app.cloudAuth.isLoggedIn(), counts: c.getState().counts };",
+      "saveAs": "login"
+    },
+    { "action": "waitMs", "ms": 200 }
+  ],
+  "assertions": [
+    { "type": "cloudRequest", "method": "POST", "path": "/v1/auth/login", "status": 200, "minCount": 1 },
+    { "type": "cloudState", "fields": { "last.login.status": 200 }, "minCounts": { "counts.login": 1 } },
+    {
+      "type": "runtime",
+      "code": "const app = getApp(); const raw = wx.getStorageSync('cloudSession'); let session = null; try { session = raw ? JSON.parse(raw) : null; } catch (e) { session = null; } const reqs = globalThis.__cloudMock.getRequests().filter((r) => r.route === 'login'); return { hasSession: !!session, refreshToken: session ? session.refreshToken : null, loggedIn: app.cloudAuth.isLoggedIn(), usable: app.cloudAuth.hasUsableAccess(), hasSync: !!app.cloudSync, hasApi: !!app.cloudApi, localOnly: app.cloudSync ? app.cloudSync.isLocalOnly() : null, sawFakeCode: reqs.some((r) => r.requestBody && r.requestBody.code === 'e2e-fake-code') };",
+      "fields": { "hasSession": true, "loggedIn": true, "usable": true, "hasSync": true, "hasApi": true, "localOnly": false, "sawFakeCode": true },
+      "patterns": { "refreshToken": "e2e-refresh-1" }
+    },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": []
+}

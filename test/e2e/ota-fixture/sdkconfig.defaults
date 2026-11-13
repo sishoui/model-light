@@ -1,0 +1,4 @@
+# 与正式固件同目标/同 flash 配置（分区表不参与 OTA 镜像校验，但保持一致
+# 减少变量：esp32c3 + 4 MB flash 是这台设备的实际配置）。
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

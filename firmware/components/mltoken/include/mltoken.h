@@ -82,6 +82,11 @@ void mlt_poll(mlt_t *t, uint32_t now_ms);
  * mlt_set_error(). */
 int  mlt_can_write(const mlt_t *t, uint16_t conn);
 
+/* Current token holder's connection handle (0 = nobody holds it, including
+ * SUSPENDED retention and PROBING: the holder is still the formal owner).
+ * Used by the firmware to log grant/release transitions (§2.5). */
+uint16_t mlt_holder(const mlt_t *t);
+
 /* §2.9 tokenHolder: 0 none / 1 this connection holds / 2 another holds. */
 uint8_t mlt_perspective(const mlt_t *t, uint16_t conn);
 

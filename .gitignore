@@ -14,6 +14,19 @@ api/.env
 miniprogram/project.config.json
 miniprogram/project.private.config.json
 
+# E2E 运行产物
+test/e2e/reports/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Python
+*.py[cod]
+.pytest_cache/
+
+# server-only: rebinding caddy ports when host 80/443 are taken (docs/deploy.md)
+docker-compose.override.yml
+
+# BLE 套件失败报告（仅失败时由 conftest 生成，用于 CI 上传，不提交）
+host/ble_suite/ble_suite_report.json

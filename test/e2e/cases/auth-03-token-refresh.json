@@ -1,0 +1,56 @@
+{
+  "id": "auth-03",
+  "name": "AUTH-03 token 过期/失效 → 401 → 自动 refresh → 重试成功",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; if (!c) throw new Error('cloud-mock 未注入'); c.reset(); c.setScenario({ login: { responses: [{ status: 401, body: { error: { code: 'AUTH_INVALID' } } }] }, refresh: { responses: [{ status: 200, body: () => ({ accessToken: c.issueToken({ ttlMs: 3600e3 }), expiresIn: 3600, refreshToken: 'e2e-refresh-2', refreshExpiresIn: 2592000 }) }] }, put: { responses: [{ status: 401, body: { error: { code: 'AUTH_INVALID', message: 'expired' } } }, { status: 200, body: { rev: 2, previousRev: 1 } }] } }); wx.clearStorageSync(); const expired = c.issueToken({ ttlMs: -1000 }); wx.setStorageSync('cloudSession', JSON.stringify({ accessToken: expired, refreshToken: 'e2e-refresh-old', user: null, savedAt: Date.now() })); const app = getApp(); return { loggedIn: app.cloudAuth.isLoggedIn(), usable: app.cloudAuth.hasUsableAccess() };",
+      "saveAs": "env"
+    }
+  ],
+  "steps": [
+    { "action": "waitMs", "ms": 600 },
+    {
+      "action": "evaluate",
+      "code": "const app = getApp(); return { loggedIn: app.cloudAuth.isLoggedIn(), usable: app.cloudAuth.hasUsableAccess(), session: JSON.parse(wx.getStorageSync('cloudSession') || 'null') };",
+      "saveAs": "expiredSession"
+    },
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitForStatus", "fields": {}, "timeoutMs": 10000 },
+    {
+      "action": "evaluate",
+      "code": "const c = globalThis.__cloudMock; const deadline = Date.now() + 8000; while (Date.now() < deadline) { const st = c.getState(); if (st.counts.put >= 2 && st.last.put && st.last.put.status === 200) break; await new Promise((r) => setTimeout(r, 100)); } const st = c.getState(); const reqs = c.getRequests(); const app = getApp(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { counts: st.counts, putStatuses: reqs.filter((r) => r.route === 'put').map((r) => r.status), refreshStatuses: reqs.filter((r) => r.route === 'refresh').map((r) => r.status), sessionRefreshToken: (JSON.parse(wx.getStorageSync('cloudSession') || 'null') || {}).refreshToken || null, connected: !!(p && p.data.connected) };",
+      "saveAs": "refreshResult"
+    }
+  ],
+  "assertions": [
+    { "type": "cloudRequest", "method": "POST", "path": "/v1/auth/refresh", "status": 200, "minCount": 1 },
+    { "type": "cloudRequest", "method": "PUT", "path": "/v1/devices/ML-8DCC/backup", "minCount": 2 },
+    { "type": "cloudRequest", "method": "PUT", "path": "/v1/devices/ML-8DCC/backup", "status": 401, "minCount": 1 },
+    { "type": "cloudRequest", "method": "PUT", "path": "/v1/devices/ML-8DCC/backup", "status": 200, "minCount": 1 },
+    { "type": "cloudState", "fields": { "last.put.status": 200 }, "minCounts": { "counts.refresh": 1, "counts.put": 2 } },
+    {
+      "type": "runtime",
+      "code": "const app = getApp(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; const session = JSON.parse(wx.getStorageSync('cloudSession') || 'null'); return { loggedIn: app.cloudAuth.isLoggedIn(), usable: app.cloudAuth.hasUsableAccess(), connected: !!(p && p.data.connected), sessionRefreshToken: session ? session.refreshToken : null };",
+      "fields": { "loggedIn": true, "usable": true, "connected": true },
+      "patterns": { "sessionRefreshToken": "e2e-refresh-2" }
+    },
+    { "type": "runtime", "code": "const c = globalThis.__cloudMock; const reqs = c.getRequests(); return { putStatuses: reqs.filter((r) => r.route === 'put').map((r) => r.status), refreshStatuses: reqs.filter((r) => r.route === 'refresh').map((r) => r.status) };", "fields": { "putStatuses": [401, 200] } },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": []
+}

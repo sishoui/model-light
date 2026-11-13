@@ -366,6 +366,29 @@ static void test_ota_busy_refuses_handover(void)
     mlt_free(t);
 }
 
+/* ---- ticket #79: holder accessor is the log seam for grant/release ---- */
+static void test_holder_accessor_tracks_grant_and_release(void)
+{
+    mlt_t *t = new_mlt();
+    assert(mlt_holder(t) == 0);
+    req(t, 1, 100);
+    assert(mlt_holder(t) == 1);                          /* granted */
+    mlt_poll(t, 100 + MLT_HEARTBEAT_DEAD_MS);
+    assert(mlt_holder(t) == 0);                          /* 30 s death releases */
+    mlt_free(t);
+}
+
+static void test_holder_accessor_tracks_suspend(void)
+{
+    mlt_t *t = new_mlt();
+    req(t, 1, 0);
+    mlt_on_disconnect(t, 1, 1000);
+    assert(mlt_holder(t) == 1);                          /* retained 60 s */
+    mlt_poll(t, 1000 + MLT_SUSPEND_MS);
+    assert(mlt_holder(t) == 0);                          /* retention expired */
+    mlt_free(t);
+}
+
 int main(void)
 {
     test_first_request_granted_without_probe();
@@ -384,6 +407,8 @@ int main(void)
     test_grant_clears_latched_error();
     test_holder_rerequest_idempotent();
     test_ota_busy_refuses_handover();
+    test_holder_accessor_tracks_grant_and_release();
+    test_holder_accessor_tracks_suspend();
     printf("all mltoken tests passed\n");
     return 0;
 }

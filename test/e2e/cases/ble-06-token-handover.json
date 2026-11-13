@@ -1,0 +1,79 @@
+{
+  "id": "ble-06",
+  "name": "BLE-06 多手机令牌交接（双 daemon）",
+  "skip": {
+    "reason": "本机单蓝牙适配器（Intel Wireless）无法对同一 BLE 外设维持两条 GATT 会话（Windows BLE 栈限制，多路尝试均失败）——双 daemon 代码与单测就绪，硬件到位（第二块 BLE 适配器或第二主机）后 npm run test:e2e -- --case ble-06 --run-skipped 验收"
+  },
+  "daemons": ["A", "B"],
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "if (!globalThis.__bleMock) throw new Error('ble-mock 未注入'); return globalThis.__bleMock.getState();",
+      "saveAs": "mockState"
+    },
+    {
+      "action": "waitForStatus",
+      "daemon": "A",
+      "fields": { "tokenHolder": 0 },
+      "timeoutMs": 70000,
+      "saveAs": "tokenFree"
+    }
+  ],
+  "steps": [
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitMs", "ms": 3000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p.requestToken(); return { granted: !!r.granted, reason: r.reason || '' };",
+      "saveAs": "aToken"
+    },
+    { "action": "waitForSerial", "pattern": "rx chr=7c9f0001", "timeoutMs": 15000 },
+    { "action": "waitForStatus", "daemon": "A", "fields": { "tokenHolder": 1 }, "timeoutMs": 10000, "saveAs": "aHolds" },
+    { "action": "waitForStatus", "daemon": "B", "fields": { "tokenHolder": 2 }, "timeoutMs": 10000, "saveAs": "bSeesHolder" },
+    {
+      "action": "evaluate",
+      "code": "globalThis.__bleMock.setWritePaused(true); return true;",
+      "saveAs": "heartbeatPaused"
+    },
+    { "action": "daemonWrite", "daemon": "B", "characteristic": "0001", "data": "10" },
+    { "action": "waitMs", "ms": 7000 },
+    { "action": "waitForStatus", "daemon": "B", "fields": { "tokenHolder": 2 }, "timeoutMs": 5000, "saveAs": "bStillGuest" },
+    { "action": "waitForSerial", "pattern": "token released \\(holder \\d+\\)", "timeoutMs": 45000 },
+    { "action": "waitForStatus", "daemon": "B", "fields": { "tokenHolder": 0 }, "timeoutMs": 5000, "saveAs": "bSeesFree" },
+    { "action": "daemonWrite", "daemon": "B", "characteristic": "0001", "data": "10" },
+    { "action": "waitForStatus", "daemon": "B", "fields": { "tokenHolder": 1 }, "timeoutMs": 10000, "saveAs": "bHolds" },
+    { "action": "waitForSerial", "pattern": "token holder 0 -> \\d+", "timeoutMs": 5000 }
+  ],
+  "assertions": [
+    { "type": "serial", "pattern": "rx chr=7c9f0001", "minCount": 3 },
+    { "type": "serial", "pattern": "token tx cmd=0x14 conn=\\d+ outcome=0", "minCount": 2, "maxCount": 2 },
+    { "type": "serial", "pattern": "token tx cmd=0x14 conn=\\d+ outcome=1", "minCount": 1 },
+    { "type": "serial", "pattern": "token released \\(holder \\d+\\)", "minCount": 1 },
+    { "type": "serial", "pattern": "token holder 0 -> \\d+", "minCount": 1 },
+    { "type": "statusFrame", "daemon": "B", "hexLength": 12, "fields": { "tokenHolder": 1 }, "timeoutMs": 5000 },
+    { "type": "statusFrame", "daemon": "A", "hexLength": 12, "fields": { "tokenHolder": 2 }, "timeoutMs": 5000 },
+    { "type": "bleWrite", "short": "0001", "data": "10" },
+    { "type": "mockState", "fields": { "connected": true } },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": [
+    {
+      "action": "evaluate",
+      "code": "if (globalThis.__bleMock) { globalThis.__bleMock.setWritePaused(false); globalThis.__bleMock.dispose(); } return true;"
+    }
+  ]
+}
