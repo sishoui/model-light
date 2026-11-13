@@ -327,6 +327,18 @@ class TestBleFrames:
         assert body["frames"] == []
         assert body["next"] == 1
 
+    def test_records_ota_frames_with_seq(self, core):
+        """#86：...0006 OTA 下行（ACK/SESSION/EVENT/RESUME_OK）也进帧队列。"""
+        core.on_ota_frame(bytes([0x30, 0x07, 0x00, 0x00]))  # ACK seq_ack=7
+        core.on_ota_frame(bytes([0x32, 0x02, 0x00]))        # EVENT 最终结果 OK
+        status, body = core.handle_ble_frames(since=0)
+        assert status == 200
+        assert body["next"] == 2
+        assert [f["short"] for f in body["frames"]] == ["0006", "0006"]
+        assert body["frames"][0]["char"] == daemon_mod.CHR_OTA
+        assert body["frames"][0]["hex"] == "30070000"
+        assert body["frames"][1]["hex"] == "320200"
+
 
 class TestBleReconnect:
     def test_reconnect_calls_ble_backend(self, core, loop_thread, fake_ble):
@@ -485,6 +497,60 @@ class TestNoSerialMode:
         assert scanned == []
         assert seen["address"].address == "CC:8D:A2:C2:56:62"
         assert seen["address"].name == "ML-"
+
+    def test_serve_subscribes_ota_notify(self, capsys, monkeypatch):
+        """#86：serve() 把 ...0006 notify 接到 DaemonCore.on_ota_frame
+        （OTA ACK/SESSION/EVENT 可达 /api/ble/frames，mock 驱动发送器）。"""
+        registered = {}
+        captured = {}
+
+        class FakeServer:
+            server_address = ("127.0.0.1", 0)
+
+            def serve_forever(self):
+                return None
+
+            def shutdown(self):
+                return None
+
+            def server_close(self):
+                return None
+
+        class FakeEvent:
+            async def wait(self):
+                return True
+
+        async def fake_scan(name_substring, timeout):
+            return SimpleNamespace(name="ML-8DCC", address="AA:BB:CC:DD:EE:FF")
+
+        async def ok_connect(self):
+            self._connected = True
+
+        async def ok_disconnect(self):
+            self._connected = False
+
+        def record_extra_notify(self, callbacks):
+            registered.update(callbacks)
+
+        def fake_make_http_server(core, *args, **kwargs):
+            captured["core"] = core
+            return FakeServer()
+
+        monkeypatch.setattr(daemon_mod, "scan_for_device", fake_scan)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "connect", ok_connect)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "disconnect", ok_disconnect)
+        monkeypatch.setattr(daemon_mod.DaemonBleTransport, "set_extra_notify", record_extra_notify)
+        monkeypatch.setattr(
+            daemon_mod.DaemonBleTransport, "missing_characteristics", lambda self, expected: []
+        )
+        monkeypatch.setattr(daemon_mod, "make_http_server", fake_make_http_server)
+        monkeypatch.setattr(daemon_mod.asyncio, "Event", FakeEvent)
+
+        rc = daemon_mod.main(["--no-serial", "--scan-timeout", "0.1", "--connect-timeout", "0.1"])
+        assert rc == daemon_mod.EXIT_OK
+        assert daemon_mod.CHR_OTA in registered
+        assert registered[daemon_mod.CHR_OTA].__func__ is daemon_mod.DaemonCore.on_ota_frame
+        assert captured["core"] is not None
 
 
 # =================================================================== 切片 3
@@ -831,6 +897,21 @@ class TestDaemonBleTransport:
         callbacks[daemon_mod.CHR_COMMAND](SimpleNamespace(uuid=daemon_mod.CHR_COMMAND), bytearray(b"\x14"))
         callbacks[daemon_mod.CHR_SEQBLOCK](SimpleNamespace(uuid=daemon_mod.CHR_SEQBLOCK), bytearray(b"\x05"))
         assert seen == [("cmd", b"\x14"), ("seq", b"\x05")]
+
+    @pytest.mark.asyncio
+    async def test_extra_notify_ota_channel_roundtrip(self, fake_bleak):
+        """#86：...0006 notify 随 connect 订阅，回调按特征分发（ACK/SESSION/EVENT）。"""
+        transport = daemon_mod.DaemonBleTransport("AA:BB:CC:DD:EE:FF")
+        seen = []
+        transport.set_extra_notify({daemon_mod.CHR_OTA: lambda b: seen.append(bytes(b))})
+        await transport.connect()
+        client = fake_bleak.instances[-1]
+        callbacks = {u: cb for u, cb in client.notifications}
+        assert daemon_mod.CHR_OTA in callbacks
+        callbacks[daemon_mod.CHR_OTA](
+            SimpleNamespace(uuid=daemon_mod.CHR_OTA), bytearray(b"\x31\x01")
+        )
+        assert seen == [b"\x31\x01"]
 
     @pytest.mark.asyncio
     async def test_reconnect_disconnects_and_resubscribes(self, fake_bleak):

@@ -513,10 +513,12 @@ async def serve(args: argparse.Namespace) -> int:
     # 传 BLEDevice 对象（而非地址字符串）：bleak WinRT 后端直连更可靠。
     transport = DaemonBleTransport(device, device_name=device_name)
     core = DaemonCore(transport, monitor)
-    # 命令/分片下行通知转发给 mock（token GRANT / arrangement ACK）。
+    # 命令/分片/OTA 下行通知转发给 mock（token GRANT / arrangement ACK /
+    # OTA ACK/SESSION/EVENT——#86 起 0006 也订阅，小程序 OTA 发送器才能跑）。
     transport.set_extra_notify({
         CHR_COMMAND: core.on_command_frame,
         CHR_SEQBLOCK: core.on_seqblock_frame,
+        CHR_OTA: core.on_ota_frame,
     })
 
     def close_monitor() -> None:
@@ -672,6 +674,10 @@ class DaemonCore:
     def on_seqblock_frame(self, frame: bytes) -> None:
         """编排分片通道（0003）notify：ACK / NAK 下行。"""
         self._record_frame(CHR_SEQBLOCK, frame)
+
+    def on_ota_frame(self, frame: bytes) -> None:
+        """OTA 通道（0006）notify：ACK / SESSION / EVENT / RESUME_OK 下行（#86）。"""
+        self._record_frame(CHR_OTA, frame)
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop

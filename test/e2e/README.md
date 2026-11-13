@@ -87,6 +87,7 @@ test/e2e/
 │   └── *.test.js          # node:test 单测（假 automator + 假 HTTP）
 ├── daemon/                # #81 Python daemon（HTTP BLE 桥 + 串口断言）
 ├── mock/                  # #82 wx.* BLE mock
+├── ota-fixture/           # #86 OTA E2E 最小合法镜像（源码 + 预编译 bin + 用例生成器）
 └── reports/               # 运行产物（gitignore）
 ```
 
@@ -153,6 +154,15 @@ Assertion（`type` 之一）：
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
   发 REQ_TOKEN。断言串口 `token released` / `token holder 0 -> N`、GRANT outcome 0/1
   与两端状态帧的 per-connection `tokenHolder`（A=2、B=1）。
+- `ota-01-ota-state-machine.json`（#86）：OTA 协议状态机端到端。页面真实编码路径
+  （discover → 设备页 requestToken → OTA 页 chooseFirmware → startUpgrade，
+  fixture hex 经 `wx.chooseMessageFile`/`getFileSystemManager` 等价桩注入）驱动
+  BEGIN/DATA/COMMIT；传输期间每 5 s 一帧 0001 写 "15" 心跳。断言串口
+  `ota begin <N> B`、`ota state=1`、`ota progress N%`、`ota set_boot ok, rebooting`、
+  重启后 `fixture app booted`（新镜像横幅），状态帧 `mode=2`，mock 截获的
+  BEGIN(0x20)/DATA(0x22)/COMMIT(0x23) 写入与心跳，console 无 error。
+  **跑完必须重刷正式固件**（fixture 无 BLE，设备重启后失联是预期）——
+  见 `test/e2e/ota-fixture/README.md`。
 
 ## 已知边界
 

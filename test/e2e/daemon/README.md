@@ -1,11 +1,11 @@
 # E2E daemon（ticket #81）
 
 localhost HTTP 服务器：接收小程序 mock（wx.* BLE API 截获层）发来的 BLE 写入，
-经 bleak 转发到 ESP32-C3；订阅 status / command(0001) / seqblock(0003) 特征
-notify，缓存最近一帧状态并把命令/分片下行放入帧队列供 mock 轮询；后台线程
-pyserial 读 COM6 做正则断言。连接/通知接线复用 `host/ble_suite` 的
-`BleakBleTransport`（子类 `DaemonBleTransport` 补按特征写入、额外 notify 与
-断开重连）。
+经 bleak 转发到 ESP32-C3；订阅 status / command(0001) / seqblock(0003) /
+ota(0006) 特征 notify，缓存最近一帧状态并把命令/分片/OTA 下行放入帧队列供
+mock 轮询；后台线程 pyserial 读 COM6 做正则断言。连接/通知接线复用
+`host/ble_suite` 的 `BleakBleTransport`（子类 `DaemonBleTransport` 补按特征
+写入、额外 notify 与断开重连）。
 
 ## 启动
 
@@ -45,8 +45,9 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
   写入按特征能力选 `response`：realtime/seqblock 只支持 write-without-response。
 - status 解析复用 `host/status_frame.py`（spec §2.9）：mode / arrangementVersion /
   arrangementCrc32 / brightnessLimit / tokenHolder / errorCode / temperature / flags。
-- command(0001) / seqblock(0003) notify 进入帧队列（seq 单调递增）；mock 用
-  `GET /api/ble/frames?since=N` 取增量，驱动 token GRANT / arrangement ACK。
+- command(0001) / seqblock(0003) / ota(0006) notify 进入帧队列（seq 单调递增）；
+  mock 用 `GET /api/ble/frames?since=N` 取增量，驱动 token GRANT / arrangement
+  ACK / OTA ACK/SESSION/EVENT（#86）。
 - `/api/ble/reconnect` 用于 #84 断连重连：bleak/WinRT 的 disconnect 可能提前
   返回，实现先丢掉旧 client、等 6 s 让底层链路释放，再 connect（固件侧才会出现
   第二次 `ble: connect`）。
