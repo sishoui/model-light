@@ -1,0 +1,89 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { validateCase } = require('./lib/schema');
+
+function validCase() {
+  return {
+    id: 'ble-01',
+    name: 'BLE-01 扫描连接',
+    setup: [{ action: 'waitMs', ms: 10 }],
+    steps: [
+      { action: 'tap', selector: '.device-card' },
+      { action: 'evaluate', code: 'return 1;', saveAs: 'one' },
+      { action: 'navigate', url: 'pages/device/device?deviceId={{deviceId}}' },
+      { action: 'waitForSerial', pattern: 'boot' },
+      { action: 'input', selector: 'input', value: 'x' },
+    ],
+    assertions: [
+      { type: 'serial', pattern: 'mtu 256' },
+      { type: 'console', level: 'error' },
+      { type: 'statusFrame', hexLength: 12, fields: { mode: 0 } },
+      { type: 'bleWrite', short: '0001', data: '10' },
+    ],
+    teardown: [],
+  };
+}
+
+test('接受完整用例', () => {
+  const r = validateCase(validCase());
+  assert.deepStrictEqual(r.errors, []);
+  assert.strictEqual(r.ok, true);
+});
+
+test('缺少 id/name 报错', () => {
+  const c = validCase();
+  delete c.id;
+  delete c.name;
+  const r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('id')));
+  assert.ok(r.errors.some((e) => e.includes('name')));
+});
+
+test('拒绝未知 action', () => {
+  const c = validCase();
+  c.steps[0] = { action: 'click', selector: '.x' };
+  const r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors[0].includes('未知 action'));
+});
+
+test('校验 action 专属字段', () => {
+  const c = validCase();
+  c.steps = [
+    { action: 'navigate' },
+    { action: 'tap' },
+    { action: 'input', selector: 'input' },
+    { action: 'evaluate' },
+    { action: 'waitForSerial' },
+    { action: 'waitMs', ms: 0 },
+  ];
+  const r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.errors.length, 6);
+});
+
+test('拒绝未知断言类型与缺失字段', () => {
+  const c = validCase();
+  c.assertions = [{ type: 'snapshot' }, { type: 'serial' }, { type: 'bleWrite' }];
+  const r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('未知 type')));
+  assert.ok(r.errors.some((e) => e.includes('serial 需要')));
+  assert.ok(r.errors.some((e) => e.includes('bleWrite 需要')));
+});
+
+test('setup/steps/assertions/teardown 必须存在且为数组', () => {
+  const c = validCase();
+  delete c.setup;
+  c.assertions = {};
+  const r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('setup')));
+  assert.ok(r.errors.some((e) => e.includes('assertions')));
+});
+
+test('非对象输入', () => {
+  assert.strictEqual(validateCase(null).ok, false);
+  assert.strictEqual(validateCase([]).ok, false);
+});

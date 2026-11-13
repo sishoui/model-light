@@ -162,6 +162,21 @@ function createBleClient(wxApi) {
   }
 
   /**
+   * §2.5 命令通道写 ...0001（令牌 REQ/GRANT/HEARTBEAT/PROBE_YES、工厂重置）。
+   * token-client 依赖 `ble.write(bytes)` 这个入口。
+   */
+  function writeCommand(bytes) {
+    return call(wxApi, 'writeBLECharacteristicValue', {
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_COMMAND,
+      value: bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      writeType: 'writeNoResponse',
+    });
+  }
+
+  /**
    * §2.2/§4：编排帧一律 writeNoResponse，串行不并行。
    * writeChain 保证任意时刻只有一个 write 在飞。
    */
@@ -239,6 +254,7 @@ function createBleClient(wxApi) {
     onSequenceNotify,
     writeSequence,
     writeRealtime,
+    write: writeCommand,
     onOtaNotify,
     writeOta,
     negotiateChunkSize,
