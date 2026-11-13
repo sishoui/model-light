@@ -71,6 +71,7 @@ EXIT_HTTP_BIND_FAILED = 7
 
 WRITE_TIMEOUT_S = 5.0
 RECONNECT_TIMEOUT_S = 15.0
+DTR_RESET_PULSE_S = 0.1  # DTR 复位脉冲半周期（SerialMonitor.open 打开串口后触发设备重 boot）
 
 # ESP32 启动日志特征（#79 调试日志固件）：app 横幅 / 广播行 / IDF bootloader。
 # 用它确认串口对面真的是刚启动的 ESP32，而不是旧固件的周期性 status push。
@@ -159,23 +160,37 @@ class SerialMonitor:
 
     @classmethod
     def open(cls, port: str, *, baudrate: int = 115200, buffer_lines: int = 2000) -> "SerialMonitor":
-        """打开真实串口；失败抛 SerialOpenError（由 serve() 转为明确报错退出）。"""
+        """打开真实串口；失败抛 SerialOpenError（由 serve() 转为明确报错退出）。
+
+        打开后对 USB Serial/JTAG 发一次 DTR 复位脉冲，设备重 boot（#e2e 回归
+        修复，见 test/e2e/README.md）。
+        """
         try:
             import serial  # pyserial，延迟导入（无串口环境下 import daemon 仍可用）
         except ImportError as exc:  # pragma: no cover - 环境缺失
             raise SerialOpenError("缺少 pyserial：pip install pyserial") from exc
         try:
             ser = serial.Serial(port, baudrate=baudrate, timeout=0.2)
-            # USB Serial/JTAG（ESP32-C3 原生 USB）：DTR 复位脉冲让设备重 boot，
-            # 保证 daemon 一连上串口就能在健康检查窗口内看到 boot 日志——
-            # 否则设备静默运行时 _boot_seen 永远 False，健康检查 60 s 超时（#e2e 回归）。
-            # 与 idf.py monitor 的连接行为一致：连上即复位，日志从 boot 开始。
-            ser.dtr = False
-            time.sleep(0.1)
-            ser.dtr = True
         except Exception as exc:
             raise SerialOpenError(
                 f"无法打开串口 {port}（可能被其他进程占用或设备未连接）: {exc}"
+            ) from exc
+        # USB Serial/JTAG（ESP32-C3 原生 USB）：DTR 复位脉冲让设备重 boot，
+        # 保证 daemon 一连上串口就能在健康检查窗口内看到 boot 日志——
+        # 否则设备静默运行时 _boot_seen 永远 False，健康检查 60 s 超时（#e2e 回归）。
+        # 与 idf.py monitor 的连接行为一致：连上即复位，日志从 boot 开始。
+        # 脉冲失败必须关闭已打开的串口（防句柄泄漏），并报独立错误。
+        try:
+            ser.dtr = False
+            time.sleep(DTR_RESET_PULSE_S)
+            ser.dtr = True
+        except Exception as exc:
+            try:
+                ser.close()
+            except Exception:
+                pass
+            raise SerialOpenError(
+                f"串口 {port} 已打开但 DTR 复位脉冲失败: {exc}"
             ) from exc
         return cls(ser, port=port, buffer_lines=buffer_lines)
 

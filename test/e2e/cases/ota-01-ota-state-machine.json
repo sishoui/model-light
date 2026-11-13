@@ -2,7 +2,7 @@
   "id": "ota-01",
   "name": "OTA-01 协议状态机端到端：页面真实编码 → BEGUN/SENDING/COMMITTING/DONE → 重启进最小合法镜像",
   "skip": {
-    "reason": "live 实测：页面真实编码路径经 mock 桥（wx.request 串行转发）传约 70 片后 ACK 停止、写入退化到 5 s/次（daemon WRITE_TIMEOUT_S 节奏），COMMIT 等不到——mock 桥吞吐瓶颈，不是协议/固件问题（OTA 协议已被 host/ble_suite T6–T10 与 #92 真镜像 551 KB 往返验证）。恢复路径见 #95（daemonWrite 预编码帧用例或 mock 桥批量转发）"
+    "reason": "mock 桥吞吐瓶颈：页面编码路径传约 70 片后 ACK 停止、COMMIT 等不到（协议本身已被 host/ble_suite T6–T10 与 #92 真镜像往返验证）。恢复路径见 #95。"
   },
   "setup": [
     {

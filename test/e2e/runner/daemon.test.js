@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { daemonCliArgs, daemonHealthy, SERIAL_BOOT_RE } = require('./lib/daemon');
+const {
+  daemonCliArgs,
+  daemonHealthy,
+  serialBootTimeoutMessage,
+  SERIAL_BOOT_RE,
+} = require('./lib/daemon');
 
 test('daemonCliArgs 默认单 daemon：COM6 + 19000，无 --no-serial', () => {
   const args = daemonCliArgs({
@@ -62,4 +67,12 @@ test('daemonHealthy noSerial 只看 BLE（无串口字段）', () => {
   const ok = { ok: true, ble: { connected: true }, serial: null };
   assert.strictEqual(daemonHealthy(ok, { noSerial: true }), true);
   assert.strictEqual(daemonHealthy({ ok: true, ble: { connected: false }, serial: null }, { noSerial: true }), false);
+});
+
+test('serialBootTimeoutMessage 归因：已发 DTR 复位脉冲，仍无 boot 日志 → download mode 或固件非调试日志版', () => {
+  const msg = serialBootTimeoutMessage('COM6');
+  assert.ok(msg.includes('COM6'));
+  assert.ok(msg.includes('DTR 复位脉冲'));
+  assert.ok(msg.includes('download mode'));
+  assert.ok(msg.includes('非调试日志'));
 });

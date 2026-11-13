@@ -168,7 +168,8 @@ Assertion（`type` 之一）：
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
   发 REQ_TOKEN。断言串口 `token released` / `token holder 0 -> N`、GRANT outcome 0/1
   与两端状态帧的 per-connection `tokenHolder`（A=2、B=1）。
-- `ota-01-ota-state-machine.json`（#86）：OTA 协议状态机端到端。页面真实编码路径
+- `ota-01-ota-state-machine.json`（#86，**skip**：mock 桥吞吐瓶颈，恢复路径 #95）：
+  OTA 协议状态机端到端。页面真实编码路径
   （discover → 设备页 requestToken → OTA 页 chooseFirmware → startUpgrade，
   fixture hex 经 `wx.chooseMessageFile`/`getFileSystemManager` 等价桩注入）驱动
   BEGIN/DATA/COMMIT；传输期间每 5 s 一帧 0001 写 "15" 心跳。断言串口
@@ -218,7 +219,7 @@ Assertion（`type` 之一）：
 
 ## 已知规格偏离
 
-本目录的 E2E 实现与原始票/规格有三处有意偏离，均已在上文对应小节展开，这里集中列出：
+本目录的 E2E 实现与原始票/规格有五处有意偏离，均已在上文对应小节展开，这里集中列出：
 
 - **OTA fixture 用最小合法 app，不是 1 KB dummy**（#92/#86）：`esp_ota_end()` 会校验
   ESP-IDF 镜像的 SHA256/CRC，随机或截断字节只能在 `COMMIT` 阶段失败并回滚，覆盖不到
@@ -228,11 +229,18 @@ Assertion（`type` 之一）：
 - **cloud-mock 替代真实后端**（#87）：AUTH/CLOUD/NET 用例默认拦截 `/v1/*`，构造 JWT、
   备份、401、500、网络错误与延迟，保证 hermetic（无 DB / AppSecret / 外网）。真实后端
   只做手工/可选验证；mock 不校验签名/CRC/限流，不替代后端单测。
+- **OTA-01 因 mock 桥吞吐瓶颈 skip**（#95）：页面编码路径经 mock 桥（wx.request
+  串行转发）传约 70 片后 ACK 停止、COMMIT 等不到；OTA 协议本身已被 host/ble_suite
+  T6–T10 与 #92 真镜像往返验证。恢复路径见 #95（daemonWrite 预编码帧用例或 mock
+  桥批量转发）。
 - **BLE-06 因单蓝牙适配器 skip**（#85）：Windows 对同一 BLE 外设同一时刻只维持一个
   GATT 会话，本机无法建第二条真实链路；用例标记 `skip`，硬件就绪后 `--run-skipped`。
 - **daemon 就绪判定要求 boot 日志**（本轮 code review 修复）：`/api/health` 的
   `serial.boot` 只在看到 `boot: Loaded app from partition` / `model-light F3 render loop`
   / `advertising as` 时为真，避免旧固件的周期 `status push` 让 runner 误判设备在线。
+  daemon 打开 COM6 时会对 USB Serial/JTAG 发一次 DTR 复位脉冲（设备重 boot），boot
+  日志由脉冲保证出现；若脉冲后仍无 boot 日志，设备可能在 download mode 或固件
+  非调试日志版（#79）。
 
 ## 启动时机与 AUTH-01
 
@@ -273,9 +281,12 @@ ble-mock → cloud-mock → 重扫后，用例的 setup 再显式触发登录/�
   不能绕过（bleak WinRT 仍需设备在广播或已缓存）。
 - **cloud-mock 是测试替身**：它不验证签名/CRC/限流，只覆盖小程序侧策略。后端
   行为由 `api/test/*.e2e.spec.ts` 与 `api` 单测覆盖。
-- `ota-01` 会通过 OTA 刷 fixture 固件并让设备重启（fixture 无 BLE），跑完必须
-  重刷正式固件。本机验收默认不跑 ota-01（遵守“不刷固件”约束）；需要时用
-  `--case ota-01` 单独跑，并按 `test/e2e/ota-fixture/README.md` 收尾。
+- **daemon 打开 COM6 会发 DTR 复位脉冲，设备重 boot——daemon 启动 = 设备重启**，
+  每条用例都从干净状态开始（boot 日志也由该脉冲保证出现）。
+- `ota-01` 标记 `skip`（mock 桥吞吐瓶颈，恢复路径见 #95）：强制恢复后用
+  `--case ota-01 --run-skipped` 跑；会通过 OTA 刷 fixture 固件并让设备重启
+  （fixture 无 BLE），跑完必须重刷正式固件，并按
+  `test/e2e/ota-fixture/README.md` 收尾。
 
 ## 本轮 E2E 发现并修掉的小程序缺陷（#87）
 

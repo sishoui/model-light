@@ -16,6 +16,7 @@ test/e2e/daemon 单元测试（无硬件，headless 必须全绿）。
 
 import asyncio
 import json
+import sys
 import threading
 import time
 import urllib.error
@@ -26,6 +27,7 @@ import pytest
 
 import daemon as daemon_mod
 from daemon import DaemonCore
+from daemon import SerialMonitor, SerialOpenError
 
 
 # --------------------------------------------------------------------- 测试替身
@@ -682,6 +684,105 @@ class TestSerialMonitor:
         assert wait_line_count(monitor, 2)
         assert monitor.snapshot()["boot"] is True
         monitor.close()
+
+
+# =================================================================== 切片 3b
+# SerialMonitor.open：DTR 复位脉冲序列（#e2e 回归：打开即复位，boot 日志可依赖）。
+# 用 sys.modules 注入伪 serial 模块，不触碰真实串口。
+
+
+class TestSerialOpenPulse:
+    @staticmethod
+    def _install_fake_serial(monkeypatch, port_obj):
+        """把 sys.modules['serial'] 换成只返回 port_obj 的伪模块。"""
+
+        class FakeSerialModule:
+            @staticmethod
+            def Serial(port, baudrate, timeout):
+                return port_obj
+
+        monkeypatch.setitem(sys.modules, "serial", FakeSerialModule())
+
+    def test_dtr_pulse_sequence_false_then_true(self, monkeypatch):
+        """打开后 DTR 序列为 False→(sleep DTR_RESET_PULSE_S)→True，终态 True。"""
+        dtr_events = []
+
+        class FakePort:
+            def __init__(self):
+                self.is_open = True
+                self.closed = False
+                self._dtr = True
+
+            @property
+            def dtr(self):
+                return self._dtr
+
+            @dtr.setter
+            def dtr(self, value):
+                self._dtr = value
+                dtr_events.append(value)
+
+            def close(self):
+                self.closed = True
+                self.is_open = False
+
+        port = FakePort()
+        self._install_fake_serial(monkeypatch, port)
+        sleeps = []
+        monkeypatch.setattr(daemon_mod.time, "sleep", sleeps.append)
+
+        monitor = SerialMonitor.open("COMTEST", buffer_lines=10)
+
+        assert dtr_events == [False, True]  # 复位脉冲：先拉低再恢复（本机实测有效序列）
+        assert port.dtr is True  # 终态 True
+        assert sleeps == [daemon_mod.DTR_RESET_PULSE_S]
+        assert monitor.port == "COMTEST"
+        assert port.closed is False
+
+    def test_pulse_failure_closes_port_and_reports_independent_error(self, monkeypatch):
+        """脉冲失败：先 close() 防句柄泄漏，再报独立错误（不是「无法打开串口」）。"""
+
+        class ExplodingDtrPort:
+            def __init__(self):
+                self.is_open = True
+                self.closed = False
+
+            @property
+            def dtr(self):
+                return True
+
+            @dtr.setter
+            def dtr(self, value):
+                raise OSError("device disconnected")
+
+            def close(self):
+                self.closed = True
+                self.is_open = False
+
+        port = ExplodingDtrPort()
+        self._install_fake_serial(monkeypatch, port)
+        monkeypatch.setattr(daemon_mod.time, "sleep", lambda s: None)
+
+        with pytest.raises(SerialOpenError) as excinfo:
+            SerialMonitor.open("COMTEST")
+
+        assert port.closed is True  # 脉冲失败路径关闭已打开的串口，防泄漏
+        assert "DTR 复位脉冲失败" in str(excinfo.value)
+        assert "无法打开串口" not in str(excinfo.value)
+
+    def test_open_failure_reports_open_error(self, monkeypatch):
+        """serial.Serial 本身抛错：报「无法打开串口」（与脉冲失败归因分开）。"""
+
+        class FailingSerialModule:
+            @staticmethod
+            def Serial(port, baudrate, timeout):
+                raise OSError("could not open port")
+
+        monkeypatch.setitem(sys.modules, "serial", FailingSerialModule())
+
+        with pytest.raises(SerialOpenError) as excinfo:
+            SerialMonitor.open("COMTEST")
+        assert "无法打开串口" in str(excinfo.value)
 
 
 # =================================================================== 切片 4

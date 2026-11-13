@@ -74,6 +74,16 @@ function daemonHealthy(health, { noSerial = false } = {}) {
 }
 
 /**
+ * 串口已开但 boot 日志未见的归因文案（健康检查超时报错用，纯函数，单测覆盖）。
+ * daemon 打开串口时已发 DTR 复位脉冲（设备应重 boot 并打印 boot 日志），
+ * 脉冲后仍未见只可能是 download mode 或固件非调试日志版本。
+ */
+function serialBootTimeoutMessage(port) {
+  return `串口 ${port} 已打开且已发 DTR 复位脉冲，但仍未见 ESP32 boot 日志：`
+    + '设备可能进入 download mode 或固件非调试日志版本';
+}
+
+/**
  * 启动 daemon 并等 /api/health 就绪（ble 已连接 + 串口已开 + 串口有日志）。
  * @returns {Promise<{ proc, baseUrl, http, output(): string, stop(): Promise<void> }>}
  */
@@ -146,7 +156,7 @@ async function startDaemon({
         };
       } else if (!noSerial && health && health.ok === true && health.ble && health.ble.connected
         && health.serial && health.serial.open && health.serial.boot !== true) {
-        lastError = new Error(`串口 ${health.serial.port} 打开但未见 ESP32 boot 日志（设备未在线或为旧固件）`);
+        lastError = new Error(serialBootTimeoutMessage(health.serial.port));
       } else {
         lastError = new Error(`/api/health 未就绪：${JSON.stringify(health)}`);
       }
@@ -163,6 +173,7 @@ module.exports = {
   startDaemon,
   daemonCliArgs,
   daemonHealthy,
+  serialBootTimeoutMessage,
   ensureAsciiJunction,
   junctionPointsTo,
   SERIAL_BOOT_RE,
