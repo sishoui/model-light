@@ -83,7 +83,28 @@ test('report 落在指定目录且包含断言明细', async () => {
   const dir = tmpDir();
   const r = await runCase(baseCase(), { session: fakeSession(), reportsDir: dir });
   const files = fs.readdirSync(dir);
-  assert.strictEqual(files.length, 1);
+  assert.strictEqual(files.length, 2); // JSON + JUnit XML
+  assert.ok(files.some((f) => f.endsWith('.json')));
+  assert.ok(files.some((f) => f.endsWith('.junit.xml')));
   assert.ok(files[0].startsWith('unit-'));
   assert.strictEqual(r.report.assertions[0].type, 'serial');
+  assert.ok(r.junitPath.endsWith('.junit.xml'));
+});
+
+test('断言失败 → JUnit XML 带 failure 元素与实际值', async () => {
+  const s = fakeSession({ serialAssert: async () => ({ ok: true, matched: false, count: 0, lines: [] }) });
+  const r = await runCase(baseCase(), { session: s, reportsDir: tmpDir() });
+  const xml = fs.readFileSync(r.junitPath, 'utf8');
+  assert.match(xml, /<testsuite\b[^>]*failures="1"/);
+  assert.match(xml, /<failure\b[^>]*message="断言失败: serial"/);
+  assert.match(xml, /"count":\s*0/);
+});
+
+test('deps.junitDir 指定时 JUnit 单独落盘，JSON 仍在 reportsDir', async () => {
+  const reportsDir = tmpDir();
+  const junitDir = tmpDir();
+  const r = await runCase(baseCase(), { session: fakeSession(), reportsDir, junitDir });
+  assert.ok(r.junitPath.startsWith(junitDir));
+  assert.deepStrictEqual(fs.readdirSync(reportsDir), fs.readdirSync(reportsDir).filter((f) => f.endsWith('.json')));
+  assert.deepStrictEqual(fs.readdirSync(junitDir), [path.basename(r.junitPath)]);
 });
