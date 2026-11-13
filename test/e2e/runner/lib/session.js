@@ -123,19 +123,45 @@ class E2ESession {
   /**
    * 让 discover 页重扫一次（runner 注入 mock 后的准备动作）：automator 的
    * reLaunch 在本机环境坏，页面方法驱动等效于用户点“扫描设备”按钮。
+   * 上一次用例可能停在设备页：先 reLaunch 回 discover（tabBar 页）。
    */
-  async restartDiscoverScan({ timeoutMs = 15000 } = {}) {
-    return poll(async () => {
-      const st = await this.evaluate(`
-        const pages = getCurrentPages();
-        const p = pages[pages.length - 1];
-        if (!p || p.route !== 'pages/discover/discover') return null;
-        await p.stopScan();
-        await p.startScan();
-        return { scanning: p.data.scanning };
-      `);
-      return st && st.scanning ? st : null;
-    }, { timeoutMs, intervalMs: 1000, label: 'discover 重扫' });
+  async restartDiscoverScan({ timeoutMs = 30000 } = {}) {
+    try {
+      return await poll(async () => {
+        const st = await this.evaluate(`
+          const pages = getCurrentPages();
+          const p = pages[pages.length - 1];
+          if (!p) return null;
+          if (p.route !== 'pages/discover/discover') {
+            let relaunched = false;
+            await new Promise((resolve) => {
+              // discover 是 tabBar 页：优先 switchTab；失败再 reLaunch 兜底。
+              wx.switchTab({
+                url: '/pages/discover/discover',
+                success: () => { relaunched = true; resolve(); },
+                fail: () => {
+                  wx.reLaunch({
+                    url: '/pages/discover/discover',
+                    success: () => { relaunched = true; resolve(); },
+                    fail: resolve,
+                  });
+                },
+              });
+            });
+            return { route: p.route, scanning: !!p.data.scanning, relaunched };
+          }
+          await p.stopScan();
+          await p.startScan();
+          return { route: p.route, scanning: !!p.data.scanning, relaunched: false };
+        `);
+        if (st) {
+          console.log(`[e2e] discover 重扫：route=${st.route} scanning=${st.scanning} relaunched=${st.relaunched}`);
+        }
+        return st && st.scanning ? st : null;
+      }, { timeoutMs, intervalMs: 1000, label: 'discover 重扫' });
+    } catch (e) {
+      throw new Error(`discover 重扫失败：${e.message}${e.cause ? `；原因：${e.cause.message}` : ''}`);
+    }
   }
 
   /** 等待 selector 出现后 tap（默认取第一个）。 */
@@ -180,17 +206,45 @@ class E2ESession {
     return body;
   }
 
-  /** 轮询串口直到 pattern 命中。 */
-  async waitForSerial(pattern, timeoutMs = 10000) {
-    return poll(() => this.serialAssert(pattern).then((b) => (b.matched ? b : null)), {
-      timeoutMs,
-      intervalMs: 200,
-      label: `串口匹配 ${pattern}`,
-    });
+  /** 轮询串口直到 pattern 命中且 count ≥ minCount。 */
+  async waitForSerial(pattern, timeoutMs = 10000, minCount = 1) {
+    return poll(
+      () => this.serialAssert(pattern).then((b) => (b.matched && (b.count || 0) >= minCount ? b : null)),
+      {
+        timeoutMs,
+        intervalMs: 200,
+        label: `串口匹配 ${pattern}（≥${minCount}）`,
+      }
+    );
+  }
+
+  /** 等 daemon 的 BLE 链路就绪（/api/health.ble.connected）。 */
+  async waitForBleConnected(timeoutMs = 20000) {
+    return poll(
+      async () => {
+        const body = await this.http.get('/api/health');
+        return body && body.ok === true && body.ble && body.ble.connected ? body : null;
+      },
+      { timeoutMs, intervalMs: 200, label: 'daemon BLE 就绪' }
+    );
   }
 
   async status() {
     return this.http.get('/api/ble/status');
+  }
+
+  /** 轮询状态帧直到 received 且 fields 全部匹配（帧异步刷新）。 */
+  async waitForStatus(fields = {}, timeoutMs = 5000) {
+    return poll(
+      async () => {
+        const body = await this.status();
+        if (!body || body.ok !== true || !body.received) return null;
+        const parsed = body.parsed || {};
+        const ok = Object.entries(fields).every(([k, v]) => parsed[k] === v);
+        return ok ? body : null;
+      },
+      { timeoutMs, intervalMs: 200, label: `状态帧字段 ${JSON.stringify(fields)}` }
+    );
   }
 
   /** 等 daemon 收到 12 B 状态帧（hex 长度 24）。 */
@@ -209,6 +263,11 @@ class E2ESession {
   async capturedWrites() {
     const writes = await this.evaluate('return globalThis.__bleMock ? globalThis.__bleMock.getCapturedWrites() : [];');
     return Array.isArray(writes) ? writes : [];
+  }
+
+  /** mock 控制钩子：连接/扫描/MTU/订阅等状态快照。 */
+  async mockState() {
+    return this.evaluate('return globalThis.__bleMock ? globalThis.__bleMock.getState() : null;');
   }
 
   async disconnect() {

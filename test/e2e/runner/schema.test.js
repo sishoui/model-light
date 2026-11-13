@@ -12,6 +12,8 @@ function validCase() {
       { action: 'evaluate', code: 'return 1;', saveAs: 'one' },
       { action: 'navigate', url: 'pages/device/device?deviceId={{deviceId}}' },
       { action: 'waitForSerial', pattern: 'boot' },
+      { action: 'waitForStatus', fields: { tokenHolder: 0 } },
+      { action: 'waitForBle', timeoutMs: 5000 },
       { action: 'input', selector: 'input', value: 'x' },
     ],
     assertions: [
@@ -19,6 +21,7 @@ function validCase() {
       { type: 'console', level: 'error' },
       { type: 'statusFrame', hexLength: 12, fields: { mode: 0 } },
       { type: 'bleWrite', short: '0001', data: '10' },
+      { type: 'mockState', fields: { connected: true } },
     ],
     teardown: [],
   };
@@ -56,11 +59,12 @@ test('校验 action 专属字段', () => {
     { action: 'input', selector: 'input' },
     { action: 'evaluate' },
     { action: 'waitForSerial' },
+    { action: 'waitForStatus' },
     { action: 'waitMs', ms: 0 },
   ];
   const r = validateCase(c);
   assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.errors.length, 6);
+  assert.strictEqual(r.errors.length, 7);
 });
 
 test('拒绝未知断言类型与缺失字段', () => {

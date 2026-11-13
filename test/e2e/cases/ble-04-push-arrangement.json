@@ -1,0 +1,59 @@
+{
+  "id": "ble-04",
+  "name": "BLE-04 修改编排 → 推送 → arrangementVersion 递增",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "if (!globalThis.__bleMock) throw new Error('ble-mock 未注入'); return globalThis.__bleMock.getState();",
+      "saveAs": "mockState"
+    }
+  ],
+  "steps": [
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitMs", "ms": 3000 },
+    {
+      "action": "waitForStatus",
+      "fields": {},
+      "timeoutMs": 5000,
+      "saveAs": "initial"
+    },
+    {
+      "action": "waitForStatus",
+      "fields": { "tokenHolder": 0 },
+      "timeoutMs": 70000,
+      "saveAs": "tokenFree"
+    },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const t = await p.requestToken(); if (!t.granted) throw new Error('令牌获取失败: ' + (t.reason || 'unknown')); const st = globalThis.__bleMock.getState(); const hex = st.lastStatusHex || ''; const b = hex.match(/../g) ? hex.match(/../g).map((x) => parseInt(x, 16)) : []; const base = b.length >= 3 ? ((b[1] | (b[2] << 8)) & 0xffff) : 0; const arr = p.store.loadOrCreate(p._deviceName); arr.pins[0].length = 10; arr.pins[0].name = 'E2E'; arr.pins[0].groups = [{ ranges: [{ start: 0, end: 10, reverse: false }], stages: [{ durationMs: 1000, fadeInMs: 0, layers: [{ role: 0, effectId: 0, params: [255, 0, 0] }] }] }]; arr.version = (base + 1) & 0xffff; p.store.save(p._deviceName, arr); await p.pushArrangementAction(); return { base, version: arr.version, transferMessage: p.data.transferMessage || '', statusVersion: p._lastStatusFrame ? p._lastStatusFrame.arrangementVersion : null };",
+      "saveAs": "arrangement"
+    }
+  ],
+  "assertions": [
+    { "type": "serial", "pattern": "commit v{{arrangement.version}} chunks=", "minCount": 1 },
+    { "type": "statusFrame", "hexLength": 12, "fields": { "arrangementVersion": "{{arrangement.version}}" }, "timeoutMs": 5000 },
+    { "type": "bleWrite", "short": "0003", "data": "01" },
+    { "type": "mockState", "fields": { "connected": true } },
+    { "type": "console", "level": "error" }
+  ],
+  "teardown": [
+    {
+      "action": "evaluate",
+      "code": "if (globalThis.__bleMock) globalThis.__bleMock.dispose(); return true;"
+    }
+  ]
+}

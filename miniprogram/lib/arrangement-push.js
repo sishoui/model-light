@@ -13,12 +13,14 @@ function defaultSleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 /**
  * @param {object} ble BLE 客户端（write、onCommand、onStatusFrame，见 lib/ble.js）
- * @param {object} opts { chunkSize, payloadBytes, version, getStatusFrame(), timeoutMs, sleep(), token? }
+ * @param {object} opts { chunkSize, payloadBytes, version, getStatusFrame(), timeoutMs, sleep(), token?, transport? }
  *   token：可选的外部令牌客户端（页面持有同一实例时传入）。缺省时内部新建一个。
+ *   transport：可选的分片通道适配（write/onFrame，见 arrangement-sender）；
+ *   缺省直接用 ble（单测替身同形）。真机 ble 会话需传 writeSequence/onSequenceNotify 适配。
  * @returns {{ ok: boolean, reason?: string, versionConfirmed?: boolean, status?: number }}
  *   reason='no-token'：令牌握手失败（denied / busy / timeout，见 detail.reason）。
  */
-async function pushArrangement(ble, { chunkSize, payloadBytes, version, getStatusFrame = () => null, timeoutMs = 10000, sleep = defaultSleep, token }) {
+async function pushArrangement(ble, { chunkSize, payloadBytes, version, getStatusFrame = () => null, timeoutMs = 10000, sleep = defaultSleep, token, transport }) {
   // §2.4：编排写需要令牌——推送前取令牌，成功后释放，失败如实报错不静默。
   const client = token || createTokenClient(ble);
   const t = await client.requestToken();
@@ -26,7 +28,7 @@ async function pushArrangement(ble, { chunkSize, payloadBytes, version, getStatu
     return { ok: false, reason: 'no-token', detail: t.reason };
   }
   try {
-    const sender = createArrangementSender(ble, { chunkSize });
+    const sender = createArrangementSender(transport || ble, { chunkSize });
   const result = await sender.send({
     payloadVersion: 1,
     protoMajor: PROTO_MAJOR,

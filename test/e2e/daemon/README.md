@@ -1,9 +1,11 @@
 # E2E daemon（ticket #81）
 
 localhost HTTP 服务器：接收小程序 mock（wx.* BLE API 截获层）发来的 BLE 写入，
-经 bleak 转发到 ESP32-C3；订阅 status 特征 notify 缓存最近一帧；后台线程
+经 bleak 转发到 ESP32-C3；订阅 status / command(0001) / seqblock(0003) 特征
+notify，缓存最近一帧状态并把命令/分片下行放入帧队列供 mock 轮询；后台线程
 pyserial 读 COM6 做正则断言。连接/通知接线复用 `host/ble_suite` 的
-`BleakBleTransport`（子类 `DaemonBleTransport` 补按特征写入与特征清单）。
+`BleakBleTransport`（子类 `DaemonBleTransport` 补按特征写入、额外 notify 与
+断开重连）。
 
 ## 启动
 
@@ -31,6 +33,8 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
 | --- | --- | --- | --- |
 | `/ble/write` | POST | `{"characteristic": "0001".."0006", "data": "<hex>"}` | `{"ok": true, "characteristic": "<uuid>", "written": <n>}` |
 | `/api/ble/status` | GET | — | `{"ok": true, "received": bool, "ts", "hex", "parsed": {mode, arrangementVersion, ...}}` |
+| `/api/ble/frames` | GET | `?since=<seq>` | `{"ok": true, "frames": [{seq, char, short, hex, ts}], "next": <seq>}` |
+| `/api/ble/reconnect` | POST | —（空体可） | `{"ok": true, "connected": bool}`（断开旧 client → 等底层链路释放 → 重连并重新订阅 notify） |
 | `/api/serial/assert` | POST | `{"pattern": "<regex>"}` | `{"ok": true, "matched": bool, "count", "lines": [...]}` |
 | `/api/serial/clear` | POST | —（空体可） | `{"ok": true, "cleared": <n>}` |
 | `/api/health` | POST/GET | — | `{"ok": true, "ble": {...}, "serial": {...}, "uptimeSeconds"}` |
@@ -39,7 +43,12 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
   写入按特征能力选 `response`：realtime/seqblock 只支持 write-without-response。
 - status 解析复用 `host/status_frame.py`（spec §2.9）：mode / arrangementVersion /
   arrangementCrc32 / brightnessLimit / tokenHolder / errorCode / temperature / flags。
-- 错误响应统一为 `{"ok": false, "error": "..."}`：400 参数错 / 502 BLE 写入失败 /
+- command(0001) / seqblock(0003) notify 进入帧队列（seq 单调递增）；mock 用
+  `GET /api/ble/frames?since=N` 取增量，驱动 token GRANT / arrangement ACK。
+- `/api/ble/reconnect` 用于 #84 断连重连：bleak/WinRT 的 disconnect 可能提前
+  返回，实现先丢掉旧 client、等 6 s 让底层链路释放，再 connect（固件侧才会出现
+  第二次 `ble: connect`）。
+- 错误响应统一为 `{"ok": false, "error": "..."}`：400 参数错 / 502 BLE 写入或重连失败 /
   503 BLE 未连接 / 404 未知路径。
 
 ## curl 示例（硬件在环）

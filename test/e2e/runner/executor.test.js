@@ -15,6 +15,8 @@ function fakeSession(overrides = {}) {
     input: overrides.input || rec('input'),
     evaluate: overrides.evaluate || rec('evaluate'),
     waitForSerial: overrides.waitForSerial || rec('waitForSerial'),
+    waitForStatus: overrides.waitForStatus || rec('waitForStatus'),
+    waitForBleConnected: overrides.waitForBleConnected || rec('waitForBleConnected'),
     ...overrides,
   };
 }
@@ -48,7 +50,31 @@ test('evaluate 返回值写入 saveAs', async () => {
 test('waitForSerial 使用默认 10 s 超时', async () => {
   const s = fakeSession();
   await runStep({ action: 'waitForSerial', pattern: 'mtu 256' }, s, {});
-  assert.deepStrictEqual(s.calls[0], ['waitForSerial', 'mtu 256', 10000]);
+  assert.deepStrictEqual(s.calls[0], ['waitForSerial', 'mtu 256', 10000, 1]);
+});
+
+test('waitForSerial 插值 pattern 并传 minCount', async () => {
+  const s = fakeSession();
+  await runStep({ action: 'waitForSerial', pattern: 'commit v{{arr.version}}', minCount: 2, timeoutMs: 3000 }, s, { arr: { version: 2 } });
+  assert.deepStrictEqual(s.calls[0], ['waitForSerial', 'commit v2', 3000, 2]);
+});
+
+test('waitForStatus 轮询字段并把帧写入 saveAs', async () => {
+  const calls = [];
+  const s = fakeSession({
+    waitForStatus: async (...args) => { calls.push(args); return { parsed: { tokenHolder: 0 } }; },
+  });
+  const ctx = {};
+  await runStep({ action: 'waitForStatus', fields: { tokenHolder: 0 }, timeoutMs: 1000, saveAs: 'st' }, s, ctx);
+  assert.deepStrictEqual(calls[0], [{ tokenHolder: 0 }, 1000]);
+  assert.deepStrictEqual(ctx.st, { parsed: { tokenHolder: 0 } });
+});
+
+test('waitForBle 调 session 等 daemon BLE 就绪', async () => {
+  const calls = [];
+  const s = fakeSession({ waitForBleConnected: async (...args) => { calls.push(args); return { ok: true }; } });
+  await runStep({ action: 'waitForBle', timeoutMs: 3000 }, s, {});
+  assert.deepStrictEqual(calls[0], [3000]);
 });
 
 test('waitMs 真的等待', async () => {

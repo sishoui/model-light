@@ -7,8 +7,8 @@
 // 校验只做结构检查，不执行；runner 启动时先校验，任何一条不合法即环境错误
 // （退出码 2），避免半跑一条坏用例。
 
-const ACTIONS = new Set(['navigate', 'tap', 'input', 'evaluate', 'waitForSerial', 'waitMs']);
-const ASSERTION_TYPES = new Set(['serial', 'console', 'statusFrame', 'bleWrite']);
+const ACTIONS = new Set(['navigate', 'tap', 'input', 'evaluate', 'waitForSerial', 'waitForStatus', 'waitForBle', 'waitMs']);
+const ASSERTION_TYPES = new Set(['serial', 'console', 'statusFrame', 'bleWrite', 'mockState']);
 const CONSOLE_LEVELS = new Set(['log', 'info', 'warn', 'error', 'debug']);
 
 const isNonEmptyString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -44,6 +44,22 @@ function validateStep(step, where, errors) {
       break;
     case 'waitForSerial':
       if (!isNonEmptyString(step.pattern)) errors.push(`${where}: waitForSerial 需要非空 pattern`);
+      if (step.timeoutMs != null && !isPositiveNumber(step.timeoutMs)) {
+        errors.push(`${where}: timeoutMs 必须是正数`);
+      }
+      if (step.minCount != null && !isPositiveNumber(step.minCount)) {
+        errors.push(`${where}: minCount 必须是正数`);
+      }
+      break;
+    case 'waitForStatus':
+      if (step.fields == null || typeof step.fields !== 'object' || Array.isArray(step.fields)) {
+        errors.push(`${where}: waitForStatus 需要 fields 对象`);
+      }
+      if (step.timeoutMs != null && !isPositiveNumber(step.timeoutMs)) {
+        errors.push(`${where}: timeoutMs 必须是正数`);
+      }
+      break;
+    case 'waitForBle':
       if (step.timeoutMs != null && !isPositiveNumber(step.timeoutMs)) {
         errors.push(`${where}: timeoutMs 必须是正数`);
       }
@@ -97,6 +113,11 @@ function validateAssertion(assertion, where, errors) {
       }
       if (assertion.data != null && !isNonEmptyString(assertion.data)) {
         errors.push(`${where}: data 必须是非空 hex 字符串`);
+      }
+      break;
+    case 'mockState':
+      if (assertion.fields != null && (typeof assertion.fields !== 'object' || Array.isArray(assertion.fields))) {
+        errors.push(`${where}: mockState fields 必须是对象`);
       }
       break;
     default:

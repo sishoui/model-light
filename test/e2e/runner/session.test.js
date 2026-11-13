@@ -92,6 +92,23 @@ test('restartDiscoverScan 驱动页面方法 stopScan→startScan', async () => 
   assert.ok(calls[0].includes('await p.startScan()'));
 });
 
+test('restartDiscoverScan 不在 discover 页时先 reLaunch 再重扫', async () => {
+  const calls = [];
+  const mini = {
+    evaluate: async (src) => {
+      calls.push(src);
+      if (calls.length === 1) return null; // 触发 reLaunch
+      return { scanning: true };
+    },
+  };
+  const s = new E2ESession({ mini, http: {}, mockSource: '' });
+  const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
+  assert.deepStrictEqual(st, { scanning: true });
+  assert.ok(calls[0].includes("wx.switchTab({"));
+  assert.ok(calls[0].includes("wx.reLaunch({"));
+  assert.ok(calls[0].includes("url: '/pages/discover/discover'"));
+});
+
 test('normalizeConsoleEntry 处理多种形态', () => {
   assert.deepStrictEqual(normalizeConsoleEntry('hello'), { type: 'log', text: 'hello', raw: 'hello' });
   const e = normalizeConsoleEntry({ type: 'error', args: [{ value: 'boom' }] });
@@ -138,6 +155,51 @@ test('waitForSerial 轮询到 matched', async () => {
   const body = await s.waitForSerial('x', 2000);
   assert.strictEqual(body.matched, true);
   assert.strictEqual(n, 2);
+});
+
+test('waitForSerial 轮询到 minCount', async () => {
+  let n = 0;
+  const http = {
+    post: async () => (++n < 2
+      ? { ok: true, matched: true, count: 1, lines: ['x'] }
+      : { ok: true, matched: true, count: 2, lines: ['x', 'x'] }),
+  };
+  const s = new E2ESession({ mini: {}, http, mockSource: '' });
+  const body = await s.waitForSerial('x', 2000, 2);
+  assert.strictEqual(body.count, 2);
+  assert.strictEqual(n, 2);
+});
+
+test('waitForBleConnected 轮询 /api/health 直到 ble.connected', async () => {
+  let n = 0;
+  const bodies = [
+    { ok: true, ble: { connected: false } },
+    { ok: true, ble: { connected: true } },
+  ];
+  const http = { get: async () => bodies[n++] };
+  const s = new E2ESession({ mini: {}, http, mockSource: '' });
+  const body = await s.waitForBleConnected(2000);
+  assert.strictEqual(body.ble.connected, true);
+  assert.strictEqual(n, 2);
+});
+
+test('waitForStatus 轮询到字段匹配', async () => {
+  let n = 0;
+  const frames = [
+    { ok: true, received: true, hex: '00', parsed: { tokenHolder: 2 } },
+    { ok: true, received: true, hex: '00', parsed: { tokenHolder: 0 } },
+  ];
+  const http = { get: async () => frames[n++] };
+  const s = new E2ESession({ mini: {}, http, mockSource: '' });
+  const body = await s.waitForStatus({ tokenHolder: 0 }, 2000);
+  assert.strictEqual(body.parsed.tokenHolder, 0);
+  assert.strictEqual(n, 2);
+});
+
+test('mockState 透传 mock 控制钩子结果', async () => {
+  const mini = { evaluate: async () => ({ connected: true, scanCount: 1 }) };
+  const s = new E2ESession({ mini, http: {}, mockSource: '' });
+  assert.deepStrictEqual(await s.mockState(), { connected: true, scanCount: 1 });
 });
 
 test('capturedWrites 透传 mock 控制钩子结果', async () => {

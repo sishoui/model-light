@@ -122,14 +122,15 @@ function createBleClient(wxApi) {
   function onCommandNotify(callback) {
     const handler = (res) => callback(new Uint8Array(res.value));
     wxApi.onBLECharacteristicValueChange(handler);
-    return call(wxApi, 'notifyBLECharacteristicValueChange', {
+    call(wxApi, 'notifyBLECharacteristicValueChange', {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId: CHAR_COMMAND,
       state: true,
-    }).then(() => () => {
+    }).catch(() => {});
+    return () => {
       wxApi.offBLECharacteristicValueChange(handler);
-    });
+    };
   }
 
   /**
@@ -139,14 +140,15 @@ function createBleClient(wxApi) {
   function onSequenceNotify(callback) {
     const handler = (res) => callback(new Uint8Array(res.value));
     wxApi.onBLECharacteristicValueChange(handler);
-    return call(wxApi, 'notifyBLECharacteristicValueChange', {
+    call(wxApi, 'notifyBLECharacteristicValueChange', {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId: CHAR_SEQUENCE,
       state: true,
-    }).then(() => () => {
+    }).catch(() => {});
+    return () => {
       wxApi.offBLECharacteristicValueChange(handler);
-    });
+    };
   }
 
   /** §2.3：实时参数包写 ...0002（writeNoResponse，单帧 ≤ 9 B，无 ACK） */
@@ -214,14 +216,15 @@ function createBleClient(wxApi) {
   function onOtaNotify(callback) {
     const handler = (res) => callback(new Uint8Array(res.value));
     wxApi.onBLECharacteristicValueChange(handler);
-    return call(wxApi, 'notifyBLECharacteristicValueChange', {
+    call(wxApi, 'notifyBLECharacteristicValueChange', {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId: CHAR_OTA,
       state: true,
-    }).then(() => () => {
+    }).catch(() => {});
+    return () => {
       wxApi.offBLECharacteristicValueChange(handler);
-    });
+    };
   }
 
   /** §3：OTA 固件字节写 ...0006（writeNoResponse；iOS 退化为带响应写也兼容） */

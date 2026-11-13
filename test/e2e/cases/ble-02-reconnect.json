@@ -1,0 +1,84 @@
+{
+  "id": "ble-02",
+  "name": "BLE-02 断连 → onAppShow 缓存直连（不重扫）",
+  "setup": [
+    {
+      "action": "evaluate",
+      "code": "if (!globalThis.__bleMock) throw new Error('ble-mock 未注入'); return globalThis.__bleMock.getState();",
+      "saveAs": "mockState"
+    }
+  ],
+  "steps": [
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+    },
+    { "action": "waitMs", "ms": 2000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "saveAs": "deviceInfo"
+    },
+    {
+      "action": "navigate",
+      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
+    },
+    { "action": "waitMs", "ms": 3000 },
+    {
+      "action": "waitForStatus",
+      "fields": {},
+      "timeoutMs": 5000,
+      "saveAs": "before"
+    },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p.requestToken(); return { granted: !!r.granted, reason: r.reason || '' };",
+      "saveAs": "tokenBefore"
+    },
+    { "action": "waitForSerial", "pattern": "rx chr=7c9f0001", "timeoutMs": 5000 },
+    {
+      "action": "evaluate",
+      "code": "const st = globalThis.__bleMock.getState(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { scanCount: st.scanCount, connectionCount: st.connectionCount, connected: !!p.data.connected };",
+      "saveAs": "beforeDisconnect"
+    },
+    {
+      "action": "evaluate",
+      "code": "return globalThis.__bleMock.debugDisconnect();",
+      "saveAs": "disconnectResult"
+    },
+    { "action": "waitMs", "ms": 500 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { connected: !!p.data.connected, reconnecting: !!p.data.reconnecting };",
+      "saveAs": "afterDisconnect"
+    },
+    {
+      "action": "evaluate",
+      "code": "getApp().onAppShow(); return true;",
+      "saveAs": "onAppShow"
+    },
+    { "action": "waitForSerial", "pattern": "ble: connect #", "timeoutMs": 20000, "minCount": 2 },
+    { "action": "waitForBle", "timeoutMs": 20000 },
+    { "action": "waitMs", "ms": 500 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p.requestToken(); return { granted: !!r.granted, reason: r.reason || '', connected: !!p.data.connected };",
+      "saveAs": "tokenAfter"
+    },
+    { "action": "waitForSerial", "pattern": "rx chr=7c9f0001", "timeoutMs": 5000, "minCount": 2 }
+  ],
+  "assertions": [
+    { "type": "serial", "pattern": "ble: connect #", "minCount": 2 },
+    { "type": "serial", "pattern": "rx chr=7c9f0001", "minCount": 2 },
+    { "type": "mockState", "fields": { "connected": true, "scanCount": "{{beforeDisconnect.scanCount}}" } },
+    { "type": "console", "level": "error" },
+    { "type": "bleWrite", "short": "0001", "data": "10", "minCount": 2 }
+  ],
+  "teardown": [
+    {
+      "action": "evaluate",
+      "code": "if (globalThis.__bleMock) globalThis.__bleMock.dispose(); return true;"
+    }
+  ]
+}

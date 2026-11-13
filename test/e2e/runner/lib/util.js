@@ -50,10 +50,25 @@ function interpolate(template, ctx) {
   });
 }
 
+/**
+ * 断言字段插值：整串就是一个 {{path}} 时保留原始类型（数字/布尔/对象），
+ * 其余按字符串模板替换。没有占位符时原样返回。
+ */
+function interpolateValue(value, ctx) {
+  if (typeof value !== 'string' || !value.includes('{{')) return value;
+  const m = value.match(/^\s*\{\{\s*([^}]+?)\s*\}\}\s*$/);
+  if (m) {
+    const resolved = resolvePath(ctx, m[1]);
+    if (resolved == null) throw new Error(`插值失败：上下文无 ${m[1]}`);
+    return resolved;
+  }
+  return interpolate(value, ctx);
+}
+
 /** 毫秒转人读时长（报告用）。 */
 function formatDuration(ms) {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-module.exports = { sleep, poll, resolvePath, interpolate, formatDuration };
+module.exports = { sleep, poll, resolvePath, interpolate, interpolateValue, formatDuration };

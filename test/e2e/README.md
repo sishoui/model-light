@@ -83,7 +83,9 @@ Step（`action` 之一）：
 | `tap` | `selector`、`timeoutMs`、`index` | 等元素出现后点击（automator Element.tap） |
 | `input` | `selector`、`value` | 输入框赋值 |
 | `evaluate` | `code`（函数体）、`args`、`saveAs` | DevTools 运行时执行；返回值可存 ctx |
-| `waitForSerial` | `pattern`（正则）、`timeoutMs` | 轮询 `/api/serial/assert` 直到命中 |
+| `waitForSerial` | `pattern`（正则，支持 `{{点路径}}` 插值）、`timeoutMs`、`minCount` | 轮询 `/api/serial/assert` 直到命中且 count ≥ minCount |
+| `waitForStatus` | `fields`、`timeoutMs`、`saveAs` | 轮询 `/api/ble/status` 直到帧字段全部匹配；帧存 ctx |
+| `waitForBle` | `timeoutMs` | 轮询 `/api/health` 直到 daemon BLE 链路 connected |
 | `waitMs` | `ms` | 等待 |
 
 Assertion（`type` 之一）：
@@ -92,8 +94,21 @@ Assertion（`type` 之一）：
 |---|---|---|
 | `serial` | `pattern`（正则）、`minCount` | daemon 串口缓冲命中 |
 | `console` | `level`（默认 error）、`pattern` | 指定级别无命中 |
-| `statusFrame` | `hexLength`（可选，字节数）、`fields`、`timeoutMs` | 轮询 `/api/ble/status` 直到收到帧且字段全部匹配（帧异步刷新，旧值先到会继续等） |
-| `bleWrite` | `short`/`characteristic`、`data`（hex 前缀） | mock `getCapturedWrites()` 命中 |
+| `statusFrame` | `hexLength`（可选，字节数）、`fields`、`timeoutMs` | 轮询 `/api/ble/status` 直到收到帧且字段全部匹配（帧异步刷新，旧值先到会继续等）；`fields` 值支持 `{{点路径}}` 插值 |
+| `bleWrite` | `short`/`characteristic`、`data`（hex 前缀）、`minCount` | mock `getCapturedWrites()` 命中（`short`/`data` 支持插值） |
+| `mockState` | `fields` | mock `getState()` 快照字段全部匹配（连接/扫描/连接次数等） |
+
+`evaluate` 的返回值可用 `saveAs` 存进 ctx；后续 `navigate.url`、`waitForSerial.pattern`、
+`statusFrame.fields`、`bleWrite.short/data`、`mockState.fields` 里的 `{{点路径}}` 会取 ctx 值
+（整串占位保留数字类型，例如 `arrangementVersion: "{{arr.version}}"`）。
+
+## 现有用例
+
+- `ble-01-scan-connect.json`：扫描 → 连接 → 状态帧 → 令牌请求。
+- `ble-02-reconnect.json`：debugDisconnect → 断连处理 → `onAppShow` 用缓存 deviceId
+  直连；断言固件侧出现第二次 `ble: connect #`、两次 REQ_TOKEN、mock 扫描次数不增。
+- `ble-04-push-arrangement.json`：等令牌空闲 → 改灯组/阶段（页面 store + encode）→
+  推送；断言串口 `commit v<base+1>`、状态帧 `arrangementVersion` 同步递增、编排写 ...0003。
 
 ## 已知边界
 

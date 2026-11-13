@@ -29,7 +29,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 # host/ 路径自举：脚本方式运行或 pytest 导入时都生效（ble_suite 包与
 # status_frame 模块都位于仓库根 host/ 下）。
@@ -69,6 +69,7 @@ EXIT_SERIAL_FAILED = 6
 EXIT_HTTP_BIND_FAILED = 7
 
 WRITE_TIMEOUT_S = 5.0
+RECONNECT_TIMEOUT_S = 15.0
 
 
 class ApiError(Exception):
@@ -266,6 +267,7 @@ class DaemonBleTransport(BleakBleTransport):
         *,
         device_name: str = "",
         status_char_uuid: str = CHR_STATUS,
+        reconnect_delay_s: float = 6.0,
     ) -> None:
         super().__init__(
             address,
@@ -275,6 +277,42 @@ class DaemonBleTransport(BleakBleTransport):
         self.device_name = device_name
         # address 可为 BLEDevice 或地址字符串；健康检查里输出 MAC 字符串。
         self.address = getattr(address, "address", None) or str(address)
+        # 断开后等待底层链路真正释放，再重连（WinRT 的 disconnect 提前返回）。
+        self.reconnect_delay_s = reconnect_delay_s
+        # 额外 notify 订阅（命令 0001 / 分片 0003）：connect 时一并开启。
+        self._extra_notify: dict[str, Callable[[bytes], None]] = {}
+
+    def set_extra_notify(self, callbacks: dict[str, Callable[[bytes], None]]) -> None:
+        """登记 connect/reconnect 后要订阅的额外特征通知。"""
+        self._extra_notify = dict(callbacks or {})
+
+    async def connect(self) -> None:
+        await super().connect()
+        assert self._client is not None
+        for char_uuid, cb in self._extra_notify.items():
+            await self._client.start_notify(
+                char_uuid, lambda _sender, data, _cb=cb: _cb(bytes(data))
+            )
+
+    async def reconnect(self) -> None:
+        """断开再连接（模拟 PC 蓝牙关闭再开）；额外 notify 自动重新订阅。
+
+        bleak/WinRT 的 disconnect() 可能在底层链路真正断开前就返回，紧接着
+        connect() 会复用旧链路（固件看不到第二次 connect）。这里显式丢掉旧
+        client 并留出断开窗口，确保固件侧出现 GAP disconnect → connect。
+        """
+        old = self._client
+        self._client = None
+        self._connected = False
+        if old is not None:
+            print(f"[daemon] reconnect: 断开旧 client（is_connected={getattr(old, 'is_connected', '?')}）", flush=True)
+            try:
+                await old.disconnect()
+                print(f"[daemon] reconnect: 旧 client 已 disconnect（is_connected={getattr(old, 'is_connected', '?')}）", flush=True)
+            except Exception as exc:
+                print(f"[daemon] reconnect: 旧 client disconnect 异常: {exc}", flush=True)
+        await asyncio.sleep(self.reconnect_delay_s)
+        await self.connect()
 
     @property
     def connected(self) -> bool:
@@ -354,11 +392,15 @@ class DaemonHttpHandler(BaseHTTPRequestHandler):
         return urlparse(self.path).path.rstrip("/") or "/"
 
     def do_GET(self) -> None:
-        path = self._route_path()
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
         if path == "/api/health":
             status, body = self.core.handle_health()
         elif path == "/api/ble/status":
             status, body = self.core.handle_ble_status()
+        elif path == "/api/ble/frames":
+            since = parse_qs(parsed.query).get("since", ["0"])[0]
+            status, body = self.core.handle_ble_frames(since)
         else:
             status, body = 404, {"ok": False, "error": f"未知路径: {path}"}
         self._send_json(status, body)
@@ -369,6 +411,7 @@ class DaemonHttpHandler(BaseHTTPRequestHandler):
             "/ble/write": self.core.handle_ble_write,
             "/api/serial/assert": self.core.handle_serial_assert,
             "/api/serial/clear": self.core.handle_serial_clear,
+            "/api/ble/reconnect": self.core.handle_ble_reconnect,
         }
         handler = routes.get(path)
         if handler is None:
@@ -445,6 +488,12 @@ async def serve(args: argparse.Namespace) -> int:
 
     # 传 BLEDevice 对象（而非地址字符串）：bleak WinRT 后端直连更可靠。
     transport = DaemonBleTransport(device, device_name=device_name)
+    core = DaemonCore(transport, monitor)
+    # 命令/分片下行通知转发给 mock（token GRANT / arrangement ACK）。
+    transport.set_extra_notify({
+        CHR_COMMAND: core.on_command_frame,
+        CHR_SEQBLOCK: core.on_seqblock_frame,
+    })
     try:
         print(f"[daemon] 连接 {device_name} ...", flush=True)
         await asyncio.wait_for(transport.connect(), timeout=args.connect_timeout)
@@ -471,7 +520,6 @@ async def serve(args: argparse.Namespace) -> int:
         )
     print(f"[daemon] 6 个特征齐全，已订阅 status notify（{CHR_STATUS}）", flush=True)
 
-    core = DaemonCore(transport, monitor)
     core.attach_loop(loop)
 
     try:
@@ -555,8 +603,31 @@ class DaemonCore:
         self._started_at = time.monotonic()
         self._status_lock = threading.Lock()
         self._latest_status: Optional[tuple[float, bytes]] = None
+        # 入站命令/分片通知队列：mock 轮询 /api/ble/frames?since=N 取增量。
+        self._frames: deque[dict] = deque(maxlen=2000)
+        self._frame_seq = 0
+        self._frame_lock = threading.Lock()
         # 订阅设备状态帧（传输层保证只分发 status 特征的通知）。
         self._ble.register_on_status(self.on_status_frame)
+
+    def _record_frame(self, char_uuid: str, frame: bytes) -> None:
+        with self._frame_lock:
+            self._frame_seq += 1
+            self._frames.append({
+                "seq": self._frame_seq,
+                "char": char_uuid,
+                "short": char_uuid[4:8],
+                "hex": bytes(frame).hex(),
+                "ts": time.time(),
+            })
+
+    def on_command_frame(self, frame: bytes) -> None:
+        """命令通道（0001）notify：GRANT / PROBE 等下行。"""
+        self._record_frame(CHR_COMMAND, frame)
+
+    def on_seqblock_frame(self, frame: bytes) -> None:
+        """编排分片通道（0003）notify：ACK / NAK 下行。"""
+        self._record_frame(CHR_SEQBLOCK, frame)
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -589,6 +660,32 @@ class DaemonCore:
             "hex": frame.hex(),
             "parsed": _parse_status_payload(frame),
         }
+
+    @_guard
+    def handle_ble_frames(self, since: int = 0) -> tuple[int, dict]:
+        """返回 seq > since 的命令/分片通知（mock 轮询增量）。"""
+        try:
+            since = int(since)
+        except (TypeError, ValueError):
+            raise ApiError(400, "since 必须是整数")
+        with self._frame_lock:
+            frames = [dict(f) for f in self._frames if f["seq"] > since]
+            next_seq = self._frame_seq
+        return 200, {"ok": True, "frames": frames, "next": next_seq}
+
+    @_guard
+    def handle_ble_reconnect(self, payload: Any = None) -> tuple[int, dict]:
+        """断开再连接真实 BLE 链路（模拟 PC 蓝牙关闭再开）。"""
+        if self._loop is None:
+            raise ApiError(500, "daemon 事件循环未就绪")
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._ble.reconnect(), self._loop)
+            future.result(timeout=RECONNECT_TIMEOUT_S)
+        except Exception as exc:
+            print(f"[daemon] BLE 重连失败: {exc!r}", flush=True)
+            raise ApiError(502, f"BLE 重连失败: {exc}")
+        print(f"[daemon] BLE 重连完成 connected={bool(getattr(self._ble, 'connected', False))}", flush=True)
+        return 200, {"ok": True, "connected": bool(getattr(self._ble, "connected", False))}
 
     # -- 健康检查 -------------------------------------------------------------
 

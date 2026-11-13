@@ -35,7 +35,20 @@ async function runStep(step, session, ctx) {
       return { value };
     }
     case 'waitForSerial': {
-      await session.waitForSerial(step.pattern, step.timeoutMs || 10000);
+      await session.waitForSerial(
+        interpolate(step.pattern, ctx),
+        step.timeoutMs || 10000,
+        step.minCount || 1
+      );
+      return;
+    }
+    case 'waitForStatus': {
+      const frame = await session.waitForStatus(step.fields || {}, step.timeoutMs || 5000);
+      if (step.saveAs) ctx[step.saveAs] = frame;
+      return { value: frame };
+    }
+    case 'waitForBle': {
+      await session.waitForBleConnected(step.timeoutMs || 20000);
       return;
     }
     case 'waitMs': {

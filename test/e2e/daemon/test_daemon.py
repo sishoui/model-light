@@ -44,12 +44,17 @@ class FakeBle:
         self.address = "AA:BB:CC:DD:EE:FF"
         self.writes = []  # [(uuid, bytes)]
         self.write_error = None  # 注入写入异常
+        self.reconnects = 0
         self._status_callbacks = []
 
     async def write_char(self, char_uuid, frame):
         if self.write_error is not None:
             raise self.write_error
         self.writes.append((char_uuid, bytes(frame)))
+
+    async def reconnect(self):
+        self.reconnects += 1
+        self.connected = True
 
     def register_on_status(self, cb):
         self._status_callbacks.append(cb)
@@ -291,6 +296,61 @@ class TestBleStatus:
         assert body["parsed"]["flags"] == 0x02
 
 
+# =================================================================== 切片 2b
+# GET /api/ble/frames：daemon 转发的命令（0001）/分片（0003）通知队列；
+# POST /api/ble/reconnect：模拟 PC 蓝牙关闭再开（#84 BLE-02）。
+
+
+class TestBleFrames:
+    def test_records_command_and_seqblock_frames_with_seq(self, core):
+        core.on_command_frame(bytes([0x14, 0x00, 0x00, 0x00]))
+        core.on_seqblock_frame(bytes([0x05, 0x00, 0x00, 0x00, 0x00, 0x00]))
+        status, body = core.handle_ble_frames(since=0)
+        assert status == 200
+        assert body["ok"] is True
+        assert body["next"] == 2
+        assert [f["short"] for f in body["frames"]] == ["0001", "0003"]
+        assert body["frames"][0]["hex"] == "14000000"
+        assert body["frames"][0]["char"] == daemon_mod.CHR_COMMAND
+
+    def test_since_returns_only_newer_frames(self, core):
+        core.on_command_frame(b"\x14")
+        core.on_command_frame(b"\x15")
+        status, body = core.handle_ble_frames(since=1)
+        assert status == 200
+        assert [f["hex"] for f in body["frames"]] == ["15"]
+        assert body["next"] == 2
+
+    def test_unknown_since_is_clamped(self, core):
+        core.on_command_frame(b"\x14")
+        _, body = core.handle_ble_frames(since=999)
+        assert body["frames"] == []
+        assert body["next"] == 1
+
+
+class TestBleReconnect:
+    def test_reconnect_calls_ble_backend(self, core, loop_thread, fake_ble):
+        core.attach_loop(loop_thread)
+        fake_ble.connected = False
+        status, body = core.handle_ble_reconnect()
+        assert status == 200
+        assert body["ok"] is True
+        assert body["connected"] is True
+        assert fake_ble.reconnects == 1
+
+    def test_reconnect_failure_returns_502(self, core, loop_thread, fake_ble):
+        core.attach_loop(loop_thread)
+
+        async def fail_reconnect():
+            raise IOError("adapter busy")
+
+        fake_ble.reconnect = fail_reconnect
+        status, body = core.handle_ble_reconnect()
+        assert status == 502
+        assert body["ok"] is False
+        assert "adapter busy" in body["error"]
+
+
 # =================================================================== 切片 3
 # POST /api/serial/assert 与 /api/serial/clear：环形缓冲上的正则断言。
 
@@ -496,6 +556,19 @@ class TestHttpRoundtrip:
         assert status == 200
         assert body["ble"]["deviceName"] == "ML-TEST"
 
+    def test_frames_roundtrip(self, base_url, core):
+        core.on_command_frame(bytes([0x14, 0x00, 0x00, 0x00]))
+        status, body = self._request(base_url + "/api/ble/frames?since=0")
+        assert status == 200
+        assert body["ok"] is True
+        assert body["frames"][0]["short"] == "0001"
+
+    def test_reconnect_roundtrip(self, base_url, core, fake_ble):
+        status, body = self._request(base_url + "/api/ble/reconnect", method="POST")
+        assert status == 200
+        assert body["ok"] is True
+        assert fake_ble.reconnects == 1
+
     def test_unknown_path_returns_404(self, base_url):
         status, body = self._request(base_url + "/nope")
         assert status == 404
@@ -603,6 +676,39 @@ class TestDaemonBleTransport:
         client.services = SimpleNamespace(characteristics=incomplete)
         assert transport.missing_characteristics(daemon_mod.CHARACTERISTICS) == [
             daemon_mod.CHR_SEQBLOCK
+        ]
+
+    @pytest.mark.asyncio
+    async def test_extra_notify_subscriptions(self, fake_bleak):
+        transport = daemon_mod.DaemonBleTransport("AA:BB:CC:DD:EE:FF")
+        seen = []
+        transport.set_extra_notify({
+            daemon_mod.CHR_COMMAND: lambda b: seen.append(("cmd", b)),
+            daemon_mod.CHR_SEQBLOCK: lambda b: seen.append(("seq", b)),
+        })
+        await transport.connect()
+        client = fake_bleak.instances[-1]
+        assert [u for u, _ in client.notifications] == [
+            daemon_mod.CHR_STATUS, daemon_mod.CHR_COMMAND, daemon_mod.CHR_SEQBLOCK,
+        ]
+        callbacks = {u: cb for u, cb in client.notifications}
+        callbacks[daemon_mod.CHR_COMMAND](SimpleNamespace(uuid=daemon_mod.CHR_COMMAND), bytearray(b"\x14"))
+        callbacks[daemon_mod.CHR_SEQBLOCK](SimpleNamespace(uuid=daemon_mod.CHR_SEQBLOCK), bytearray(b"\x05"))
+        assert seen == [("cmd", b"\x14"), ("seq", b"\x05")]
+
+    @pytest.mark.asyncio
+    async def test_reconnect_disconnects_and_resubscribes(self, fake_bleak):
+        transport = daemon_mod.DaemonBleTransport("AA:BB:CC:DD:EE:FF", reconnect_delay_s=0)
+        transport.set_extra_notify({daemon_mod.CHR_COMMAND: lambda b: None})
+        await transport.connect()
+        first = fake_bleak.instances[-1]
+        await transport.reconnect()
+        second = fake_bleak.instances[-1]
+        assert first is not second
+        assert first.is_connected is False
+        assert second.is_connected is True
+        assert [u for u, _ in second.notifications] == [
+            daemon_mod.CHR_STATUS, daemon_mod.CHR_COMMAND,
         ]
 
     @pytest.mark.asyncio

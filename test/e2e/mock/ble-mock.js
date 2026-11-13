@@ -142,6 +142,9 @@ function installBleMock(wxApi, options = {}) {
     notifySubs: new Set(), // norm(uuid) → 已订阅 notify 的特征
     capturedWrites: [], // { characteristic, short, data(hex), ts, http }
     lastStatusHex: null,
+    scanCount: 0,
+    connectionCount: 0,
+    lastFrameSeq: 0,
   };
   const deviceFoundHandlers = new Set();
   const connectionStateHandlers = new Set();
@@ -187,6 +190,7 @@ function installBleMock(wxApi, options = {}) {
 
   wxApi.startBluetoothDevicesDiscovery = (opts = {}) => {
     // success 同步回调；约 300 ms 后异步派发伪造设备（模拟真实扫描时延）
+    state.scanCount += 1;
     succeed(opts);
     if (discoveryTimer != null) { clearTimeoutFn(discoveryTimer); discoveryTimer = null; }
     discoveryTimer = setTimeoutMs(() => {
@@ -210,6 +214,7 @@ function installBleMock(wxApi, options = {}) {
     state.connected = true;
     state.deviceId = opts.deviceId;
     state.mtu = null; // 新连接重新协商
+    state.connectionCount += 1;
     succeed(opts);
   };
 
@@ -323,7 +328,7 @@ function installBleMock(wxApi, options = {}) {
     succeed(opts, { characteristicId: uuid, value: toArrayBuffer(bytes) });
   };
 
-  // ---- 入站状态帧轮询：daemon GET /api/ble/status，hex 变化才派发 ----
+  // ---- 入站状态帧/命令/分片通知轮询 --------------------------------------------
 
   function pollStatus() {
     if (disposed) return;
@@ -341,6 +346,33 @@ function installBleMock(wxApi, options = {}) {
       },
       fail() { /* 轮询失败静默：下一拍重试（只有写路径把失败抛给上层） */ },
     });
+    pollFrames();
+  }
+
+  /** daemon 转发的命令（0001）/分片（0003）通知；按特征派发到已订阅监听。 */
+  function pollFrames() {
+    if (disposed) return;
+    wxApi.request({
+      url: `${baseUrl}/api/ble/frames?since=${state.lastFrameSeq}`,
+      method: 'GET',
+      success(res) {
+        const data = res && res.data;
+        if (!data || data.ok !== true || !Array.isArray(data.frames)) return;
+        for (const f of data.frames) {
+          if (!f || typeof f.seq !== 'number' || f.seq <= state.lastFrameSeq) continue;
+          const uuid = CHAR_BY_NORM.get(normUuid(f.char));
+          if (uuid && state.notifySubs.has(normUuid(uuid))) {
+            const bytes = fromHex(f.hex);
+            if (bytes.length > 0) emitValueChange(uuid, bytes);
+          }
+          state.lastFrameSeq = f.seq;
+        }
+        if (typeof data.next === 'number' && data.next > state.lastFrameSeq) {
+          state.lastFrameSeq = data.next;
+        }
+      },
+      fail() { /* 与状态轮询同策略：下一拍重试 */ },
+    });
   }
 
   // ---- 控制钩子（#84 断连重连用 debugDisconnect / getCapturedWrites） ----
@@ -356,6 +388,18 @@ function installBleMock(wxApi, options = {}) {
           try { h(res); } catch (e) { /* 同上 */ }
         }
       }
+      // PC 蓝牙关闭再开：daemon 侧真实 BLE 链路也断开重连，让固件出现第二次
+      // `ble: connect #N`。失败静默——断开事件本身已经派发。
+      try {
+        wxApi.request({
+          url: `${baseUrl}/api/ble/reconnect`,
+          method: 'POST',
+          header: { 'Content-Type': 'application/json' },
+          data: {},
+          success() {},
+          fail() {},
+        });
+      } catch (e) { /* 无 request 的环境（单测替身）忽略 */ }
       return { disconnected: was };
     },
     getCapturedWrites() { return state.capturedWrites.map((w) => ({ ...w })); },
@@ -367,6 +411,9 @@ function installBleMock(wxApi, options = {}) {
         notifySubs: Array.from(state.notifySubs),
         lastStatusHex: state.lastStatusHex,
         capturedWrites: state.capturedWrites.length,
+        scanCount: state.scanCount,
+        connectionCount: state.connectionCount,
+        lastFrameSeq: state.lastFrameSeq,
       };
     },
     dispose() {
@@ -383,6 +430,7 @@ function installBleMock(wxApi, options = {}) {
       state.connected = false;
       state.deviceId = null;
       state.mtu = null;
+      state.lastFrameSeq = 0;
     },
   };
 

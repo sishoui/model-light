@@ -35,7 +35,7 @@ async function runCase(caseDef, deps) {
         state.setup = await runSteps(caseDef.setup, session, ctx);
       }
       state.steps = await runSteps(caseDef.steps || [], session, ctx);
-      state.assertions = await runAssertions(caseDef.assertions || [], session);
+      state.assertions = await runAssertions(caseDef.assertions || [], session, ctx);
       const failed = state.assertions.filter((a) => !a.pass);
       if (failed.length > 0) {
         state.status = 'failed';

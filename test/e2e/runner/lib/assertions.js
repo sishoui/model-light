@@ -2,7 +2,7 @@
 // 每条断言返回 { type, pass, detail }；不抛错（环境问题除外）。
 
 const { normalizeConsoleEntry } = require('./session');
-const { poll } = require('./util');
+const { poll, interpolateValue } = require('./util');
 
 function matchConsole(entries, assertion) {
   const level = assertion.level || 'error';
@@ -14,15 +14,16 @@ function matchConsole(entries, assertion) {
   });
 }
 
-async function runAssertion(assertion, session) {
+async function runAssertion(assertion, session, ctx = {}) {
   switch (assertion.type) {
     case 'serial': {
-      const body = await session.serialAssert(assertion.pattern);
+      const pattern = interpolateValue(assertion.pattern, ctx);
+      const body = await session.serialAssert(pattern);
       const minCount = assertion.minCount || 1;
       return {
         type: 'serial',
         pass: body.matched === true && body.count >= minCount,
-        detail: { pattern: assertion.pattern, count: body.count, lines: body.lines },
+        detail: { pattern, count: body.count, lines: body.lines },
       };
     }
 
@@ -44,7 +45,10 @@ async function runAssertion(assertion, session) {
     case 'statusFrame': {
       const timeoutMs = assertion.timeoutMs || 5000;
       const wantLength = assertion.hexLength;
-      const fields = assertion.fields || {};
+      const fields = {};
+      for (const [key, value] of Object.entries(assertion.fields || {})) {
+        fields[key] = interpolateValue(value, ctx);
+      }
       const matches = (s) => {
         if (!s || s.ok !== true || !s.received || typeof s.hex !== 'string') return false;
         if (wantLength != null && s.hex.length / 2 !== wantLength) return false;
@@ -88,17 +92,39 @@ async function runAssertion(assertion, session) {
 
     case 'bleWrite': {
       const writes = await session.capturedWrites();
-      const short = assertion.short || (assertion.characteristic ? String(assertion.characteristic).slice(-4) : null);
+      const short = assertion.short
+        ? interpolateValue(assertion.short, ctx)
+        : (assertion.characteristic ? String(assertion.characteristic).slice(-4) : null);
+      const dataPrefix = assertion.data ? interpolateValue(assertion.data, ctx) : null;
       const matches = writes.filter((w) => {
         if (short && w.short !== short) return false;
-        if (assertion.data && !String(w.data || '').startsWith(assertion.data)) return false;
+        if (dataPrefix && !String(w.data || '').startsWith(dataPrefix)) return false;
         return true;
       });
       const minCount = assertion.minCount || 1;
       return {
         type: 'bleWrite',
         pass: matches.length >= minCount,
-        detail: { short, data: assertion.data || null, matches, totalWrites: writes.length },
+        detail: { short, data: dataPrefix, matches, totalWrites: writes.length },
+      };
+    }
+
+    case 'mockState': {
+      const state = (await session.mockState()) || {};
+      const fields = {};
+      for (const [key, value] of Object.entries(assertion.fields || {})) {
+        fields[key] = interpolateValue(value, ctx);
+      }
+      const errors = [];
+      for (const [key, expected] of Object.entries(fields)) {
+        if (state[key] !== expected) {
+          errors.push(`字段 ${key}=${JSON.stringify(state[key])}，期望 ${JSON.stringify(expected)}`);
+        }
+      }
+      return {
+        type: 'mockState',
+        pass: errors.length === 0,
+        detail: { state, errors },
       };
     }
 
@@ -107,10 +133,10 @@ async function runAssertion(assertion, session) {
   }
 }
 
-async function runAssertions(assertions, session) {
+async function runAssertions(assertions, session, ctx = {}) {
   const results = [];
   for (const a of assertions) {
-    results.push(await runAssertion(a, session));
+    results.push(await runAssertion(a, session, ctx));
   }
   return results;
 }

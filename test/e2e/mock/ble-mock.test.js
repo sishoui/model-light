@@ -14,6 +14,7 @@ const BASE_URL = 'http://127.0.0.1:19555';
 const SERVICE_UUID = '7c9f0000-1b2a-4c3d-9e8f-000000000000';
 const CHAR_STATUS = '7c9f0004-1b2a-4c3d-9e8f-000000000000';
 const CHAR_COMMAND = '7c9f0001-1b2a-4c3d-9e8f-000000000000';
+const CHAR_SEQUENCE = '7c9f0003-1b2a-4c3d-9e8f-000000000000';
 const CHAR_INFO = '7c9f0005-1b2a-4c3d-9e8f-000000000000';
 const DEVICE_ID = 'CC:8D:A2:C2:56:62';
 
@@ -329,6 +330,51 @@ test('每 500 ms 轮询 /api/ble/status，hex 变化时派发 onBLECharacteristi
   assert.equal(frames.length, 2, '注销后不再派发');
 });
 
+test('每 500 ms 轮询 /api/ble/frames，把 daemon 转发的命令/分片通知派发到对应特征', async (t) => {
+  const timers = makeFakeTimers();
+  const frames = [
+    { seq: 1, char: '7c9f0001-1b2a-4c3d-9e8f-000000000000', short: '0001', hex: '14000000' },
+    { seq: 2, char: '7c9f0003-1b2a-4c3d-9e8f-000000000000', short: '0003', hex: '050000000000' },
+  ];
+  let since = null;
+  const wx = makeFakeWx((req) => {
+    if (String(req.url).startsWith(`${BASE_URL}/api/ble/frames`)) {
+      since = Number(String(req.url).split('since=')[1]);
+      const out = frames.filter((f) => f.seq > since);
+      return { statusCode: 200, data: { ok: true, frames: out, next: frames[frames.length - 1].seq } };
+    }
+    return { statusCode: 200, data: { ok: true } };
+  });
+  const ctl = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  t.after(() => ctl.dispose());
+
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  wx.notifyBLECharacteristicValueChange({
+    deviceId: DEVICE_ID, serviceId: SERVICE_UUID, characteristicId: CHAR_COMMAND, state: true,
+  });
+  wx.notifyBLECharacteristicValueChange({
+    deviceId: DEVICE_ID, serviceId: SERVICE_UUID, characteristicId: CHAR_SEQUENCE, state: true,
+  });
+
+  const got = [];
+  wx.onBLECharacteristicValueChange((res) => got.push(res));
+
+  timers.advance(500);
+  await tick();
+  assert.equal(got.length, 2);
+  assert.equal(got[0].characteristicId, CHAR_COMMAND);
+  assert.equal(hexOf(new Uint8Array(got[0].value)), '14000000');
+  assert.equal(got[1].characteristicId, CHAR_SEQUENCE);
+  assert.equal(hexOf(new Uint8Array(got[1].value)), '050000000000');
+  assert.equal(ctl.getState().lastFrameSeq, 2);
+
+  // 下一拍 since=2，旧帧不再派发
+  timers.advance(500);
+  await tick();
+  assert.equal(got.length, 2);
+  assert.equal(since, 2);
+});
+
 test('status 轮询失败（daemon 不可达）静默重试，不派发不抛错', async (t) => {
   const timers = makeFakeTimers();
   const wx = makeFakeWx(() => ({ fail: new Error('down') }));
@@ -340,6 +386,42 @@ test('status 轮询失败（daemon 不可达）静默重试，不派发不抛错
   timers.advance(500);
   await tick();
   assert.equal(frames.length, 0);
+});
+
+test('getState 统计扫描与连接次数（#84 断连重连不重复扫描）', async (t) => {
+  const timers = makeFakeTimers();
+  const wx = makeFakeWx();
+  const ctl = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  t.after(() => ctl.dispose());
+
+  assert.deepEqual(
+    { scanCount: ctl.getState().scanCount, connectionCount: ctl.getState().connectionCount },
+    { scanCount: 0, connectionCount: 0 }
+  );
+
+  wx.startBluetoothDevicesDiscovery({ services: [SERVICE_UUID] });
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  assert.equal(ctl.getState().scanCount, 1);
+  assert.equal(ctl.getState().connectionCount, 1);
+
+  ctl.debugDisconnect();
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  assert.equal(ctl.getState().scanCount, 1, '重连不触发扫描');
+  assert.equal(ctl.getState().connectionCount, 2);
+});
+
+test('debugDisconnect 请求 daemon 重连（模拟 PC 蓝牙关闭再开）', async (t) => {
+  const timers = makeFakeTimers();
+  const wx = makeFakeWx();
+  const ctl = install(wx, { baseUrl: BASE_URL, ...timerFns(timers) });
+  t.after(() => ctl.dispose());
+
+  wx.createBLEConnection({ deviceId: DEVICE_ID });
+  ctl.debugDisconnect();
+  await tick();
+  const reconnect = wx.calls.find((c) => String(c.url).endsWith('/api/ble/reconnect'));
+  assert.ok(reconnect, '应 POST /api/ble/reconnect');
+  assert.equal(reconnect.method, 'POST');
 });
 
 // ---- 连接状态钩子 ---------------------------------------------------------------

@@ -33,10 +33,16 @@ DevTools 模拟器里扮演真实 ESP32-C3（ML-8DCC）的 BLE 外设：小程�
 
 安装后挂 `globalThis.__bleMock`：
 
-- `debugDisconnect()` —— 触发 `onBLEConnectionStateChange` 断开事件（#84 断连重连用）
+- `debugDisconnect()` —— 触发 `onBLEConnectionStateChange` 断开事件，并 POST
+  `/api/ble/reconnect` 让 daemon 的真实 BLE 链路断开重连（#84 断连重连用）
 - `getCapturedWrites()` —— 全部截获写入 `[{characteristic, short, data(hex), ts, http}]`
-- `getState()` —— `{connected, deviceId, mtu, notifySubs, lastStatusHex, capturedWrites}`
+- `getState()` —— `{connected, deviceId, mtu, notifySubs, lastStatusHex, capturedWrites,
+  scanCount, connectionCount, lastFrameSeq}`
 - `dispose()` —— 清理定时器与监听
+
+另外 mock 每 500 ms 轮询 `/api/ble/status`（状态帧）与 `/api/ble/frames?since=N`
+（daemon 转发的命令 0001 / 分片 0003 notify），把下行帧派发给已订阅的
+`onBLECharacteristicValueChange` 监听。
 
 ## 单测
 
