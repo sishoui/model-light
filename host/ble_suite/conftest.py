@@ -17,23 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from ble_suite.sections import SECTION_BY_FILE_PREFIX
 from ble_suite.transport import FakeBleakTransport
-
-# 测试文件名 -> spec 章节的回退推断（当测试未打 spec_section 标记时使用）。
-# 引用的章节必须是 spec 真实存在的章节（§2.1/§2.2/§2.9/§3.4/§5.1/§6/§7）；
-# 不得引用 §2.5/§2.10 等不存在章节。
-_SECTION_BY_FILE_PREFIX = {
-    "test_t1": "transport",
-    "test_t2": "§2.2",
-    "test_t3": "§6",
-    "test_t4": "§2.9",
-    "test_t5": "§2.2",
-    "test_t6": "§3.4",
-    "test_t7": "§3.4",
-    "test_t8": "§5.1",
-    "test_t9": "§6/§7.3",
-    "test_t10": "§7.2",
-}
 
 
 def pytest_addoption(parser):
@@ -65,7 +50,7 @@ def pytest_configure(config):
 def _infer_section(test_path) -> str:
     """从测试文件名推断 spec 章节（未打标记时的回退）。"""
     stem = Path(test_path).stem
-    for prefix, section in _SECTION_BY_FILE_PREFIX.items():
+    for prefix, section in SECTION_BY_FILE_PREFIX.items():
         if stem == prefix or stem.startswith(prefix + "_"):
             return section
     return "unknown"

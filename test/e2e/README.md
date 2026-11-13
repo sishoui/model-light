@@ -160,7 +160,9 @@ Assertion（`type` 之一）：
 - `ble-02-reconnect.json`：debugDisconnect → 断连处理 → `onAppShow` 用缓存 deviceId
   直连；断言固件侧出现第二次 `ble: connect #`、两次 REQ_TOKEN、mock 扫描次数不增。
 - `ble-04-push-arrangement.json`：等令牌空闲 → 改灯组/阶段（页面 store + encode）→
-  推送；断言串口 `commit v<base+1>`、状态帧 `arrangementVersion` 同步递增、编排写 ...0003。
+  推送；断言串口 `commit v<base+1>`、状态帧 `arrangementVersion` 同步递增、编排写 ...0003
+  （START 与 FIN）。推送后再写一帧实时参数（pin0/group0/stage0 背景层 RGB），断言
+  mock 截获 ...0002 与串口 `rt pin=0 group=0 stage=0 applied=1`（设备真实应用实时帧）。
 - `ble-06-token-handover.json`（**skip**：本机单蓝牙适配器无法建第二条 GATT 链路）：
   双 daemon（A 持令牌 → B 请求 → A 停心跳 → B 获令牌）。
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
@@ -170,9 +172,11 @@ Assertion（`type` 之一）：
   （discover → 设备页 requestToken → OTA 页 chooseFirmware → startUpgrade，
   fixture hex 经 `wx.chooseMessageFile`/`getFileSystemManager` 等价桩注入）驱动
   BEGIN/DATA/COMMIT；传输期间每 5 s 一帧 0001 写 "15" 心跳。断言串口
-  `ota begin <N> B`、`ota state=1`、`ota progress N%`、`ota set_boot ok, rebooting`、
-  重启后 `fixture app booted`（新镜像横幅），状态帧 `mode=2`，mock 截获的
-  BEGIN(0x20)/DATA(0x22)/COMMIT(0x23) 写入与心跳，console 无 error。
+  `ota begin <N> B`、`ota state=1`、`ota progress N%`、`ota state=3`（COMMITTING）、
+  `ota set_boot ok, rebooting`、重启后 `fixture app booted`（新镜像横幅），状态帧
+  `mode=2`，mock 截获的 BEGIN(0x20)/DATA(0x22)/COMMIT(0x23) 写入与心跳，console 无 error。
+  用例 hex 由 `test/e2e/ota-fixture/gen-case.js` 从 `ml-fixture.bin` 生成；改 bin 后
+  跑 `node test/e2e/ota-fixture/gen-case.js`（或 `--check` 只校验）再提交。
   **跑完必须重刷正式固件**（fixture 无 BLE，设备重启后失联是预期）——
   见 `test/e2e/ota-fixture/README.md`。
 - `auth-01-silent-login.json`：`wx.login` 返回 fake code → 后端 `/v1/auth/login`
@@ -211,6 +215,24 @@ Assertion（`type` 之一）：
   用例把 `cloud-mock` 换成真实 `wx.request` 即可（用例不改）。
 - 已知取舍：mock 不校验 JWT 签名、不校验备份 CRC/长度（真实后端会）；它验证的是
   小程序侧的请求构造、401 策略、重试/降级与 BLE 不受影响，不替代后端单测/e2e。
+
+## 已知规格偏离
+
+本目录的 E2E 实现与原始票/规格有三处有意偏离，均已在上文对应小节展开，这里集中列出：
+
+- **OTA fixture 用最小合法 app，不是 1 KB dummy**（#92/#86）：`esp_ota_end()` 会校验
+  ESP-IDF 镜像的 SHA256/CRC，随机或截断字节只能在 `COMMIT` 阶段失败并回滚，覆盖不到
+  `COMMITTING → DONE`。因此 `test/e2e/ota-fixture/` 放的是真实编译出的最小 app
+  （约 162 KB），用完整 `esp_ota_end → set_boot → 重启` 路径满足状态机断言。
+  代价：跑 ota-01 会刷 fixture、设备重启后无 BLE，跑完必须重刷正式固件。
+- **cloud-mock 替代真实后端**（#87）：AUTH/CLOUD/NET 用例默认拦截 `/v1/*`，构造 JWT、
+  备份、401、500、网络错误与延迟，保证 hermetic（无 DB / AppSecret / 外网）。真实后端
+  只做手工/可选验证；mock 不校验签名/CRC/限流，不替代后端单测。
+- **BLE-06 因单蓝牙适配器 skip**（#85）：Windows 对同一 BLE 外设同一时刻只维持一个
+  GATT 会话，本机无法建第二条真实链路；用例标记 `skip`，硬件就绪后 `--run-skipped`。
+- **daemon 就绪判定要求 boot 日志**（本轮 code review 修复）：`/api/health` 的
+  `serial.boot` 只在看到 `boot: Loaded app from partition` / `model-light F3 render loop`
+  / `advertising as` 时为真，避免旧固件的周期 `status push` 让 runner 误判设备在线。
 
 ## 启动时机与 AUTH-01
 

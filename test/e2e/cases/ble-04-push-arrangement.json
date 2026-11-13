@@ -41,12 +41,21 @@
       "action": "evaluate",
       "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const t = await p.requestToken(); if (!t.granted) throw new Error('令牌获取失败: ' + (t.reason || 'unknown')); const st = globalThis.__bleMock.getState(); const hex = st.lastStatusHex || ''; const b = hex.match(/../g) ? hex.match(/../g).map((x) => parseInt(x, 16)) : []; const base = b.length >= 3 ? ((b[1] | (b[2] << 8)) & 0xffff) : 0; const arr = p.store.loadOrCreate(p._deviceName); arr.pins[0].length = 10; arr.pins[0].name = 'E2E'; arr.pins[0].groups = [{ ranges: [{ start: 0, end: 10, reverse: false }], stages: [{ durationMs: 1000, fadeInMs: 0, layers: [{ role: 0, effectId: 0, params: [255, 0, 0] }] }] }]; arr.version = (base + 1) & 0xffff; p.store.save(p._deviceName, arr); await p.pushArrangementAction(); return { base, version: arr.version, transferMessage: p.data.transferMessage || '', statusVersion: p._lastStatusFrame ? p._lastStatusFrame.arrangementVersion : null };",
       "saveAs": "arrangement"
+    },
+    { "action": "waitMs", "ms": 300 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (!p._realtime) throw new Error('实时通道未就绪（连接后未建立 ...0002 发送器）'); p.sendRealtimeParam({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [1, 2, 3] }); p._realtime.flush(); return { sent: true };",
+      "saveAs": "realtime"
     }
   ],
   "assertions": [
     { "type": "serial", "pattern": "commit v{{arrangement.version}} chunks=", "minCount": 1 },
     { "type": "statusFrame", "hexLength": 12, "fields": { "arrangementVersion": "{{arrangement.version}}" }, "timeoutMs": 5000 },
     { "type": "bleWrite", "short": "0003", "data": "01" },
+    { "type": "bleWrite", "short": "0003", "data": "03" },
+    { "type": "bleWrite", "short": "0002", "data": "000000000003010203" },
+    { "type": "serial", "pattern": "rt pin=0 group=0 stage=0 applied=1", "minCount": 1 },
     { "type": "mockState", "fields": { "connected": true } },
     { "type": "console", "level": "error" }
   ],

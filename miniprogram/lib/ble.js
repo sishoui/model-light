@@ -116,16 +116,17 @@ function createBleClient(wxApi) {
   }
 
   /**
-   * §2.5：订阅命令通道（...0001）notify——令牌 GRANT / PROBE 下行。
-   * 回调收原始 Uint8Array（cmd + seq(2) + payload）。
+   * 订阅某个特征的 notify，返回解绑函数。
+   * 命令(0001)/编排 ACK(0003)/OTA(0006) 三处共用：回调收原始 Uint8Array，
+   * 订阅失败静默（与 §2.3 无 ACK 通道一致），解绑同步生效。
    */
-  function onCommandNotify(callback) {
+  function _notifyWatcher(characteristicId, callback) {
     const handler = (res) => callback(new Uint8Array(res.value));
     wxApi.onBLECharacteristicValueChange(handler);
     call(wxApi, 'notifyBLECharacteristicValueChange', {
       deviceId,
       serviceId: SERVICE_UUID,
-      characteristicId: CHAR_COMMAND,
+      characteristicId,
       state: true,
     }).catch(() => {});
     return () => {
@@ -134,21 +135,19 @@ function createBleClient(wxApi) {
   }
 
   /**
+   * §2.5：订阅命令通道（...0001）notify——令牌 GRANT / PROBE 下行。
+   * 回调收原始 Uint8Array（cmd + seq(2) + payload）。
+   */
+  function onCommandNotify(callback) {
+    return _notifyWatcher(CHAR_COMMAND, callback);
+  }
+
+  /**
    * 订阅编排 ACK/NAK 通知（...0003），返回解绑函数。
    * 回调收 parseAck 后的原始 Uint8Array，由调用方解析。
    */
   function onSequenceNotify(callback) {
-    const handler = (res) => callback(new Uint8Array(res.value));
-    wxApi.onBLECharacteristicValueChange(handler);
-    call(wxApi, 'notifyBLECharacteristicValueChange', {
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_SEQUENCE,
-      state: true,
-    }).catch(() => {});
-    return () => {
-      wxApi.offBLECharacteristicValueChange(handler);
-    };
+    return _notifyWatcher(CHAR_SEQUENCE, callback);
   }
 
   /** §2.3：实时参数包写 ...0002（writeNoResponse，单帧 ≤ 9 B，无 ACK） */
@@ -214,17 +213,7 @@ function createBleClient(wxApi) {
    * §3 OTA：订阅 ...0006 notify（ACK / SESSION / EVENT / RESUME_OK 下行）。
    */
   function onOtaNotify(callback) {
-    const handler = (res) => callback(new Uint8Array(res.value));
-    wxApi.onBLECharacteristicValueChange(handler);
-    call(wxApi, 'notifyBLECharacteristicValueChange', {
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_OTA,
-      state: true,
-    }).catch(() => {});
-    return () => {
-      wxApi.offBLECharacteristicValueChange(handler);
-    };
+    return _notifyWatcher(CHAR_OTA, callback);
   }
 
   /** §3：OTA 固件字节写 ...0006（writeNoResponse；iOS 退化为带响应写也兼容） */

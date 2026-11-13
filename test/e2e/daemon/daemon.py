@@ -72,6 +72,12 @@ EXIT_HTTP_BIND_FAILED = 7
 WRITE_TIMEOUT_S = 5.0
 RECONNECT_TIMEOUT_S = 15.0
 
+# ESP32 启动日志特征（#79 调试日志固件）：app 横幅 / 广播行 / IDF bootloader。
+# 用它确认串口对面真的是刚启动的 ESP32，而不是旧固件的周期性 status push。
+BOOT_LOG_RE = re.compile(
+    r"boot: Loaded app from partition|model-light F3 render loop|advertising as"
+)
+
 
 class ApiError(Exception):
     """HTTP 层可预期的错误：携带 status code，由 _guard 转为 (status, body)。"""
@@ -149,6 +155,7 @@ class SerialMonitor:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.read_error: Optional[str] = None
+        self._boot_seen = False
 
     @classmethod
     def open(cls, port: str, *, baudrate: int = 115200, buffer_lines: int = 2000) -> "SerialMonitor":
@@ -185,6 +192,8 @@ class SerialMonitor:
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
             with self._lock:
                 self._lines.append(line)
+                if not self._boot_seen and BOOT_LOG_RE.search(line):
+                    self._boot_seen = True
 
     def search(self, pattern: str, *, limit: int = 50) -> tuple[int, list[str]]:
         """在缓冲里正则搜索；返回 (命中总数, 最近 limit 条命中行)。
@@ -215,6 +224,7 @@ class SerialMonitor:
                 "lines": len(self._lines),
                 "lastLine": self._lines[-1] if self._lines else None,
                 "readError": self.read_error,
+                "boot": self._boot_seen,
             }
 
     def close(self) -> None:
@@ -515,10 +525,11 @@ async def serve(args: argparse.Namespace) -> int:
     core = DaemonCore(transport, monitor)
     # 命令/分片/OTA 下行通知转发给 mock（token GRANT / arrangement ACK /
     # OTA ACK/SESSION/EVENT——#86 起 0006 也订阅，小程序 OTA 发送器才能跑）。
+    # 三条通道共用 _record_frame，只是特征常量不同。
     transport.set_extra_notify({
-        CHR_COMMAND: core.on_command_frame,
-        CHR_SEQBLOCK: core.on_seqblock_frame,
-        CHR_OTA: core.on_ota_frame,
+        CHR_COMMAND: functools.partial(core._record_frame, CHR_COMMAND),
+        CHR_SEQBLOCK: functools.partial(core._record_frame, CHR_SEQBLOCK),
+        CHR_OTA: functools.partial(core._record_frame, CHR_OTA),
     })
 
     def close_monitor() -> None:
@@ -657,6 +668,7 @@ class DaemonCore:
         self._ble.register_on_status(self.on_status_frame)
 
     def _record_frame(self, char_uuid: str, frame: bytes) -> None:
+        """记录一条特征 notify（命令/分片/OTA 共用，seq 单调递增）。"""
         with self._frame_lock:
             self._frame_seq += 1
             self._frames.append({
@@ -666,18 +678,6 @@ class DaemonCore:
                 "hex": bytes(frame).hex(),
                 "ts": time.time(),
             })
-
-    def on_command_frame(self, frame: bytes) -> None:
-        """命令通道（0001）notify：GRANT / PROBE 等下行。"""
-        self._record_frame(CHR_COMMAND, frame)
-
-    def on_seqblock_frame(self, frame: bytes) -> None:
-        """编排分片通道（0003）notify：ACK / NAK 下行。"""
-        self._record_frame(CHR_SEQBLOCK, frame)
-
-    def on_ota_frame(self, frame: bytes) -> None:
-        """OTA 通道（0006）notify：ACK / SESSION / EVENT / RESUME_OK 下行（#86）。"""
-        self._record_frame(CHR_OTA, frame)
 
     def attach_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop

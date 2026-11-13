@@ -80,10 +80,8 @@ Page({
   onUnload() {
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
-    if (this._tokenTimer) clearInterval(this._tokenTimer);
-    if (this._offStatus) this._offStatus();
+    this._cleanupBle();
     if (this._offConnectionState) this._offConnectionState();
-    if (this._tokenClient) this._tokenClient.dispose();
     const app = getApp();
     if (app && app._reconnectHook === this._appShowHook) app._reconnectHook = null;
     this.ble.disconnect();
@@ -103,13 +101,18 @@ Page({
     };
   },
 
+  /** 断连/卸载共用的 BLE 清理：停状态订阅与令牌心跳，释放令牌客户端。 */
+  _cleanupBle() {
+    if (this._offStatus) { this._offStatus(); this._offStatus = null; }
+    if (this._tokenTimer) { clearInterval(this._tokenTimer); this._tokenTimer = null; }
+    if (this._tokenClient) this._tokenClient.dispose();
+  },
+
   /** 断连处理：停心跳/状态订阅，按 §2.5 退避重连（onAppShow 可立即接管）。 */
   onBleDisconnected() {
     if (this._disconnectedByUser) return;
     this.setData({ connected: false, reconnecting: true });
-    if (this._offStatus) { this._offStatus(); this._offStatus = null; }
-    if (this._tokenTimer) { clearInterval(this._tokenTimer); this._tokenTimer = null; }
-    if (this._tokenClient) this._tokenClient.dispose();
+    this._cleanupBle();
     this.scheduleReconnect();
   },
 

@@ -19,8 +19,7 @@ Single-context: one `GLOSSARY.md` plus `docs/adr/` at the repo root. See `docs/a
 ### Host protocol modules
 
 `host/shard_frame.py`, `host/token_state.py`, `host/status_frame.py`,
-`host/arrangement.py` and `host/ota_session.py` do not exist on `master`;
-they are implemented on closed wayfinder branches
-`wayfinder/31-shard-frame`, `wayfinder/33-status-frame` and
-`wayfinder/35-ota-session`. Merge them onto the base before building
-`host/ble_suite/` so the imports resolve.
+`host/arrangement.py` and `host/ota_session.py` are available on `master` and on
+the `e2e/selftest` integration branch; no branch merge is needed before building
+`host/ble_suite/`. The suite runs headless with
+`python -m pytest host/ -q` (no real BLE device required).

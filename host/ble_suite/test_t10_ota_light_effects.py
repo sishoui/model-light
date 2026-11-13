@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-T10 验收测试：OTA 灯效契约（spec §7.2 / issue #44）。
+T10 验收测试：OTA 灯效契约（docs/spec-ota-wire-format.md §7.2 / issue #44）。
 
 验证：
 - OTA_BEGIN 成功（status=0）：设备状态帧 mode=2（TRANSMITTING）、传输位置位，
@@ -37,7 +37,7 @@ from status_frame import (
     parse_status_frame,)
 
 
-pytestmark = pytest.mark.spec_section("§7.2")
+pytestmark = pytest.mark.spec_section("spec-ota-wire-format §7.2")
 
 
 CHUNK_PAYLOAD = 1024  # OtaSession 默认 chunk_size(1027) - DATA_HEADER(3) = 1024

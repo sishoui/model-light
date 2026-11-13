@@ -19,6 +19,7 @@ T11 验收测试：CI 单命令入口 + 失败报告（spec §2.2/§2.9/§3.4/§
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -134,6 +135,27 @@ def test_failure_report_maps_section_error_code_and_message():
             assert message, f"empty error_message for {section}/{code}"
     finally:
         _cleanup(tmp_test, tmp_report)
+
+
+def test_spec_section_markers_reference_real_sections():
+    """护栏：所有 spec_section 标记与回退表都必须是真实存在的章节。
+
+    防止再次出现 `§7.2` / `§7.3` 这类 spec.md 里不存在的章节（它们其实属于
+    docs/spec-ota-wire-format.md，必须带文档名前缀）。
+    """
+    from ble_suite.sections import SECTION_BY_FILE_PREFIX, SPEC_SECTIONS
+
+    bad = []
+    for path in sorted(BLE_SUITE.glob("test_t*.py")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r'spec_section\("([^"]+)"\)', text):
+            if match.group(1) not in SPEC_SECTIONS:
+                bad.append((path.name, match.group(1)))
+    for prefix, section in SECTION_BY_FILE_PREFIX.items():
+        for part in section.split(" / "):
+            if part not in SPEC_SECTIONS:
+                bad.append((prefix, part))
+    assert not bad, f"未登记的 spec 章节：{bad}"
 
 
 if __name__ == "__main__":

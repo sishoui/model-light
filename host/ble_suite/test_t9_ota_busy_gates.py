@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-T9 验收测试：OTA 期间 BUSY 闸门（spec §6 / §7.3，issue #45）。
+T9 验收测试：OTA 期间 BUSY 闸门（docs/spec-ota-wire-format.md §7.3 / issue #45）。
 
 OTA 进行中（状态帧 mode=2 / TRANSMITTING，flags bit0 = transmitting）：
 

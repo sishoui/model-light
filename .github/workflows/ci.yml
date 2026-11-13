@@ -93,7 +93,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-asyncio
       - name: E2E runner + mock unit tests (node:test)
-        run: node --test "test/e2e/runner/*.test.js" "test/e2e/mock/*.test.js"
+        run: node --test "test/e2e/runner/*.test.js" "test/e2e/mock/*.test.js" "test/e2e/ota-fixture/*.test.js"
       - name: E2E daemon unit tests (pytest)
         run: python -m pytest test/e2e/daemon -q
       - name: Key E2E files present

@@ -12,6 +12,10 @@ const { sleep } = require('./util');
 
 const DEFAULT_HTTP_PORT = 19000;
 
+// ESP32 启动日志特征（与 daemon.py BOOT_LOG_RE 同源）：确认串口对面是刚启动的
+// 固件，而不是旧固件的周期性 status push。
+const SERIAL_BOOT_RE = /boot: Loaded app from partition|model-light F3 render loop|advertising as/;
+
 /** junction 已存在且指向 target（大小写不敏感比较 realpath）。 */
 function junctionPointsTo(junction, target) {
   try {
@@ -61,12 +65,12 @@ function daemonCliArgs({
 
 /**
  * /api/health 是否代表 daemon 就绪（纯函数）。默认要求 BLE 连接 + 串口打开 +
- * 串口已有日志（ESP32 在说话）；--no-serial 实例没有串口，只看 BLE。
+ * 串口已见到 ESP32 boot 日志；--no-serial 实例没有串口，只看 BLE。
  */
 function daemonHealthy(health, { noSerial = false } = {}) {
   if (!health || health.ok !== true || !health.ble || !health.ble.connected) return false;
   if (noSerial) return true;
-  return Boolean(health.serial && health.serial.open && health.serial.lines > 0);
+  return Boolean(health.serial && health.serial.open && health.serial.boot === true);
 }
 
 /**
@@ -117,11 +121,11 @@ async function startDaemon({
     try {
       const health = await http.get('/api/health');
       if (daemonHealthy(health, { noSerial })) {
-        // 串口有行 = ESP32 在说话（boot log / status push / mtu 等），否则明确报错。
+        // 串口见到 boot 日志 = ESP32 已启动（boot log / app 横幅），否则明确报错。
         if (noSerial) {
           log(`[runner] daemon（BLE-only）就绪：BLE ${health.ble.deviceName || ''} @ ${health.ble.address || ''}`);
         } else {
-          log(`[runner] daemon 就绪：BLE ${health.ble.deviceName || ''} @ ${health.ble.address || ''}，串口 ${health.serial.port}`);
+          log(`[runner] daemon 就绪：BLE ${health.ble.deviceName || ''} @ ${health.ble.address || ''}，串口 ${health.serial.port}（boot 日志已见）`);
         }
         return {
           proc,
@@ -141,8 +145,8 @@ async function startDaemon({
           },
         };
       } else if (!noSerial && health && health.ok === true && health.ble && health.ble.connected
-        && health.serial && health.serial.open && !(health.serial.lines > 0)) {
-        lastError = new Error(`串口 ${health.serial.port} 打开但 6 s 内无日志（ESP32 可能未在线）`);
+        && health.serial && health.serial.open && health.serial.boot !== true) {
+        lastError = new Error(`串口 ${health.serial.port} 打开但未见 ESP32 boot 日志（设备未在线或为旧固件）`);
       } else {
         lastError = new Error(`/api/health 未就绪：${JSON.stringify(health)}`);
       }
@@ -161,5 +165,6 @@ module.exports = {
   daemonHealthy,
   ensureAsciiJunction,
   junctionPointsTo,
+  SERIAL_BOOT_RE,
   DEFAULT_HTTP_PORT,
 };

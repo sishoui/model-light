@@ -55,7 +55,11 @@ function createCloudApi({ wxApi, auth, baseUrl = DEFAULT_BASE_URL }) {
       // 会原样返回旧 token，导致 401 重试仍是 401（E2E #87 发现）。
       const retry = await currentAuth.refresh();
       if (!retry.ok) return { statusCode: 401, data: null };
-      const retryToken = retry.session ? retry.session.accessToken : retry.accessToken;
+      // refresh() 已把新 session 落盘；用公开接口 getAccessToken() 取回，
+      // 不窥探 refresh 的返回结构。
+      const retried = await currentAuth.getAccessToken();
+      if (!retried.ok) return { statusCode: 401, data: null };
+      const retryToken = retried.accessToken;
       try {
         r = await rawRequest({
           method,

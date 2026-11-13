@@ -6,6 +6,10 @@
 //
 //   node test/e2e/ota-fixture/gen-case.js
 //
+// 校验两边是否一致（CI / pre-commit 用，不写文件）：
+//
+//   node test/e2e/ota-fixture/gen-case.js --check
+//
 // 两边不一致时 COMMIT 会因 CRC 不符失败（fail fast，不会误刷设备）。
 
 'use strict';
@@ -17,10 +21,6 @@ const FIXTURE_DIR = __dirname;
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const BIN_PATH = path.join(FIXTURE_DIR, 'ml-fixture.bin');
 const CASE_PATH = path.join(REPO_ROOT, 'test', 'e2e', 'cases', 'ota-01-ota-state-machine.json');
-
-const bin = fs.readFileSync(BIN_PATH);
-const hex = bin.toString('hex');
-const fileSize = bin.length;
 
 const DISCOVER_TAP = `
 const pages = getCurrentPages();
@@ -111,71 +111,128 @@ return {
 };
 `;
 
-const caseDef = {
-  id: 'ota-01',
-  name: 'OTA-01 协议状态机端到端：页面真实编码 → BEGUN/SENDING/COMMITTING/DONE → 重启进最小合法镜像',
-  setup: [
-    {
-      action: 'evaluate',
-      code: "if (!globalThis.__bleMock) throw new Error('ble-mock 未注入'); return globalThis.__bleMock.getState();",
-      saveAs: 'mockState',
-    },
-  ],
-  steps: [
-    { action: 'waitMs', ms: 1200 },
-    { action: 'evaluate', code: DISCOVER_TAP },
-    { action: 'waitMs', ms: 2000 },
-    { action: 'evaluate', code: READ_DEVICE, saveAs: 'deviceInfo' },
-    {
-      action: 'navigate',
-      url: '/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC',
-    },
-    { action: 'waitMs', ms: 3000 },
-    { action: 'waitForStatus', fields: {}, timeoutMs: 5000, saveAs: 'initial' },
-    { action: 'waitForStatus', fields: { tokenHolder: 0 }, timeoutMs: 70000, saveAs: 'tokenFree' },
-    { action: 'evaluate', code: REQUEST_TOKEN, saveAs: 'token' },
-    {
-      action: 'navigate',
-      url: '/pages/ota/ota?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC',
-    },
-    { action: 'waitMs', ms: 2500 },
-    { action: 'evaluate', code: OTA_READY, args: [hex], saveAs: 'chosen' },
-    { action: 'evaluate', code: OTA_START, saveAs: 'started' },
-    // esp_ota_begin 擦整个 1.5 MB 槽后才打这行：给足超时。
-    { action: 'waitForSerial', pattern: 'ota begin {{chosen.fileSize}} B', timeoutMs: 240000 },
-    { action: 'waitForSerial', pattern: 'ota state=1 ', timeoutMs: 30000 },
-    { action: 'waitForStatus', fields: { mode: 2 }, timeoutMs: 30000, saveAs: 'transferring' },
-    { action: 'waitForSerial', pattern: 'ota progress \\d+% \\(state 1\\)', timeoutMs: 240000 },
-    { action: 'waitForSerial', pattern: 'ota set_boot ok, rebooting', timeoutMs: 240000 },
-    { action: 'waitForSerial', pattern: 'fixture app booted', timeoutMs: 90000 },
-    { action: 'evaluate', code: OTA_RESULT, saveAs: 'result' },
-  ],
-  assertions: [
-    // 状态机各阶段（BEGUN → SENDING → COMMITTING → 重启 → 新镜像启动）。
-    { type: 'serial', pattern: 'ota begin {{chosen.fileSize}} B', minCount: 1 },
-    { type: 'serial', pattern: 'ota state=1 ', minCount: 1 },
-    { type: 'serial', pattern: 'ota progress \\d+% \\(state 1\\)', minCount: 1 },
-    { type: 'serial', pattern: 'ota set_boot ok, rebooting', minCount: 1 },
-    { type: 'serial', pattern: 'fixture app booted', minCount: 1 },
-    // 状态帧 §7.1：传输中 mode=2（daemon 缓存的最后一帧；重启前由 5 s 心跳刷新）。
-    { type: 'statusFrame', hexLength: 12, fields: { mode: 2 }, timeoutMs: 10000 },
-    // 真实小程序编码路径的证据：BEGIN(0x20)/DATA(0x22)/COMMIT(0x23) 都经过
-    // mock 截获的 wx.writeBLECharacteristicValue（帧头 cmd 即首字节）。
-    { type: 'bleWrite', short: '0006', data: '20', minCount: 1 },
-    { type: 'bleWrite', short: '0006', data: '22', minCount: 50 },
-    { type: 'bleWrite', short: '0006', data: '23', minCount: 1 },
-    // 传输期间心跳（0001 写 "15"）确已发出。
-    { type: 'bleWrite', short: '0001', data: '15', minCount: 1 },
-    { type: 'console', level: 'error' },
-  ],
-  teardown: [
-    {
-      action: 'evaluate',
-      code: "if (globalThis.__bleMock) globalThis.__bleMock.dispose(); return true;",
-    },
-  ],
-};
+/**
+ * 组装 ota-01 用例定义（hex 内嵌在 OTA_READY 步骤的 args[0]）。
+ * @param {string} hex fixture 镜像 hex
+ * @returns {object} 用例 JSON 对象
+ */
+function buildCaseDef(hex = fs.readFileSync(BIN_PATH).toString('hex')) {
+  const fileSize = hex.length >> 1;
+  return {
+    id: 'ota-01',
+    name: 'OTA-01 协议状态机端到端：页面真实编码 → BEGUN/SENDING/COMMITTING/DONE → 重启进最小合法镜像',
+    setup: [
+      {
+        action: 'evaluate',
+        code: "if (!globalThis.__bleMock) throw new Error('ble-mock 未注入'); return globalThis.__bleMock.getState();",
+        saveAs: 'mockState',
+      },
+    ],
+    steps: [
+      { action: 'waitMs', ms: 1200 },
+      { action: 'evaluate', code: DISCOVER_TAP },
+      { action: 'waitMs', ms: 2000 },
+      { action: 'evaluate', code: READ_DEVICE, saveAs: 'deviceInfo' },
+      {
+        action: 'navigate',
+        url: '/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC',
+      },
+      { action: 'waitMs', ms: 3000 },
+      { action: 'waitForStatus', fields: {}, timeoutMs: 5000, saveAs: 'initial' },
+      { action: 'waitForStatus', fields: { tokenHolder: 0 }, timeoutMs: 70000, saveAs: 'tokenFree' },
+      { action: 'evaluate', code: REQUEST_TOKEN, saveAs: 'token' },
+      {
+        action: 'navigate',
+        url: '/pages/ota/ota?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC',
+      },
+      { action: 'waitMs', ms: 2500 },
+      { action: 'evaluate', code: OTA_READY, args: [hex], saveAs: 'chosen' },
+      { action: 'evaluate', code: OTA_START, saveAs: 'started' },
+      // esp_ota_begin 擦整个 1.5 MB 槽后才打这行：给足超时。
+      { action: 'waitForSerial', pattern: 'ota begin {{chosen.fileSize}} B', timeoutMs: 240000 },
+      { action: 'waitForSerial', pattern: 'ota state=1 ', timeoutMs: 30000 },
+      { action: 'waitForStatus', fields: { mode: 2 }, timeoutMs: 30000, saveAs: 'transferring' },
+      { action: 'waitForSerial', pattern: 'ota progress \\d+% \\(state 1\\)', timeoutMs: 240000 },
+      { action: 'waitForSerial', pattern: 'ota set_boot ok, rebooting', timeoutMs: 240000 },
+      { action: 'waitForSerial', pattern: 'fixture app booted', timeoutMs: 90000 },
+      { action: 'evaluate', code: OTA_RESULT, saveAs: 'result' },
+    ],
+    assertions: [
+      // 状态机各阶段（BEGUN → SENDING → COMMITTING → 重启 → 新镜像启动）。
+      { type: 'serial', pattern: 'ota begin {{chosen.fileSize}} B', minCount: 1 },
+      { type: 'serial', pattern: 'ota state=1 ', minCount: 1 },
+      { type: 'serial', pattern: 'ota progress \\d+% \\(state 1\\)', minCount: 1 },
+      // COMMITTING = mlota state 3；ota_change() 在提交路径上同步打这行。
+      { type: 'serial', pattern: 'ota state=3 ', minCount: 1 },
+      { type: 'serial', pattern: 'ota set_boot ok, rebooting', minCount: 1 },
+      { type: 'serial', pattern: 'fixture app booted', minCount: 1 },
+      // 状态帧 §7.1：传输中 mode=2（daemon 缓存的最后一帧；重启前由 5 s 心跳刷新）。
+      { type: 'statusFrame', hexLength: 12, fields: { mode: 2 }, timeoutMs: 10000 },
+      // 真实小程序编码路径的证据：BEGIN(0x20)/DATA(0x22)/COMMIT(0x23) 都经过
+      // mock 截获的 wx.writeBLECharacteristicValue（帧头 cmd 即首字节）。
+      { type: 'bleWrite', short: '0006', data: '20', minCount: 1 },
+      { type: 'bleWrite', short: '0006', data: '22', minCount: 50 },
+      { type: 'bleWrite', short: '0006', data: '23', minCount: 1 },
+      // 传输期间心跳（0001 写 "15"）确已发出。
+      { type: 'bleWrite', short: '0001', data: '15', minCount: 1 },
+      { type: 'console', level: 'error' },
+    ],
+    teardown: [
+      {
+        action: 'evaluate',
+        code: "if (globalThis.__bleMock) globalThis.__bleMock.dispose(); return true;",
+      },
+    ],
+  };
+}
 
-fs.writeFileSync(CASE_PATH, `${JSON.stringify(caseDef, null, 2)}\n`, 'utf8');
-console.log(`[gen-case] ${path.relative(REPO_ROOT, CASE_PATH)}`);
-console.log(`[gen-case] fixture ${fileSize} B（hex ${hex.length} 字符）`);
+/** 从用例里取内嵌的 fixture hex（OTA_READY 步骤的 args[0]）。 */
+function findInlineHex(caseDef) {
+  const step = (caseDef.steps || []).find(
+    (s) => s && Array.isArray(s.args) && typeof s.code === 'string' && s.code.includes('__e2eArg0')
+  );
+  const hex = step && step.args[0];
+  return typeof hex === 'string' ? hex : null;
+}
+
+/**
+ * 校验用例内嵌 hex 与 .bin 是否一致。
+ * @param {object} caseDef 用例 JSON 对象
+ * @param {string} hex 期望的 fixture hex
+ * @returns {string[]} 错误列表（空 = 一致）
+ */
+function checkCase(caseDef, hex) {
+  const actual = findInlineHex(caseDef);
+  if (actual == null) return ['用例里找不到内嵌 fixture hex（evaluate args[0]）'];
+  if (actual !== hex) {
+    return [
+      `用例内嵌 hex 与 ml-fixture.bin 不一致（case ${actual.length} 字符 / bin ${hex.length} 字符）；`
+      + '请运行 node test/e2e/ota-fixture/gen-case.js 重新生成',
+    ];
+  }
+  return [];
+}
+
+function main() {
+  const check = process.argv.includes('--check');
+  const hex = fs.readFileSync(BIN_PATH).toString('hex');
+  const caseDef = buildCaseDef(hex);
+  if (check) {
+    const current = JSON.parse(fs.readFileSync(CASE_PATH, 'utf8'));
+    const errors = checkCase(current, hex);
+    if (errors.length > 0) {
+      for (const e of errors) console.error(`[gen-case][check] ${e}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`[gen-case][check] ok：${path.relative(REPO_ROOT, CASE_PATH)} 与 ml-fixture.bin 一致`);
+    return;
+  }
+  fs.writeFileSync(CASE_PATH, `${JSON.stringify(caseDef, null, 2)}\n`, 'utf8');
+  console.log(`[gen-case] ${path.relative(REPO_ROOT, CASE_PATH)}`);
+  console.log(`[gen-case] fixture ${hex.length >> 1} B（hex ${hex.length} 字符）`);
+}
+
+if (require.main === module) main();
+
+module.exports = { buildCaseDef, checkCase, findInlineHex };

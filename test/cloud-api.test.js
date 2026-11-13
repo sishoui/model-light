@@ -25,9 +25,15 @@ test('401 → refresh 一次 → 用新 token 重试', async () => {
     return { status: 200, data: { rev: 2 } };
   });
   let refreshed = 0;
+  // 模拟真实 cloud-auth：refresh() 把新 token 落盘，getAccessToken() 随后取到新值。
+  let currentToken = 'old';
   const auth = {
-    getAccessToken: async () => ({ ok: true, accessToken: 'old' }),
-    refresh: async () => { refreshed += 1; return { ok: true, session: { accessToken: 'new' } }; },
+    getAccessToken: async () => ({ ok: true, accessToken: currentToken }),
+    refresh: async () => {
+      refreshed += 1;
+      currentToken = 'new';
+      return { ok: true, session: { accessToken: 'new' } };
+    },
   };
   const api = createCloudApi({ wxApi: wx, auth, baseUrl: 'http://x' });
   const r = await api.request({ method: 'PUT', url: '/v1/devices/ML-8DCC/backup', body: { a: 1 } });

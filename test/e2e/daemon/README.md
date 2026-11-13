@@ -48,6 +48,9 @@ python test/e2e/daemon/daemon.py            # 默认 ML-* / COM6 / 127.0.0.1:190
 - command(0001) / seqblock(0003) / ota(0006) notify 进入帧队列（seq 单调递增）；
   mock 用 `GET /api/ble/frames?since=N` 取增量，驱动 token GRANT / arrangement
   ACK / OTA ACK/SESSION/EVENT（#86）。
+- `serial` 快照新增 `boot`：只有读到 `boot: Loaded app from partition` /
+  `model-light F3 render loop` / `advertising as` 才为 true。runner 用它确认
+  ESP32 已启动，避免旧固件的周期 `status push` 被误判为在线。
 - `/api/ble/reconnect` 用于 #84 断连重连：bleak/WinRT 的 disconnect 可能提前
   返回，实现先丢掉旧 client、等 6 s 让底层链路释放，再 connect（固件侧才会出现
   第二次 `ble: connect`）。
@@ -77,5 +80,5 @@ python -m pytest test/e2e/daemon -q    # 在仓库根执行
 ```
 
 覆盖：BLE 写入路由（hex/特征名校验、失败映射）、状态帧解析、串口正则断言与
-环形缓冲、HTTP 回环往返（真实 ThreadingHTTPServer）、DaemonBleTransport 接线
-（假 bleak 客户端）、启动错误路径退出码。
+环形缓冲（含 boot 日志识别）、HTTP 回环往返（真实 ThreadingHTTPServer）、
+DaemonBleTransport 接线（假 bleak 客户端）、启动错误路径退出码。

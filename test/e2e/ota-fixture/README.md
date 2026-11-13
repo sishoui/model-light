@@ -30,7 +30,15 @@ Copy-Item C:\ml-ota-fixture\build\ml-ota-fixture.bin <repo>\test\e2e\ota-fixture
 
 改源码后必须重编译并把新 `.bin` 同步回来；`cases/ota-01-*.json` 里的 hex 是
 从这个 `.bin` 生成的（改 bin 必须重新生成用例 hex，两边不一致 COMMIT 会因
-CRC 不符失败）。
+CRC 不符失败）。生成与校验：
+
+```bash
+node test/e2e/ota-fixture/gen-case.js            # 重新生成用例
+node test/e2e/ota-fixture/gen-case.js --check    # 只校验用例 hex 与 .bin 一致
+```
+
+`test/e2e/ota-fixture/gen-case.test.js` 在 `npm run test:mini` / CI e2e-smoke 里跑
+`--check` 的等价断言，bin 与用例漂移会先被单测拦住。
 
 ## 跑完 E2E 必须恢复正式固件
 

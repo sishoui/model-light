@@ -131,6 +131,11 @@
     },
     {
       "type": "serial",
+      "pattern": "ota state=3 ",
+      "minCount": 1
+    },
+    {
+      "type": "serial",
       "pattern": "ota set_boot ok, rebooting",
       "minCount": 1
     },

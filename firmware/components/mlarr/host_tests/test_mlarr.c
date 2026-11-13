@@ -1325,6 +1325,7 @@ int main(void)
     test_rx_commit_fail_cb_nak();
     test_rx_total_len_too_big();
     test_rx_data_before_start_ignored();
+    /* 43 = 上面 test_*() 调用的数量（增删用例时同步更新）。 */
     printf("all mlarr host tests passed (%d cases)\n", 43);
     return 0;
 }

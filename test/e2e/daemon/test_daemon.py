@@ -303,8 +303,8 @@ class TestBleStatus:
 
 class TestBleFrames:
     def test_records_command_and_seqblock_frames_with_seq(self, core):
-        core.on_command_frame(bytes([0x14, 0x00, 0x00, 0x00]))
-        core.on_seqblock_frame(bytes([0x05, 0x00, 0x00, 0x00, 0x00, 0x00]))
+        core._record_frame(daemon_mod.CHR_COMMAND, bytes([0x14, 0x00, 0x00, 0x00]))
+        core._record_frame(daemon_mod.CHR_SEQBLOCK, bytes([0x05, 0x00, 0x00, 0x00, 0x00, 0x00]))
         status, body = core.handle_ble_frames(since=0)
         assert status == 200
         assert body["ok"] is True
@@ -314,23 +314,23 @@ class TestBleFrames:
         assert body["frames"][0]["char"] == daemon_mod.CHR_COMMAND
 
     def test_since_returns_only_newer_frames(self, core):
-        core.on_command_frame(b"\x14")
-        core.on_command_frame(b"\x15")
+        core._record_frame(daemon_mod.CHR_COMMAND, b"\x14")
+        core._record_frame(daemon_mod.CHR_COMMAND, b"\x15")
         status, body = core.handle_ble_frames(since=1)
         assert status == 200
         assert [f["hex"] for f in body["frames"]] == ["15"]
         assert body["next"] == 2
 
     def test_unknown_since_is_clamped(self, core):
-        core.on_command_frame(b"\x14")
+        core._record_frame(daemon_mod.CHR_COMMAND, b"\x14")
         _, body = core.handle_ble_frames(since=999)
         assert body["frames"] == []
         assert body["next"] == 1
 
     def test_records_ota_frames_with_seq(self, core):
         """#86：...0006 OTA 下行（ACK/SESSION/EVENT/RESUME_OK）也进帧队列。"""
-        core.on_ota_frame(bytes([0x30, 0x07, 0x00, 0x00]))  # ACK seq_ack=7
-        core.on_ota_frame(bytes([0x32, 0x02, 0x00]))        # EVENT 最终结果 OK
+        core._record_frame(daemon_mod.CHR_OTA, bytes([0x30, 0x07, 0x00, 0x00]))  # ACK seq_ack=7
+        core._record_frame(daemon_mod.CHR_OTA, bytes([0x32, 0x02, 0x00]))        # EVENT 最终结果 OK
         status, body = core.handle_ble_frames(since=0)
         assert status == 200
         assert body["next"] == 2
@@ -499,7 +499,7 @@ class TestNoSerialMode:
         assert seen["address"].name == "ML-"
 
     def test_serve_subscribes_ota_notify(self, capsys, monkeypatch):
-        """#86：serve() 把 ...0006 notify 接到 DaemonCore.on_ota_frame
+        """#86：serve() 把 ...0006 notify 接到 DaemonCore._record_frame
         （OTA ACK/SESSION/EVENT 可达 /api/ble/frames，mock 驱动发送器）。"""
         registered = {}
         captured = {}
@@ -549,7 +549,11 @@ class TestNoSerialMode:
         rc = daemon_mod.main(["--no-serial", "--scan-timeout", "0.1", "--connect-timeout", "0.1"])
         assert rc == daemon_mod.EXIT_OK
         assert daemon_mod.CHR_OTA in registered
-        assert registered[daemon_mod.CHR_OTA].__func__ is daemon_mod.DaemonCore.on_ota_frame
+        # 三条通道共用 _record_frame，特征常量由 partial 绑定。
+        assert registered[daemon_mod.CHR_OTA].func.__func__ is daemon_mod.DaemonCore._record_frame
+        assert registered[daemon_mod.CHR_OTA].args == (daemon_mod.CHR_OTA,)
+        assert registered[daemon_mod.CHR_COMMAND].func.__func__ is daemon_mod.DaemonCore._record_frame
+        assert registered[daemon_mod.CHR_SEQBLOCK].func.__func__ is daemon_mod.DaemonCore._record_frame
         assert captured["core"] is not None
 
 
@@ -663,6 +667,20 @@ class TestSerialMonitor:
         time.sleep(0.1)
         assert monitor.snapshot()["lines"] == 1
 
+    def test_boot_flag_set_only_by_boot_log_lines(self, fake_serial):
+        """boot 标记只由启动日志置位：周期 status push 不算 ESP32 在线。"""
+        from daemon import SerialMonitor
+
+        monitor = SerialMonitor(fake_serial, port="COM6", buffer_lines=10)
+        monitor.start()
+        fake_serial.push("I (36070) ble: status push n=1 mode=0 v13 token=1 err=0x00")
+        assert wait_line_count(monitor, 1)
+        assert monitor.snapshot()["boot"] is False
+        fake_serial.push("I (312) boot: Loaded app from partition at offset 0x10000")
+        assert wait_line_count(monitor, 2)
+        assert monitor.snapshot()["boot"] is True
+        monitor.close()
+
 
 # =================================================================== 切片 4
 # GET /api/health：BLE 连接状态、串口状态、设备名。
@@ -683,6 +701,7 @@ class TestHealth:
         assert body["serial"]["lines"] == 0
         assert body["serial"]["lastLine"] is None
         assert body["serial"]["readError"] is None
+        assert body["serial"]["boot"] is False
         assert body["uptimeSeconds"] >= 0
 
     def test_reflects_disconnected_ble(self, core, fake_ble):
@@ -759,7 +778,7 @@ class TestHttpRoundtrip:
         assert body["ble"]["deviceName"] == "ML-TEST"
 
     def test_frames_roundtrip(self, base_url, core):
-        core.on_command_frame(bytes([0x14, 0x00, 0x00, 0x00]))
+        core._record_frame(daemon_mod.CHR_COMMAND, bytes([0x14, 0x00, 0x00, 0x00]))
         status, body = self._request(base_url + "/api/ble/frames?since=0")
         assert status == 200
         assert body["ok"] is True
