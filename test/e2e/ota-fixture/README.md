@@ -30,7 +30,10 @@ Copy-Item C:\ml-ota-fixture\build\ml-ota-fixture.bin <repo>\test\e2e\ota-fixture
 
 改源码后必须重编译并把新 `.bin` 同步回来；`cases/ota-01-*.json` 里的 hex 是
 从这个 `.bin` 生成的（改 bin 必须重新生成用例 hex，两边不一致 COMMIT 会因
-CRC 不符失败）。生成与校验：
+CRC 不符失败）。生成器同时把传输本体的 daemonWrite 预编码帧写进用例：ABORT /
+BEGIN / DATA（每分片一步，`miniprogram/lib/ota-frames.js` 编码，与页面真实
+编码同一模块）/ COMMIT 由 runner 直连 daemon 发出（#95 方案 A，绕过 mock 桥
+吞吐瓶颈）。生成与校验：
 
 ```bash
 node test/e2e/ota-fixture/gen-case.js            # 重新生成用例
@@ -38,7 +41,8 @@ node test/e2e/ota-fixture/gen-case.js --check    # 只校验用例 hex 与 .bin 
 ```
 
 `test/e2e/ota-fixture/gen-case.test.js` 在 `npm run test:mini` / CI e2e-smoke 里跑
-`--check` 的等价断言，bin 与用例漂移会先被单测拦住。
+`--check` 的等价断言（bin 与用例漂移会先被单测拦住），并钉住 daemonWrite 帧
+结构（ABORT/BEGIN/DATA 分片与 seq LE/COMMIT 经页面写）与用例 schema 合法性。
 
 ## 跑完 E2E 必须恢复正式固件
 

@@ -168,17 +168,23 @@ Assertion（`type` 之一）：
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
   发 REQ_TOKEN。断言串口 `token released` / `token holder 0 -> N`、GRANT outcome 0/1
   与两端状态帧的 per-connection `tokenHolder`（A=2、B=1）。
-- `ota-01-ota-state-machine.json`（#86，**skip**：mock 桥吞吐瓶颈，恢复路径 #95）：
-  OTA 协议状态机端到端。页面真实编码路径
-  （discover → 设备页 requestToken → OTA 页 chooseFirmware → startUpgrade，
-  fixture hex 经 `wx.chooseMessageFile`/`getFileSystemManager` 等价桩注入）驱动
-  BEGIN/DATA/COMMIT；传输期间每 5 s 一帧 0001 写 "15" 心跳。断言串口
-  `ota begin <N> B`、`ota state=1`、`ota progress N%`、`ota state=3`（COMMITTING）、
-  `ota set_boot ok, rebooting`、重启后 `fixture app booted`（新镜像横幅），状态帧
-  `mode=2`，mock 截获的 BEGIN(0x20)/DATA(0x22)/COMMIT(0x23) 写入与心跳，console 无 error。
-  用例 hex 由 `test/e2e/ota-fixture/gen-case.js` 从 `ml-fixture.bin` 生成；改 bin 后
-  跑 `node test/e2e/ota-fixture/gen-case.js`（或 `--check` 只校验）再提交。
-  **跑完必须重刷正式固件**（fixture 无 BLE，设备重启后失联是预期）——
+- `ota-01-ota-state-machine.json`（#86，#95 方案 A）：OTA 协议状态机端到端。
+  传输本体是 runner 直连 daemon 的 daemonWrite 预编码帧（ABORT 清残留会话 →
+  BEGIN → DATA 每分片一步 → COMMIT）：帧 hex 由
+  `test/e2e/ota-fixture/gen-case.js` 用 `miniprogram/lib/ota-frames.js`（与
+  页面真实编码同一模块）从 `ml-fixture.bin` 生成，绕过 mock 桥逐帧 `wx.request`
+  的吞吐瓶颈（#95：页面路径传约 70 片后 ACK 停止）；页面编码路径由
+  `test/ota.test.js` 单测覆盖。心跳（每 5 s 一帧 0001 写 "15"）与 COMMIT 仍走
+  页面真实写路径——COMMIT 时设备在写处理里 set_boot + 重启，ATT 写响应不会
+  回来（fire-and-forget 语义，成败以串口锚点为准）。断言串口
+  `ota begin <N> B`、`ota state=1`、`ota progress N%`、
+  `rx chr=7c9f0006 len=3 data=23000000`（COMMIT 帧到达）、
+  `ota set_boot ok, rebooting`、重启后 `fixture app booted`
+  （新镜像横幅），状态帧 `mode=2`，mock 截获的心跳与 COMMIT 写入，console 无
+  error。COMMITTING 状态本身没有串口行（提交路径的迁移发生在写处理里，
+  esp_restart 先于下一次 poll）。用例 hex 与帧序列由 `test/e2e/ota-fixture/gen-case.js` 从 `ml-fixture.bin`
+  生成；改 bin 后跑 `node test/e2e/ota-fixture/gen-case.js`（或 `--check` 只校验）
+  再提交。**跑完必须重刷正式固件**（fixture 无 BLE，设备重启后失联是预期）——
   见 `test/e2e/ota-fixture/README.md`。
 - `auth-01-silent-login.json`：`wx.login` 返回 fake code → 后端 `/v1/auth/login`
   返回 JWT → storage `cloudSession` 有 token、`isLoggedIn/hasUsableAccess` 为真、
@@ -229,10 +235,12 @@ Assertion（`type` 之一）：
 - **cloud-mock 替代真实后端**（#87）：AUTH/CLOUD/NET 用例默认拦截 `/v1/*`，构造 JWT、
   备份、401、500、网络错误与延迟，保证 hermetic（无 DB / AppSecret / 外网）。真实后端
   只做手工/可选验证；mock 不校验签名/CRC/限流，不替代后端单测。
-- **OTA-01 因 mock 桥吞吐瓶颈 skip**（#95）：页面编码路径经 mock 桥（wx.request
-  串行转发）传约 70 片后 ACK 停止、COMMIT 等不到；OTA 协议本身已被 host/ble_suite
-  T6–T10 与 #92 真镜像往返验证。恢复路径见 #95（daemonWrite 预编码帧用例或 mock
-  桥批量转发）。
+- **OTA-01 传输由 daemonWrite 预编码帧驱动**（#95 方案 A）：页面编码路径经 mock
+  桥（wx.request 串行转发）传约 70 片后 ACK 停止、COMMIT 等不到（DevTools
+  wx.request 层不可靠）；改为 runner 直连 daemon 发预编码帧（BEGIN/DATA 每分片
+  一步），端到端仍落到串口断言。页面编码路径由 `test/ota.test.js` 单测覆盖
+  （ota-frames 编码 + sender 行为），COMMIT/心跳保留页面真实写路径；0006 的
+  BEGIN/DATA 断言从 mock 截获（bleWrite）改为串口锚点。
 - **BLE-06 因单蓝牙适配器 skip**（#85）：Windows 对同一 BLE 外设同一时刻只维持一个
   GATT 会话，本机无法建第二条真实链路；用例标记 `skip`，硬件就绪后 `--run-skipped`。
 - **daemon 就绪判定要求 boot 日志**（本轮 code review 修复）：`/api/health` 的
@@ -283,10 +291,8 @@ ble-mock → cloud-mock → 重扫后，用例的 setup 再显式触发登录/�
   行为由 `api/test/*.e2e.spec.ts` 与 `api` 单测覆盖。
 - **daemon 打开 COM6 会发 DTR 复位脉冲，设备重 boot——daemon 启动 = 设备重启**，
   每条用例都从干净状态开始（boot 日志也由该脉冲保证出现）。
-- `ota-01` 标记 `skip`（mock 桥吞吐瓶颈，恢复路径见 #95）：强制恢复后用
-  `--case ota-01 --run-skipped` 跑；会通过 OTA 刷 fixture 固件并让设备重启
-  （fixture 无 BLE），跑完必须重刷正式固件，并按
-  `test/e2e/ota-fixture/README.md` 收尾。
+- `ota-01` 会通过 OTA 刷 fixture 固件并让设备重启（fixture 无 BLE），跑完必须
+  重刷正式固件，并按 `test/e2e/ota-fixture/README.md` 收尾。
 
 ## 本轮 E2E 发现并修掉的小程序缺陷（#87）
 
