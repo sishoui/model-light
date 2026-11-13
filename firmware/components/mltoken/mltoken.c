@@ -229,6 +229,11 @@ int mlt_can_write(const mlt_t *t, uint16_t conn)
            (t->state == MLT_STATE_HELD || t->state == MLT_STATE_PROBING);
 }
 
+uint16_t mlt_holder(const mlt_t *t)
+{
+    return t == NULL ? 0 : t->holder;
+}
+
 uint8_t mlt_perspective(const mlt_t *t, uint16_t conn)
 {
     if (t == NULL || t->state == MLT_STATE_FREE) {

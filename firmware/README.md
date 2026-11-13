@@ -23,9 +23,13 @@ firmware/
 ```powershell
 # 工具链（不在 PATH 中，用绝对路径）
 $CMAKE = "C:\Espressif\tools\cmake\3.30.2\bin\cmake.exe"   # ctest.exe 同目录
-$GCC   = <见下>                                             # 本机 gcc.exe 位置需自行定位：
-                                                            # Get-ChildItem C:\Espressif -Filter gcc.exe -Recurse -Depth 6
-                                                            # 若 Espressif 未装 gcc，用 MSYS2/MinGW 的 gcc 亦可（mlarr 等组件为纯 C）
+$GCC   = "C:\Users\13092\AppData\Local\Microsoft\WinGet\Packages\MartinStorsjo.LLVM-MinGW.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\llvm-mingw-20261020-ucrt-x86_64\bin\gcc.exe"
+                                                             # 本机已验证的 host gcc（WinGet LLVM-MinGW）。
+                                                             # 注意：不要用 Espressif 的 riscv32-esp-elf-gcc —
+                                                             # 它是裸机交叉编译器，CMake 在 Windows 上会按
+                                                             # MinGW 链接（找不到 --major-image-version 等选项）。
+                                                             # 若该 WinGet 包路径变化，可用 `Get-Command gcc`
+                                                             # 或 MSYS2/MinGW 的 gcc 代替（mlarr 等组件为纯 C）。
 
 # 每个组件独立构建（在仓库根执行；组件列表见 firmware/components/*/host_tests）
 foreach ($comp in "mlarr","mlproto","mltoken","mlrt","mlota") {
@@ -57,6 +61,23 @@ idf.py -p COM6 flash monitor
 ```
 
 引脚 0 的灯带 GPIO 由 `ML_PIN0_GPIO`（默认 GPIO4）配置。
+
+## 调试日志标准集（ticket #79，串口 E2E 可断言通道）
+
+全部为 `ESP_LOGI`，tag 沿用各文件现有 TAG（`ble` / `frame` / `ota` / `store`）。
+格式稳定，可直接正则匹配：
+
+| 事件 | 样例 |
+| --- | --- |
+| BLE 写入收到（特征 UUID + 长度 + 前 4 字节） | `I (1234) ble: rx chr=7c9f0003 len=20 data=02000000` |
+| 编排原子提交（版本号 + 分片数） | `I (1234) ble: commit v9 chunks=11 len=202` |
+| 实时帧摘要（pin/group/stage） | `I (1234) ble: rx chr=7c9f0002 len=7 data=00000000 rt pin=0 group=0 stage=0 applied=1` |
+| 控制权令牌授予/释放/心跳 | `ble: token tx cmd=0x14 conn=1 outcome=0`、`frame: token released (holder 1)`、`ble: token heartbeat conn=1` |
+| 状态帧推送 | `ble: status push n=1 mode=1 v9 token=1 err=0x00` |
+| MTU 协商结果 | `ble: mtu 244 (conn 1)` |
+| OTA 进度百分比 | `ble: ota progress 37% (state 1)`、`ota: ota begin 123456 B` |
+
+限流：realtime 写日志与 OTA 进度按变化/500 ms 节流，正常 40 FPS 帧时钟不受影响。
 
 ## 已验证（实物，ESP32-C3 + bleak）
 

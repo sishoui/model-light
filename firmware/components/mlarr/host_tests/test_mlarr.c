@@ -284,6 +284,10 @@ typedef struct {
     /* mlarr_error: (user, status) on NAK failure paths (F2 §2.9 wiring). */
     struct { uint8_t status; } errors[MAX_EVENTS];
     int errors_n;
+    /* chunk-count probe (ticket #79 log seam): set rx to sample
+     * mlarr_rx_chunks() from inside the commit callback. */
+    mlarr_rx_t *rx;
+    uint16_t chunks_at_commit[MAX_EVENTS];
 } events_t;
 
 static void ev_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak, uint8_t status)
@@ -312,6 +316,8 @@ static int ev_commit(void *user, const uint8_t *buf, uint16_t len, uint16_t vers
     e->committed[e->committed_n].buf = buf;
     e->committed[e->committed_n].len = len;
     e->committed[e->committed_n].version = version;
+    e->chunks_at_commit[e->committed_n] =
+        e->rx != NULL ? mlarr_rx_chunks(e->rx) : 0;
     e->committed_n++;
     return 0;
 }
@@ -697,6 +703,42 @@ static void test_rx_ack_every_8_chunks(void)
     assert(ev.committed_n == 1);
     assert(ev.committed[0].len == n);
     assert(ev.committed[0].version == 9);
+    mlarr_rx_free(rx);
+}
+
+/* Ticket #79: the commit log needs the session's contiguous chunk count.
+ * The accessor must report buffered out-of-order chunks as not-yet-counted,
+ * see the full count from inside the commit callback, and reset to 0 after. */
+static void test_rx_chunk_count_accessor(void)
+{
+    events_t ev = { 0 };
+    mlarr_rx_t *rx = mlarr_rx_new(ev_commit, ev_send, &ev, 1);
+    const uint8_t *big = payload_big;
+    size_t n = sizeof payload_big;   /* 202 B -> 11 chunks of 20/2 B */
+    uint32_t now = 0;
+    uint16_t chunks = (uint16_t)((n + 19) / 20);
+
+    assert(mlarr_rx_chunks(rx) == 0);
+    send_start(rx, now++, (uint16_t)n, 1, 1, 0, mlarr_crc32(big, n));
+    assert(mlarr_rx_chunks(rx) == 0);            /* START carries no data */
+
+    /* out-of-order chunk 1 first: buffered, not contiguous */
+    send_data(rx, now++, 1, big + 20, 20);
+    assert(mlarr_rx_chunks(rx) == 0);
+    send_data(rx, now++, 0, big, 20);
+    assert(mlarr_rx_chunks(rx) == 2);            /* drain picks up chunk 1 */
+
+    for (uint16_t c = 2; c < chunks; c++) {
+        uint16_t len = (c == chunks - 1) ? (uint16_t)(n - c * 20) : 20;
+        send_data(rx, now++, c, big + c * 20, len);
+    }
+    assert(mlarr_rx_chunks(rx) == chunks);
+
+    ev.rx = rx;
+    send_fin(rx, now);
+    assert(ev.committed_n == 1);
+    assert(ev.chunks_at_commit[0] == chunks);    /* visible at commit time */
+    assert(mlarr_rx_chunks(rx) == 0);            /* reset after commit */
     mlarr_rx_free(rx);
 }
 
@@ -1278,10 +1320,11 @@ int main(void)
     test_rx_reset_discards();
     test_rx_disconnect_discards();
     test_rx_ack_every_8_chunks();
+    test_rx_chunk_count_accessor();
     test_rx_commit_failure_nak();
     test_rx_commit_fail_cb_nak();
     test_rx_total_len_too_big();
     test_rx_data_before_start_ignored();
-    printf("all mlarr host tests passed (%d cases)\n", 41);
+    printf("all mlarr host tests passed (%d cases)\n", 43);
     return 0;
 }

@@ -238,6 +238,17 @@ void store_task(void *arg)
         ml_store_tick((uint32_t)(esp_timer_get_time() / 1000));
         /* Token deadlines (5 s probe window, 30 s heartbeat death, 60 s
          * suspend retention, 30 s error hold) fire through this poll. */
+        uint16_t holder_before = mlt_holder(ble_token());
         mlt_poll(ble_token(), (uint32_t)(esp_timer_get_time() / 1000));
+        uint16_t holder_after = mlt_holder(ble_token());
+        if (holder_after != holder_before) {
+            if (holder_after == 0) {
+                ESP_LOGI(TAG, "token released (holder %u)",
+                         (unsigned)holder_before);
+            } else {
+                ESP_LOGI(TAG, "token holder %u -> %u",
+                         (unsigned)holder_before, (unsigned)holder_after);
+            }
+        }
     }
 }

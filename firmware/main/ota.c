@@ -44,6 +44,7 @@ static int ota_flash_begin(void *user, uint32_t image_size)
     if (esp_ota_begin(s_part, image_size, &s_handle) != ESP_OK) {
         return -1;
     }
+    ESP_LOGI(TAG, "ota begin %u B", (unsigned)image_size);
     return 0;
 }
 
@@ -126,7 +127,11 @@ static int ota_flash_version_check(void *user,
 static int ota_flash_set_boot(void *user)
 {
     (void)user;
-    return esp_ota_set_boot_partition(s_part) == ESP_OK ? 0 : -1;
+    if (esp_ota_set_boot_partition(s_part) != ESP_OK) {
+        return -1;
+    }
+    ESP_LOGI(TAG, "ota set_boot ok, rebooting");
+    return 0;
 }
 
 static void ota_flash_abort(void *user)
