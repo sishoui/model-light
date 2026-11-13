@@ -19,7 +19,7 @@ function buildReport(p) {
   return {
     caseId: p.caseDef && p.caseDef.id,
     name: p.caseDef && p.caseDef.name,
-    status: p.status, // passed | failed | error
+    status: p.status, // passed | failed | error | skipped
     startedAt: started.toISOString(),
     finishedAt: finished.toISOString(),
     durationMs: finished.getTime() - started.getTime(),
@@ -35,6 +35,7 @@ function buildReport(p) {
 
 function exitCodeFor(status) {
   if (status === 'passed') return 0;
+  if (status === 'skipped') return 0;
   if (status === 'failed') return 1;
   return 2;
 }
@@ -109,8 +110,15 @@ function buildJUnitXml(report) {
   let cases = assertions.map((a, i) => assertionTestCase(report, a, i));
   let failures = assertions.filter((a) => !a.pass).length;
   let errors = 0;
+  let skipped = 0;
 
-  if (report.status === 'error') {
+  if (report.status === 'skipped') {
+    // 用例级跳过：合成单个 <skipped> testcase（reason=skip 原因）。
+    skipped = 1;
+    const reason = escapeXmlAttr(report.error || '用例跳过');
+    cases = [`<testcase classname="${escapeXmlAttr(caseId)}" name="${escapeXmlAttr(`${caseId} 跳过`)}" time="0">\n      <skipped message="${reason}"/>\n    </testcase>`];
+    failures = 0;
+  } else if (report.status === 'error') {
     // 环境错误/schema 不合法：断言根本没跑，合成单个 error testcase。
     errors = 1;
     const message = escapeXmlAttr(report.error || '环境错误');
@@ -128,7 +136,7 @@ function buildJUnitXml(report) {
   const tests = cases.length;
   return `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<testsuites name="model-light e2e" tests="${tests}" failures="${failures}" errors="${errors}" time="${time}">\n`
-    + `  <testsuite name="${escapeXmlAttr(caseId)}" tests="${tests}" failures="${failures}" errors="${errors}" skipped="0" time="${time}">\n`
+    + `  <testsuite name="${escapeXmlAttr(caseId)}" tests="${tests}" failures="${failures}" errors="${errors}" skipped="${skipped}" time="${time}">\n`
     + cases.map((c) => `    ${c}`).join('\n') + '\n'
     + '  </testsuite>\n'
     + '</testsuites>\n';

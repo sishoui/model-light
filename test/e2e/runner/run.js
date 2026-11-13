@@ -35,11 +35,13 @@ function parseArgs(argv) {
     cliPath: DEFAULT_CLI,
     keepOpen: false,
     junitDir: null,
+    runSkipped: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--flash') opts.flash = true;
     else if (a === '--keep-open') opts.keepOpen = true;
+    else if (a === '--run-skipped') opts.runSkipped = true;
     else if (a === '--case') opts.caseId = argv[++i];
     else if (a === '--ascii-root') opts.asciiRoot = argv[++i];
     else if (a === '--auto-port') opts.autoPort = Number(argv[++i]);
@@ -109,7 +111,8 @@ async function main() {
     return 2;
   }
   if (opts.help) {
-    console.log('用法：node test/e2e/runner/run.js [--case <id>] [--flash] [--keep-open] [--ascii-root <dir>] [--auto-port <n>] [--junit <dir>]');
+    console.log('用法：node test/e2e/runner/run.js [--case <id>] [--flash] [--keep-open] [--ascii-root <dir>] [--auto-port <n>] [--junit <dir>] [--run-skipped]');
+    console.log('  --run-skipped  强制执行标记 skip 的用例（硬件就绪后用，如 ble-06 双 BLE 链路）');
     return 0;
   }
 
@@ -135,6 +138,26 @@ async function main() {
   const results = [];
   for (const caseDef of cases) {
     const startedAt = new Date();
+
+    // 跳过分支：不起 daemon/DevTools（不需要硬件），直接出 skipped 报告。
+    if (caseDef.skip != null && !opts.runSkipped) {
+      const skipReason = typeof caseDef.skip === 'object' && caseDef.skip.reason
+        ? caseDef.skip.reason
+        : '用例标记 skip';
+      log(`\n[runner] === ${caseDef.id} ${caseDef.name} ===`);
+      log(`[runner] ${caseDef.id} → skipped（${skipReason}）`);
+      const result = await runCase(caseDef, {
+        session: null,
+        reportsDir: REPORTS_DIR,
+        junitDir: opts.junitDir || REPORTS_DIR,
+        environment: { skipped: true, reason: skipReason },
+      });
+      log(`[runner] 报告：${result.reportPath}`);
+      log(`[runner] JUnit：${result.junitPath}`);
+      results.push(result.exitCode);
+      continue;
+    }
+
     let daemons = null;
     let devtools = null;
     let session = null;

@@ -51,6 +51,29 @@ test('拒绝未知 action', () => {
   assert.ok(r.errors[0].includes('未知 action'));
 });
 
+test('接受 skip: true 与 skip: { reason }', () => {
+  const c = validCase();
+  c.skip = true;
+  assert.strictEqual(validateCase(c).ok, true);
+  c.skip = { reason: '硬件缺失：需要第二块 BLE 适配器' };
+  assert.strictEqual(validateCase(c).ok, true);
+});
+
+test('拒绝非法 skip', () => {
+  const c = validCase();
+  c.skip = 'yes';
+  let r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('skip')));
+  c.skip = { reason: '' };
+  r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('reason')));
+  c.skip = { reason: 42 };
+  r = validateCase(c);
+  assert.strictEqual(r.ok, false);
+});
+
 test('校验 action 专属字段', () => {
   const c = validCase();
   c.steps = [

@@ -108,3 +108,40 @@ test('deps.junitDir 指定时 JUnit 单独落盘，JSON 仍在 reportsDir', asyn
   assert.deepStrictEqual(fs.readdirSync(reportsDir), fs.readdirSync(reportsDir).filter((f) => f.endsWith('.json')));
   assert.deepStrictEqual(fs.readdirSync(junitDir), [path.basename(r.junitPath)]);
 });
+
+test('skip 用例 → 退出码 0，报告 skipped，不跑任何步骤（无需硬件）', async () => {
+  let sessionTouched = false;
+  const s = fakeSession({
+    startConsoleCapture() { sessionTouched = true; },
+  });
+  const c = baseCase();
+  c.skip = { reason: '硬件缺失：需要第二块 BLE 适配器' };
+  const r = await runCase(c, { session: s, reportsDir: tmpDir() });
+  assert.strictEqual(r.exitCode, 0);
+  assert.strictEqual(r.report.status, 'skipped');
+  assert.strictEqual(sessionTouched, false);
+  assert.strictEqual(r.report.steps.length, 0);
+  assert.strictEqual(r.report.assertions.length, 0);
+  assert.match(r.report.error, /第二块 BLE 适配器/);
+  const xml = fs.readFileSync(r.junitPath, 'utf8');
+  assert.match(xml, /<skipped\b[^>]*message="[^"]*第二块 BLE 适配器"/);
+  assert.match(xml, /skipped="1"/);
+});
+
+test('skip 用例不依赖 session（session=null 也可出报告）', async () => {
+  const c = baseCase();
+  c.skip = true;
+  const r = await runCase(c, { session: null, reportsDir: tmpDir() });
+  assert.strictEqual(r.exitCode, 0);
+  assert.strictEqual(r.report.status, 'skipped');
+  assert.strictEqual(r.report.error, '用例标记 skip');
+});
+
+test('forceRun → skip 用例照常执行', async () => {
+  const s = fakeSession();
+  const c = baseCase();
+  c.skip = true;
+  const r = await runCase(c, { session: s, reportsDir: tmpDir(), forceRun: true });
+  assert.strictEqual(r.report.status, 'passed');
+  assert.strictEqual(s.captured, true);
+});

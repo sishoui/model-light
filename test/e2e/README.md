@@ -33,9 +33,11 @@ npm run test:e2e
 npm run test:e2e -- --case ble-01
 # 先烧录再跑（robocopy → C:\ml-build → idf.py flash）：
 npm run test:e2e -- --flash
+# 强制执行标记 skip 的用例（硬件就绪后用，如 ble-06 双 BLE 链路）：
+npm run test:e2e -- --case ble-06 --run-skipped
 ```
 
-退出码：`0` 全绿 / `1` 有断言失败 / `2` 环境错误（daemon、DevTools、schema 等）。
+退出码：`0` 全绿或全部跳过 / `1` 有断言失败 / `2` 环境错误（daemon、DevTools、schema 等）。
 
 ## 报告（JSON + JUnit XML）
 
@@ -94,6 +96,7 @@ test/e2e/
 {
   "id": "ble-01",
   "name": "BLE-01 扫描 → 连接 → 状态帧",
+  "skip": true,                  // 可选；true 或 { reason }。跳过时不需硬件，报告 status=skipped，退出码 0
   "daemons": ["A"],            // 可选；缺省只有 A。双 daemon 用例见 ble-06
   "setup":    [ /* Step */ ],
   "steps":    [ /* Step */ ],
@@ -101,6 +104,10 @@ test/e2e/
   "teardown": [ /* Step */ ]
 }
 ```
+
+`skip` 用于环境受限、代码已就绪的用例（如 ble-06 需要第二块 BLE 适配器）：
+跳过分支不起 daemon/DevTools，直接产出 `skipped` 报告（JUnit 为 `<skipped>` testcase，
+`testsuite skipped="1"`），不阻塞流水线；硬件就绪后 `--run-skipped` 强制执行。
 
 `daemons` 声明用例需要的 daemon 实例：`A` 是主实例（COM6 串口 + HTTP 19000），
 其余实例（B…）自动 `--no-serial` 且 HTTP 端口依次 +1（B=19001）。runner 并发
@@ -141,7 +148,8 @@ Assertion（`type` 之一）：
   直连；断言固件侧出现第二次 `ble: connect #`、两次 REQ_TOKEN、mock 扫描次数不增。
 - `ble-04-push-arrangement.json`：等令牌空闲 → 改灯组/阶段（页面 store + encode）→
   推送；断言串口 `commit v<base+1>`、状态帧 `arrangementVersion` 同步递增、编排写 ...0003。
-- `ble-06-token-handover.json`：双 daemon（A 持令牌 → B 请求 → A 停心跳 → B 获令牌）。
+- `ble-06-token-handover.json`（**skip**：本机单蓝牙适配器无法建第二条 GATT 链路）：
+  双 daemon（A 持令牌 → B 请求 → A 停心跳 → B 获令牌）。
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
   发 REQ_TOKEN。断言串口 `token released` / `token holder 0 -> N`、GRANT outcome 0/1
   与两端状态帧的 per-connection `tokenHolder`（A=2、B=1）。

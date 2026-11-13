@@ -1,5 +1,7 @@
 // 单用例编排：setup → steps → assertions → teardown，产出报告。
 // 进程/硬件生命周期（daemon、DevTools）由 run.js 负责；这里只依赖 E2ESession。
+// 用例可标 skip（true 或 { reason }）：跳过时不出借 session（不需要硬件），
+// 直接产出 skipped 报告、退出码 0；--run-skipped（deps.forceRun）可强制照常执行。
 
 const { validateCase } = require('./schema');
 const { runSteps } = require('./executor');
@@ -8,7 +10,7 @@ const { buildReport, writeReport, writeJUnitReport, exitCodeFor } = require('./r
 
 /**
  * @param {object} caseDef 已解析的用例 JSON
- * @param {object} deps { session, reportsDir, junitDir?, environment?, now? }
+ * @param {object} deps { session, reportsDir, junitDir?, environment?, now?, forceRun? }
  *                        junitDir 缺省时 JUnit XML 与 JSON 同目录。
  * @returns {Promise<{ exitCode: number, report: object, reportPath: string, junitPath: string }>}
  */
@@ -29,6 +31,12 @@ async function runCase(caseDef, deps) {
   const validation = validateCase(caseDef);
   if (!validation.ok) {
     state.error = new Error(`用例 schema 不合法：${validation.errors.join('；')}`);
+  } else if (caseDef.skip != null && !deps.forceRun) {
+    // 跳过分支：不碰 session/硬件，直接出 skipped 报告。
+    state.status = 'skipped';
+    state.error = new Error(typeof caseDef.skip === 'object' && caseDef.skip.reason
+      ? caseDef.skip.reason
+      : '用例标记 skip');
   } else {
     try {
       if (session.startConsoleCapture) session.startConsoleCapture();
@@ -52,14 +60,17 @@ async function runCase(caseDef, deps) {
     }
   }
 
-  // teardown 始终执行（用例内的应用层清理，如 debugDisconnect）。
-  try {
-    if (caseDef.teardown && caseDef.teardown.length) {
-      state.teardown = await runSteps(caseDef.teardown, session, ctx);
+  // teardown 始终执行（用例内的应用层清理，如 debugDisconnect）；跳过分支没有
+  // 起过硬件，无清理可做。
+  if (state.status !== 'skipped') {
+    try {
+      if (caseDef.teardown && caseDef.teardown.length) {
+        state.teardown = await runSteps(caseDef.teardown, session, ctx);
+      }
+    } catch (e) {
+      state.error = state.error || new Error(`teardown 失败：${e.message}`);
+      if (state.status === 'passed') state.status = 'failed';
     }
-  } catch (e) {
-    state.error = state.error || new Error(`teardown 失败：${e.message}`);
-    if (state.status === 'passed') state.status = 'failed';
   }
 
   const full = buildReport({
@@ -71,7 +82,7 @@ async function runCase(caseDef, deps) {
     stepLog: state.steps,
     teardownLog: state.teardown,
     assertions: state.assertions,
-    consoleErrors: session.consoleEntries || [],
+    consoleErrors: (session && session.consoleEntries) || [],
     environment,
     error: state.error ? String(state.error.message || state.error) : null,
   });

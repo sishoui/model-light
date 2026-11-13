@@ -166,6 +166,17 @@ function validateCase(caseDef) {
   }
   if (!isNonEmptyString(caseDef.id)) errors.push('缺少非空 id');
   if (!isNonEmptyString(caseDef.name)) errors.push('缺少非空 name');
+  if (caseDef.skip != null) {
+    if (caseDef.skip === true) {
+      // 纯布尔跳过：ok
+    } else if (typeof caseDef.skip === 'object' && !Array.isArray(caseDef.skip)) {
+      if (!isNonEmptyString(caseDef.skip.reason)) {
+        errors.push('skip.reason: 跳过对象必须带非空 reason（说明为什么跳过、何时可恢复）');
+      }
+    } else {
+      errors.push('skip: 必须是 true 或 { reason: 非空字符串 }');
+    }
+  }
   if (caseDef.daemons != null) {
     if (!Array.isArray(caseDef.daemons)) {
       errors.push('daemons: 必须是字符串数组');

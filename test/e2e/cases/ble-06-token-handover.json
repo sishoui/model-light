@@ -1,6 +1,9 @@
 {
   "id": "ble-06",
   "name": "BLE-06 多手机令牌交接（双 daemon）",
+  "skip": {
+    "reason": "本机单蓝牙适配器（Intel Wireless）无法对同一 BLE 外设维持两条 GATT 会话（Windows BLE 栈限制，多路尝试均失败）——双 daemon 代码与单测就绪，硬件到位（第二块 BLE 适配器或第二主机）后 npm run test:e2e -- --case ble-06 --run-skipped 验收"
+  },
   "daemons": ["A", "B"],
   "setup": [
     {
