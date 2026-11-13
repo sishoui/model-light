@@ -484,6 +484,12 @@ class TestNoSerialMode:
                 super().__init__(address, **kwargs)
 
         monkeypatch.setattr(daemon_mod, "scan_for_device", forbidden_scan)
+        # CI 无 bleak：--address 路径的 ble_device_from_address 会懒导入 bleak，
+        # 替身直接返回带 address/name 的对象（与 BLEDevice 接口同形）。
+        monkeypatch.setattr(
+            daemon_mod, "ble_device_from_address",
+            lambda address, name: SimpleNamespace(address=address, name=name),
+        )
         monkeypatch.setattr(daemon_mod, "DaemonBleTransport", RecordingTransport)
         monkeypatch.setattr(daemon_mod.DaemonBleTransport, "connect", ok_connect)
         monkeypatch.setattr(daemon_mod.DaemonBleTransport, "disconnect", ok_disconnect)
@@ -1089,7 +1095,9 @@ class TestStartup:
 
         monkeypatch.setattr(daemon_mod, "scan_for_device", fake_scan)
         monkeypatch.setattr(daemon_mod.DaemonBleTransport, "connect", fail_connect)
-        rc = daemon_mod.main(["--scan-timeout", "0.1", "--connect-timeout", "0.1"])
+        # --no-serial：本用例只测 BLE 连接失败退出码；不开串口才 hermetic
+        # （CI 无 COM6，真实 SerialMonitor.open 会先以退出码 6 失败）。
+        rc = daemon_mod.main(["--no-serial", "--scan-timeout", "0.1", "--connect-timeout", "0.1"])
         assert rc == daemon_mod.EXIT_CONNECT_FAILED
         assert "connection refused" in capsys.readouterr().err
 
@@ -1111,7 +1119,8 @@ class TestStartup:
             "missing_characteristics",
             lambda self, expected: [daemon_mod.CHR_OTA],
         )
-        rc = daemon_mod.main(["--scan-timeout", "0.1"])
+        # --no-serial：同上，本用例只测特征缺失退出码（CI 无 COM6）。
+        rc = daemon_mod.main(["--no-serial", "--scan-timeout", "0.1"])
         assert rc == daemon_mod.EXIT_INCOMPLETE_CHARACTERISTICS
         assert daemon_mod.CHR_OTA in capsys.readouterr().err
 
