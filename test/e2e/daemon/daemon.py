@@ -166,6 +166,13 @@ class SerialMonitor:
             raise SerialOpenError("缺少 pyserial：pip install pyserial") from exc
         try:
             ser = serial.Serial(port, baudrate=baudrate, timeout=0.2)
+            # USB Serial/JTAG（ESP32-C3 原生 USB）：DTR 复位脉冲让设备重 boot，
+            # 保证 daemon 一连上串口就能在健康检查窗口内看到 boot 日志——
+            # 否则设备静默运行时 _boot_seen 永远 False，健康检查 60 s 超时（#e2e 回归）。
+            # 与 idf.py monitor 的连接行为一致：连上即复位，日志从 boot 开始。
+            ser.dtr = False
+            time.sleep(0.1)
+            ser.dtr = True
         except Exception as exc:
             raise SerialOpenError(
                 f"无法打开串口 {port}（可能被其他进程占用或设备未连接）: {exc}"

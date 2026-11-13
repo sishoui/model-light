@@ -73,6 +73,8 @@ class FakeSerial:
         self.is_open = True
         self._lines = [line.encode() if isinstance(line, str) else line for line in lines]
         self._lock = threading.Lock()
+        self.dtr = True
+        self.rts = True
 
     def push(self, text):
         with self._lock:
