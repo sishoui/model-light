@@ -46,6 +46,22 @@ foreach ($comp in "mlarr","mlproto","mltoken","mlrt","mlota") {
 - ninja 位置：`C:\Espressif\tools\ninja\1.12.1\ninja.exe`（cmake 默认生成器在无 VS 环境下会失败，显式 `-G Ninja` 最稳）。
 - CI（`.github/workflows/ci.yml`）在 Ubuntu 上跑同一组 ctest，命令一致。
 
+## 分区表与 OTA（#92）
+
+自定义分区表 `firmware/partitions.csv`（无 factory，双 1.5 MiB OTA 槽
+`ota_0`/`ota_1`），由 `sdkconfig.defaults` 的
+`CONFIG_PARTITION_TABLE_CUSTOM=y` 启用；ESP32-C3FH4 为 4 MB flash
+（`CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y`）。分区表变更**必须**先 full erase，
+否则旧的单 app 分区布局残留会让 bootloader 无法选择 OTA 槽：
+
+```powershell
+idf.py -p COM6 erase-flash
+idf.py -p COM6 flash monitor
+```
+
+full erase 会清空 NVS（已提交的编排、OTA 会话与 min_ver），开发设备可接受。
+分区表/启动分区不能通过 OTA 更新，首刷即最终布局。
+
 ## 构建
 
 需要 ESP-IDF ≥ 5.4。**注意**：项目路径含非 ASCII 字符（如 `项目`）时，

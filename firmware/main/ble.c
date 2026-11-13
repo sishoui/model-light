@@ -291,7 +291,9 @@ static int chr_ota_access(uint16_t conn, uint16_t attr,
                           struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     (void)attr; (void)arg;
-    uint8_t frame[MLOTA_BEGIN_PAYLOAD + 3] = { 0 };
+    /* Full-size frame buffer: DATA carries up to MLOTA_CHUNK_MAX bytes, not
+     * just the BEGIN payload (§1). */
+    uint8_t frame[MLOTA_FRAME_MAX] = { 0 };
     uint16_t len = om_flat(ctxt->om, frame, sizeof frame);
     /* DATA chunks are high-rate and covered by the progress log; only the
      * control frames (BEGIN/QUERY/COMMIT/ABORT/RESUME) get a write line. */
@@ -584,7 +586,7 @@ int ble_start(void)
         ESP_LOGE(TAG, "ota state machine alloc failed");
         return -1;
     }
-    xTaskCreatePinnedToCore(ota_poll_task, "otapoll", 2048, NULL,
+    xTaskCreatePinnedToCore(ota_poll_task, "otapoll", 4096, NULL,
                             tskIDLE_PRIORITY + 2, NULL, 0);
 
     ble_hs_cfg.sync_cb = on_sync;

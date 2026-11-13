@@ -86,6 +86,11 @@ enum {
 #define MLOTA_SHA256_LEN      32
 #define MLOTA_BEGIN_PAYLOAD   (4 + MLOTA_SHA256_LEN + MLOTA_APP_VERSION_LEN + 4)
 
+/* Max DATA payload (MTU 244 − cmd/seq header, §1): the BLE receive buffer
+ * must hold a full frame, not just the BEGIN payload. */
+#define MLOTA_CHUNK_MAX       241
+#define MLOTA_FRAME_MAX       (3 + MLOTA_CHUNK_MAX)
+
 /* ota_0/ota_1 slot size (partitions.csv: 0x190000). */
 #define MLOTA_SLOT_SIZE_MAX   0x190000u
 

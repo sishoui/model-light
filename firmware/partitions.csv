@@ -1,7 +1,10 @@
 # Partition table per docs/spec.md §3.4: no factory, dual 1.5 MiB OTA slots.
+# otadata (2 sectors) records the active OTA slot for the bootloader; without
+# it esp_ota_set_boot_partition() cannot switch slots (issue #92).
 # Partition table and bootloader cannot be changed via OTA — v1 first flash is final.
 # Name,   Type, SubType, Offset,   Size,  Flags
 nvs,      data, nvs,     0x9000,   0x6000,
-phy_init, data, phy,     0xf000,   0x1000,
-ota_0,    app,  ota_0,   0x10000,  0x190000,
-ota_1,    app,  ota_1,   0x1a0000, 0x190000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  0x190000,
+ota_1,    app,  ota_1,   0x1b0000, 0x190000,

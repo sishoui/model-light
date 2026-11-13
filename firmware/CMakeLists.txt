@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(model-light)
-set(PARTITION_TABLE_CUSTOM y)
-set(PARTITION_TABLE_FILENAME partitions.csv)
-set(PARTITION_TABLE_OFFSET 0x8000)
+
+# Partition-table selection is Kconfig (see CONFIG_PARTITION_TABLE_CUSTOM in
+# sdkconfig.defaults); the partition_table component reads the CSV from there.
 

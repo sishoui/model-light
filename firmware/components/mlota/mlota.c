@@ -63,7 +63,7 @@ static uint32_t get_le32(const uint8_t *p)
 
 /* chunk payload cap: Android MTU 244 − 3 (§2.1); iOS just sends smaller
  * chunks, which is fine — chunk index is what defines offsets. */
-#define CHUNK_MAX 241
+#define CHUNK_MAX MLOTA_CHUNK_MAX
 
 struct mlota {
     mlota_flash_t    flash;
