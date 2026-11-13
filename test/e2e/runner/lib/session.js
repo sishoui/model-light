@@ -36,10 +36,11 @@ class E2ESession {
    * @param {string} opts.mockSource ble-mock.js 全文（module.exports 守卫已去掉）
    * @param {string} [opts.baseUrl]
    */
-  constructor({ mini, http, mockSource, baseUrl = 'http://127.0.0.1:19000', daemons }) {
+  constructor({ mini, http, mockSource, cloudMockSource = '', baseUrl = 'http://127.0.0.1:19000', daemons }) {
     this.mini = mini;
     this.http = http;
     this.mockSource = mockSource;
+    this.cloudMockSource = cloudMockSource;
     this.baseUrl = baseUrl;
     // #85 双 daemon：id → { http, baseUrl }；缺省只有主实例 A。
     this.daemons = daemons || { A: { http, baseUrl } };
@@ -79,6 +80,27 @@ class E2ESession {
     `;
     const result = await this.evaluate(code);
     if (!result || !result.ok) throw new Error('ble-mock 注入失败：globalThis.__bleMock 未安装');
+    return result.state;
+  }
+
+  /**
+   * 注入 cloud-mock（#87）：wx.login → fake code；wx.request 的 /v1/* 走构造
+   * 后端响应，其余（daemon）透传。必须在 ble-mock 之后注入：cloud-mock 包裹
+   * 当前 wx.request（即 ble-mock 的 daemon 转发），顺序反了会把 BLE 桥盖掉。
+   */
+  async injectCloudMock() {
+    if (!this.cloudMockSource) throw new Error('cloud-mock 源码为空（run.js 未加载）');
+    const src = this.cloudMockSource.replace(
+      /if \(typeof module !== 'undefined' && module\.exports\) module\.exports = api;?/,
+      ''
+    );
+    const code = `
+      ${src}
+      const ctl = installCloudMock(globalThis.wx);
+      return { ok: !!ctl, state: ctl ? ctl.getState() : null };
+    `;
+    const result = await this.evaluate(code);
+    if (!result || !result.ok) throw new Error('cloud-mock 注入失败：globalThis.__cloudMock 未安装');
     return result.state;
   }
 
@@ -134,7 +156,7 @@ class E2ESession {
    * reLaunch 在本机环境坏，页面方法驱动等效于用户点“扫描设备”按钮。
    * 上一次用例可能停在设备页：先 reLaunch 回 discover（tabBar 页）。
    */
-  async restartDiscoverScan({ timeoutMs = 30000 } = {}) {
+  async restartDiscoverScan({ timeoutMs = 45000 } = {}) {
     try {
       return await poll(async () => {
         const st = await this.evaluate(`
@@ -142,22 +164,25 @@ class E2ESession {
           const p = pages[pages.length - 1];
           if (!p) return null;
           if (p.route !== 'pages/discover/discover') {
-            let relaunched = false;
+            // 上次用例可能停在设备页；runtime 的 wx.reLaunch 比 switchTab 稳
+            // （automator 自带路由调用在本机坏）。reLaunch 后显式再扫一次，
+            // 不依赖 onShow 时序。
             await new Promise((resolve) => {
-              // discover 是 tabBar 页：优先 switchTab；失败再 reLaunch 兜底。
-              wx.switchTab({
+              wx.reLaunch({
                 url: '/pages/discover/discover',
-                success: () => { relaunched = true; resolve(); },
-                fail: () => {
-                  wx.reLaunch({
-                    url: '/pages/discover/discover',
-                    success: () => { relaunched = true; resolve(); },
-                    fail: resolve,
-                  });
-                },
+                success: () => resolve(),
+                fail: () => resolve(),
               });
             });
-            return { route: p.route, scanning: !!p.data.scanning, relaunched };
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const pages2 = getCurrentPages();
+            const p2 = pages2[pages2.length - 1];
+            if (!p2 || p2.route !== 'pages/discover/discover') {
+              return { route: p2 && p2.route, scanning: false, relaunched: true };
+            }
+            await p2.stopScan();
+            await p2.startScan();
+            return { route: p2.route, scanning: !!p2.data.scanning, relaunched: true };
           }
           await p.stopScan();
           await p.startScan();
@@ -287,6 +312,17 @@ class E2ESession {
   /** mock 控制钩子：连接/扫描/MTU/订阅等状态快照。 */
   async mockState() {
     return this.evaluate('return globalThis.__bleMock ? globalThis.__bleMock.getState() : null;');
+  }
+
+  /** cloud-mock 控制钩子：登录/刷新/备份请求计数与最后一次响应（#87）。 */
+  async cloudState() {
+    return this.evaluate('return globalThis.__cloudMock ? globalThis.__cloudMock.getState() : null;');
+  }
+
+  /** cloud-mock 控制钩子：全部截获的后端请求（#87）。 */
+  async capturedCloudRequests() {
+    const reqs = await this.evaluate('return globalThis.__cloudMock ? globalThis.__cloudMock.getRequests() : [];');
+    return Array.isArray(reqs) ? reqs : [];
   }
 
   async disconnect() {

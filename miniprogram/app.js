@@ -48,6 +48,9 @@ App({
       storage: wx,
       loginCode: this._cloudLoginCode || null,
     });
+    // cloudApi 在 onLaunch 里先于本次重建创建，捕获的是旧 auth；同步引用，
+    // 否则备份请求会打到 requester=null 的旧实例（E2E #87 发现）。
+    if (typeof api.setAuth === 'function') api.setAuth(this.cloudAuth);
     this.cloudSync = createCloudSync({
       cloudApi: api,
       auth: this.cloudAuth,

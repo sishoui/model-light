@@ -406,17 +406,29 @@ Page({
   async writeBytesToDevice(payloadBytes) {
     const frame = this._lastStatusFrame;
     const version = frame ? (frame.arrangementVersion + 1) & 0xffff : 1;
-    const sender = createArrangementSender(this._arrangementTransport(), { chunkSize: this._chunkSize });
-    const result = await sender.send({
-      payloadVersion: 1,
-      protoMajor: TEST_PROTO_MAJOR,
-      protoMinor: TEST_PROTO_MINOR,
-      data: payloadBytes,
-    });
-    if (!result.ok) {
-      const err = new Error(result.reason);
-      err.reason = result.reason;
-      throw err; // restore() 统一转 restore-failed
+    // §2.4：编排写需要令牌。restore 路径同样要拿令牌，否则固件拒绝 0003 写
+    // （E2E #87 发现：没有令牌时 sender 收不到 ACK → restore-failed）。
+    const token = await this._tokenClient.requestToken();
+    if (!token.granted) {
+      const err = new Error('no-token');
+      err.reason = 'no-token';
+      throw err;
+    }
+    try {
+      const sender = createArrangementSender(this._arrangementTransport(), { chunkSize: this._chunkSize });
+      const result = await sender.send({
+        payloadVersion: 1,
+        protoMajor: TEST_PROTO_MAJOR,
+        protoMinor: TEST_PROTO_MINOR,
+        data: payloadBytes,
+      });
+      if (!result.ok) {
+        const err = new Error(result.reason);
+        err.reason = result.reason;
+        throw err; // restore() 统一转 restore-failed
+      }
+    } finally {
+      this._tokenClient.release();
     }
     this.setData({ pushVersion: version });
   },

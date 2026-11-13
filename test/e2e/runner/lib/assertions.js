@@ -2,7 +2,8 @@
 // 每条断言返回 { type, pass, detail }；不抛错（环境问题除外）。
 
 const { normalizeConsoleEntry } = require('./session');
-const { poll, interpolateValue } = require('./util');
+const { poll, interpolateValue, resolvePath } = require('./util');
+const { isDeepStrictEqual } = require('node:util');
 
 function matchConsole(entries, assertion) {
   const level = assertion.level || 'error';
@@ -128,6 +129,88 @@ async function runAssertion(assertion, session, ctx = {}) {
         type: 'mockState',
         pass: errors.length === 0,
         detail: { state, errors },
+      };
+    }
+
+    case 'cloudRequest': {
+      // #87：断言 mock 后端收到的请求（method / path 正则 / route / status）。
+      const reqs = await session.capturedCloudRequests();
+      const method = assertion.method ? String(assertion.method).toUpperCase() : null;
+      const pathPattern = assertion.path ? new RegExp(assertion.path) : null;
+      const route = assertion.route || null;
+      const statuses = assertion.status == null
+        ? null
+        : (Array.isArray(assertion.status) ? assertion.status.map(Number) : [Number(assertion.status)]);
+      const matches = reqs.filter((r) => {
+        if (method && r.method !== method) return false;
+        if (pathPattern && !pathPattern.test(r.path)) return false;
+        if (route && r.route !== route) return false;
+        if (statuses && !statuses.includes(r.status)) return false;
+        return true;
+      });
+      const minCount = assertion.minCount || 1;
+      return {
+        type: 'cloudRequest',
+        pass: matches.length >= minCount,
+        detail: { method, path: assertion.path || null, route, status: assertion.status ?? null, matches, totalRequests: reqs.length },
+      };
+    }
+
+    case 'cloudState': {
+      // #87：断言 cloud-mock getState() 快照（counts.login / last.put.status 等，
+      // 键支持点路径）。
+      const state = (await session.cloudState()) || {};
+      const fields = {};
+      for (const [key, value] of Object.entries(assertion.fields || {})) {
+        fields[key] = interpolateValue(value, ctx);
+      }
+      const errors = [];
+      for (const [key, expected] of Object.entries(fields)) {
+        const actual = resolvePath(state, key);
+        if (!isDeepStrictEqual(actual, expected)) {
+          errors.push(`字段 ${key}=${JSON.stringify(actual)}，期望 ${JSON.stringify(expected)}`);
+        }
+      }
+      // minCounts：至少 N 次（用于登录/刷新次数这类可能因启动时序多一次的值）
+      for (const [key, min] of Object.entries(assertion.minCounts || {})) {
+        const actual = resolvePath(state, key);
+        if (typeof actual !== 'number' || actual < min) {
+          errors.push(`字段 ${key}=${JSON.stringify(actual)}，至少 ${min}`);
+        }
+      }
+      return {
+        type: 'cloudState',
+        pass: errors.length === 0,
+        detail: { state, errors },
+      };
+    }
+
+    case 'runtime': {
+      // #87：在 DevTools 运行时执行一段只读探针，断言返回对象的字段/正则。
+      // 用于小程序自身状态（登录态、storage、页面 data），cloud-mock 看不到这些。
+      let value;
+      try {
+        value = await session.evaluate(assertion.code, assertion.args || []);
+      } catch (e) {
+        return { type: 'runtime', pass: false, detail: { error: e.message, errors: [e.message] } };
+      }
+      const errors = [];
+      for (const [key, expected] of Object.entries(assertion.fields || {})) {
+        const actual = resolvePath(value, key);
+        if (!isDeepStrictEqual(actual, expected)) {
+          errors.push(`字段 ${key}=${JSON.stringify(actual)}，期望 ${JSON.stringify(expected)}`);
+        }
+      }
+      for (const [key, pattern] of Object.entries(assertion.patterns || {})) {
+        const actual = resolvePath(value, key);
+        if (actual == null || !new RegExp(pattern).test(String(actual))) {
+          errors.push(`字段 ${key}=${JSON.stringify(actual)}，不匹配 /${pattern}/`);
+        }
+      }
+      return {
+        type: 'runtime',
+        pass: errors.length === 0,
+        detail: { value, errors },
       };
     }
 

@@ -57,6 +57,7 @@ async function runCase(caseDef, deps) {
       // runCase 之前就由 run.js 拦下（退出码 2）。
       state.status = 'failed';
       state.error = e;
+      if (e && Array.isArray(e.stepLog)) state.steps = e.stepLog;
     }
   }
 

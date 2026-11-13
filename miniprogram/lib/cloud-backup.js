@@ -6,16 +6,9 @@
 // 2. 备份请求的任何失败都不阻塞编辑与 BLE 写入——所有入口返回 { ok:false }，绝不抛出。
 // 3. 设备为空编排而云端有备份时，仍不自动拉，只提示一次。
 
+const { bytesToBase64, base64ToBytes } = require('./base64');
+
 const ML_ID_RE = /^ML-[0-9A-F]{4}$/;
-
-/** base64（标准表）← Uint8Array，Node 与小程序 wx.base64ArrayBuffer 双兼容路径 */
-function bytesToBase64(bytes) {
-  return Buffer.from(bytes).toString('base64');
-}
-
-function base64ToBytes(b64) {
-  return new Uint8Array(Buffer.from(b64, 'base64'));
-}
 
 /**
  * 上推一份编排备份。

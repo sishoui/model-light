@@ -1,7 +1,7 @@
 // 步骤执行器：把用例 JSON 的 setup/steps/teardown 分发到 E2ESession。
 // 纯逻辑：单测注入假 session，不碰 DevTools。
 
-const { sleep, interpolate } = require('./util');
+const { sleep, interpolate, interpolateValue } = require('./util');
 
 class StepError extends Error {
   constructor(message, step) {
@@ -43,7 +43,11 @@ async function runStep(step, session, ctx) {
       return;
     }
     case 'waitForStatus': {
-      const frame = await session.waitForStatus(step.fields || {}, step.timeoutMs || 5000, step.daemon || 'A');
+      const fields = {};
+      for (const [key, value] of Object.entries(step.fields || {})) {
+        fields[key] = interpolateValue(value, ctx);
+      }
+      const frame = await session.waitForStatus(fields, step.timeoutMs || 5000, step.daemon || 'A');
       if (step.saveAs) ctx[step.saveAs] = frame;
       return { value: frame };
     }
@@ -80,6 +84,7 @@ async function runSteps(steps, session, ctx) {
     } catch (e) {
       const err = new StepError(`步骤 ${i}（${step.action}）失败：${e.message}`, step);
       err.cause = e;
+      err.stepLog = log;
       log.push({ index: i, action: step.action, ok: false, durationMs: Date.now() - t0, error: e.message });
       throw err;
     }

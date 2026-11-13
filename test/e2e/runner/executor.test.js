@@ -71,6 +71,16 @@ test('waitForStatus 轮询字段并把帧写入 saveAs', async () => {
   assert.deepStrictEqual(ctx.st, { parsed: { tokenHolder: 0 } });
 });
 
+test('waitForStatus fields 支持 {{ctx}} 插值（保留数字类型）', async () => {
+  const calls = [];
+  const s = fakeSession({
+    waitForStatus: async (...args) => { calls.push(args); return { parsed: { arrangementVersion: 3 } }; },
+  });
+  const ctx = { backup: { version: 3 } };
+  await runStep({ action: 'waitForStatus', fields: { arrangementVersion: '{{backup.version}}' }, timeoutMs: 1000 }, s, ctx);
+  assert.deepStrictEqual(calls[0], [{ arrangementVersion: 3 }, 1000, 'A']);
+});
+
 test('waitForBle 调 session 等 daemon BLE 就绪', async () => {
   const calls = [];
   const s = fakeSession({ waitForBleConnected: async (...args) => { calls.push(args); return { ok: true }; } });

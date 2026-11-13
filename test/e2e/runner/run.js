@@ -25,6 +25,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const CASES_DIR = path.join(REPO_ROOT, 'test', 'e2e', 'cases');
 const REPORTS_DIR = path.join(REPO_ROOT, 'test', 'e2e', 'reports');
 const MOCK_PATH = path.join(REPO_ROOT, 'test', 'e2e', 'mock', 'ble-mock.js');
+const CLOUD_MOCK_PATH = path.join(REPO_ROOT, 'test', 'e2e', 'mock', 'cloud-mock.js');
 
 function parseArgs(argv) {
   const opts = {
@@ -123,6 +124,7 @@ async function main() {
   }
 
   const mockSource = fs.readFileSync(MOCK_PATH, 'utf8');
+  const cloudMockSource = fs.readFileSync(CLOUD_MOCK_PATH, 'utf8');
   const miniprogramDir = path.join(REPO_ROOT, 'miniprogram');
   ensureProjectConfig(miniprogramDir);
 
@@ -187,6 +189,7 @@ async function main() {
         mini,
         http: primary.http,
         mockSource,
+        cloudMockSource,
         baseUrl: primary.baseUrl,
         daemons: sessionDaemons,
       });
@@ -195,6 +198,11 @@ async function main() {
       // 设备），页面方法驱动一次 stopScan→startScan 让 mock 的 ML-8DCC 进列表。
       const injected = await session.injectMock();
       log(`[runner] ble-mock 已注入：${injected ? 'ok' : '?'}`);
+      // #87：后端 mock 必须在 ble-mock 之后注入（包裹其 wx.request，/v1/* 拦截，
+      // daemon HTTP 透传）。此时 app.onLaunch 已跑过，AUTH-01 在用例内重新触发
+      // silentLogin（见 README「启动时机」）。
+      const cloudInjected = await session.injectCloudMock();
+      log(`[runner] cloud-mock 已注入：${cloudInjected ? 'ok' : '?'}`);
       await session.restartDiscoverScan();
 
       const result = await runCase(caseDef, {

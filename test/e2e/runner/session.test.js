@@ -104,9 +104,9 @@ test('restartDiscoverScan 不在 discover 页时先 reLaunch 再重扫', async (
   const s = new E2ESession({ mini, http: {}, mockSource: '' });
   const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
   assert.deepStrictEqual(st, { scanning: true });
-  assert.ok(calls[0].includes("wx.switchTab({"));
   assert.ok(calls[0].includes("wx.reLaunch({"));
   assert.ok(calls[0].includes("url: '/pages/discover/discover'"));
+  assert.ok(calls[0].includes('await p2.startScan()'));
 });
 
 test('normalizeConsoleEntry 处理多种形态', () => {
@@ -200,6 +200,39 @@ test('mockState 透传 mock 控制钩子结果', async () => {
   const mini = { evaluate: async () => ({ connected: true, scanCount: 1 }) };
   const s = new E2ESession({ mini, http: {}, mockSource: '' });
   assert.deepStrictEqual(await s.mockState(), { connected: true, scanCount: 1 });
+});
+
+test('#87 injectCloudMock 去掉 module.exports 守卫并调用安装函数', async () => {
+  const evaluated = [];
+  const mini = {
+    evaluate: async (src) => {
+      evaluated.push(src);
+      return { ok: true, state: { installed: true } };
+    },
+  };
+  const s = new E2ESession({
+    mini,
+    http: {},
+    mockSource: '',
+    cloudMockSource: `function installCloudMock(wxApi) { return { getState: () => ({}) }; }
+const api = { install: installCloudMock };
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+`,
+  });
+  const st = await s.injectCloudMock();
+  assert.deepStrictEqual(st, { installed: true });
+  assert.ok(!evaluated[0].includes('module.exports'));
+  assert.ok(evaluated[0].includes('installCloudMock(globalThis.wx'));
+});
+
+test('#87 cloudState/capturedCloudRequests 透传 cloud-mock 控制钩子', async () => {
+  const mini = { evaluate: async () => ({ loginCalls: 1 }) };
+  const s = new E2ESession({ mini, http: {}, mockSource: '', cloudMockSource: 'x' });
+  assert.deepStrictEqual(await s.cloudState(), { loginCalls: 1 });
+
+  const mini2 = { evaluate: async () => [{ method: 'PUT', path: '/v1/devices/ML-8DCC/backup' }] };
+  const s2 = new E2ESession({ mini: mini2, http: {}, mockSource: '', cloudMockSource: 'x' });
+  assert.deepStrictEqual(await s2.capturedCloudRequests(), [{ method: 'PUT', path: '/v1/devices/ML-8DCC/backup' }]);
 });
 
 test('capturedWrites 透传 mock 控制钩子结果', async () => {

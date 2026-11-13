@@ -8,7 +8,7 @@
 // （退出码 2），避免半跑一条坏用例。
 
 const ACTIONS = new Set(['navigate', 'tap', 'input', 'evaluate', 'waitForSerial', 'waitForStatus', 'waitForBle', 'waitMs', 'daemonWrite']);
-const ASSERTION_TYPES = new Set(['serial', 'console', 'statusFrame', 'bleWrite', 'mockState']);
+const ASSERTION_TYPES = new Set(['serial', 'console', 'statusFrame', 'bleWrite', 'mockState', 'cloudRequest', 'cloudState', 'runtime']);
 const CONSOLE_LEVELS = new Set(['log', 'info', 'warn', 'error', 'debug']);
 
 const isNonEmptyString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -141,6 +141,41 @@ function validateAssertion(assertion, where, errors) {
     case 'mockState':
       if (assertion.fields != null && (typeof assertion.fields !== 'object' || Array.isArray(assertion.fields))) {
         errors.push(`${where}: mockState fields 必须是对象`);
+      }
+      break;
+    case 'cloudRequest':
+      if (assertion.method != null && !isNonEmptyString(assertion.method)) {
+        errors.push(`${where}: cloudRequest method 必须是非空字符串`);
+      }
+      if (assertion.path != null && !isNonEmptyString(assertion.path)) {
+        errors.push(`${where}: cloudRequest path 必须是非空字符串（正则）`);
+      }
+      if (assertion.route != null && !isNonEmptyString(assertion.route)) {
+        errors.push(`${where}: cloudRequest route 必须是非空字符串`);
+      }
+      if (assertion.status != null
+        && !(typeof assertion.status === 'number' || (Array.isArray(assertion.status) && assertion.status.every((s) => typeof s === 'number')))) {
+        errors.push(`${where}: cloudRequest status 必须是数字或数字数组`);
+      }
+      if (assertion.minCount != null && !isPositiveNumber(assertion.minCount)) {
+        errors.push(`${where}: cloudRequest minCount 必须是正数`);
+      }
+      break;
+    case 'cloudState':
+      if (assertion.fields != null && (typeof assertion.fields !== 'object' || Array.isArray(assertion.fields))) {
+        errors.push(`${where}: cloudState fields 必须是对象`);
+      }
+      if (assertion.minCounts != null && (typeof assertion.minCounts !== 'object' || Array.isArray(assertion.minCounts))) {
+        errors.push(`${where}: cloudState minCounts 必须是对象`);
+      }
+      break;
+    case 'runtime':
+      if (!isNonEmptyString(assertion.code)) errors.push(`${where}: runtime 需要非空 code`);
+      if (assertion.fields != null && (typeof assertion.fields !== 'object' || Array.isArray(assertion.fields))) {
+        errors.push(`${where}: runtime fields 必须是对象`);
+      }
+      if (assertion.patterns != null && (typeof assertion.patterns !== 'object' || Array.isArray(assertion.patterns))) {
+        errors.push(`${where}: runtime patterns 必须是对象`);
       }
       break;
     default:

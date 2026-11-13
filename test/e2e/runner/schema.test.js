@@ -166,3 +166,27 @@ test('serial maxCount 与 statusFrame/waitForStatus/waitForBle 的 daemon 字段
   bad.assertions = [{ type: 'serial', pattern: 'x', maxCount: 0 }];
   assert.ok(validateCase(bad).errors.some((e) => e.includes('maxCount')));
 });
+
+test('#87 新断言类型：cloudRequest / cloudState / runtime 校验', () => {
+  const c = validCase();
+  c.assertions = [
+    { type: 'cloudRequest', method: 'PUT', path: '/backup$', status: [200, 201], minCount: 1 },
+    { type: 'cloudState', fields: { 'counts.login': 1 }, minCounts: { 'counts.login': 1 } },
+    { type: 'runtime', code: 'return { ok: true };', fields: { ok: true }, patterns: { s: 'x' } },
+  ];
+  assert.strictEqual(validateCase(c).ok, true);
+
+  const bad = validCase();
+  bad.assertions = [
+    { type: 'cloudRequest' },
+    { type: 'cloudRequest', method: 'PUT', status: '200', minCount: 0 },
+    { type: 'cloudState', fields: [] },
+    { type: 'runtime' },
+    { type: 'runtime', code: 'return 1;', fields: [] },
+  ];
+  const r = validateCase(bad);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('cloudRequest status')));
+  assert.ok(r.errors.some((e) => e.includes('cloudState fields')));
+  assert.ok(r.errors.some((e) => e.includes('runtime 需要')));
+});

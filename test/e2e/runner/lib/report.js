@@ -82,6 +82,14 @@ function assertionLabel(assertion, index) {
       case 'bleWrite':
         return `bleWrite ${(assertion.detail && assertion.detail.short) || ''}`
           + (assertion.detail && assertion.detail.data ? ` data=${assertion.detail.data}` : '');
+      case 'cloudRequest':
+        return `cloudRequest ${(assertion.detail && assertion.detail.method) || ''}`
+          + (assertion.detail && assertion.detail.path ? ` ${assertion.detail.path}` : '');
+      case 'cloudState':
+        return `cloudState ${(assertion.detail && assertion.detail.errors && assertion.detail.errors.length === 0)
+          ? 'snapshot' : 'fields'}`;
+      case 'runtime':
+        return 'runtime probe';
       default:
         return String(assertion.type);
     }

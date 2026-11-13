@@ -81,3 +81,53 @@ curl -X POST http://127.0.0.1:19000/api/serial/assert \
 
 第二种途径：`automation_wx_api` 的 mock action 可单 API 覆盖（适合临时替换
 单个 API 做对照，不做整套 BLE 模拟）。
+
+## 后端 / 登录 mock（ticket #87）：cloud-mock.js
+
+`cloud-mock.js` 与 ble-mock 同样自包含、零 require，可整段内联进
+`automation_evaluate` 注入 DevTools：
+
+```js
+installCloudMock(globalThis.wx); // 必须在 ble-mock 之后（包裹其 wx.request）
+```
+
+拦截范围：
+
+| 通道 | mock 行为 |
+| --- | --- |
+| `wx.login` | 返回 `{ code: 'e2e-fake-code' }`（`setLoginCode()` 可改） |
+| `POST /v1/auth/login` | 构造 `{ accessToken(JWT), refreshToken, user }` |
+| `POST /v1/auth/refresh` | 旋转 token（默认 `e2e-refresh-2`） |
+| `POST /v1/auth/logout` | 204 |
+| `PUT /v1/devices/:mlId/backup` | `{ rev, previousRev }`，或 401/500/网络错误/延迟 |
+| `GET /v1/devices/:mlId/backup` | 构造备份 TLV（base64 + crc32 + stale），默认 404 |
+| 其他 `/v1/*` | 404 |
+| 非 `/v1/*`（daemon `127.0.0.1:19000`） | 原样透传给上一个 `wx.request`（ble-mock） |
+
+场景是声明式的，`responses` 队列按请求顺序消费、耗尽重复最后一个：
+
+```js
+const c = globalThis.__cloudMock;
+c.setScenario({
+  put: { responses: [
+    { status: 401, body: { error: { code: 'AUTH_INVALID' } } },
+    { status: 200, delayMs: 1200, body: { rev: 2, previousRev: 1 } },
+  ] },
+});
+```
+
+`body` 也可以是函数 `({ method, path, token, body, route }) => object`，用于按
+当前时间签发 JWT 或按设备状态生成 TLV。`networkError: true` 模拟连接失败。
+
+控制钩子（`globalThis.__cloudMock`）：
+
+- `getState()` —— `{ loginCalls, counts: { login, refresh, logout, put, get, other, total },
+  requestCount, routeHits, last: { <route>: summary } }`
+- `getRequests()` —— 全部请求 `[{ method, path, route, token, requestBody, status,
+  response, networkError, delayMs, ts }]`
+- `setScenario(patch)` —— 深合并场景（对象递归，responses/函数整体替换）
+- `reset()` —— 清请求/计数，保留场景
+- `setLoginCode(code)` / `issueToken({ ttlMs, sub })`
+- `dispose()` —— 恢复安装前的 `wx.request` / `wx.login`
+
+单测：`node --test test/e2e/mock/cloud-mock.test.js`（已纳入 `npm run test:mini`）。

@@ -18,6 +18,10 @@ const DEFAULT_BASE_URL = typeof BASE_URL !== 'undefined' && BASE_URL
  *   auth: createCloudAuth 产物（getAccessToken）。
  */
 function createCloudApi({ wxApi, auth, baseUrl = DEFAULT_BASE_URL }) {
+  // auth 在 app 启动流程里会被重建（_rebuildCloudAuth 换 requester/loginCode），
+  // 这里持有可变引用：cloudApi 实例本身保持单例，避免闭包捕获旧 auth。
+  let currentAuth = auth;
+
   function rawRequest({ method, url, headers = {}, body }) {
     return new Promise((resolve, reject) => {
       wxApi.request({
@@ -33,7 +37,7 @@ function createCloudApi({ wxApi, auth, baseUrl = DEFAULT_BASE_URL }) {
 
   /** 带令牌的请求；401 → 刷新一次 → 重试一次 → 仍 401 → unauthorized */
   async function request({ method, url, body }) {
-    const token = await auth.getAccessToken();
+    const token = await currentAuth.getAccessToken();
     if (!token.ok) return { statusCode: 401, data: null };
     let r;
     try {
@@ -47,13 +51,16 @@ function createCloudApi({ wxApi, auth, baseUrl = DEFAULT_BASE_URL }) {
       return { statusCode: 0, data: null, networkError: true };
     }
     if (r.statusCode === 401) {
-      const retry = await auth.getAccessToken(); // 触发刷新
+      // §4.3：401 必须强制刷新一次再重试。getAccessToken() 在本地 token 未过期时
+      // 会原样返回旧 token，导致 401 重试仍是 401（E2E #87 发现）。
+      const retry = await currentAuth.refresh();
       if (!retry.ok) return { statusCode: 401, data: null };
+      const retryToken = retry.session ? retry.session.accessToken : retry.accessToken;
       try {
         r = await rawRequest({
           method,
           url,
-          headers: { authorization: `Bearer ${retry.accessToken}`, 'content-type': 'application/json' },
+          headers: { authorization: `Bearer ${retryToken}`, 'content-type': 'application/json' },
           body,
         });
       } catch (e) {
@@ -74,7 +81,17 @@ function createCloudApi({ wxApi, auth, baseUrl = DEFAULT_BASE_URL }) {
     return getBackup({ request }, opts);
   }
 
-  return { request, push, pull, rawRequest, baseUrl };
+  return {
+    request,
+    push,
+    pull,
+    putBackup: push,
+    getBackup: pull,
+    rawRequest,
+    baseUrl,
+    /** app 重建 cloudAuth（换 requester/loginCode）后同步引用 */
+    setAuth(next) { currentAuth = next; },
+  };
 }
 
 module.exports = { createCloudApi, DEFAULT_BASE_URL };

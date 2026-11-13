@@ -148,3 +148,76 @@ test('bleWrite 断言：按 short 与 data 前缀匹配', async () => {
   assert.strictEqual(none.pass, false);
   assert.strictEqual(none.detail.totalWrites, 2);
 });
+
+// ---- #87 后端 mock 断言 ------------------------------------------------------
+
+test('cloudRequest 断言：method / path 正则 / status 过滤', async () => {
+  const s = {
+    capturedCloudRequests: async () => [
+      { method: 'POST', path: '/v1/auth/login', route: 'login', status: 200 },
+      { method: 'POST', path: '/v1/auth/refresh', route: 'refresh', status: 200 },
+      { method: 'PUT', path: '/v1/devices/ML-8DCC/backup', route: 'put', status: 401 },
+      { method: 'PUT', path: '/v1/devices/ML-8DCC/backup', route: 'put', status: 200 },
+    ],
+  };
+  const login = await runAssertion({ type: 'cloudRequest', method: 'post', path: '/v1/auth/login', status: 200 }, s);
+  assert.strictEqual(login.pass, true);
+  assert.strictEqual(login.detail.matches.length, 1);
+
+  const puts = await runAssertion({ type: 'cloudRequest', method: 'PUT', path: '/backup$', minCount: 2 }, s);
+  assert.strictEqual(puts.pass, true);
+
+  const unauthorized = await runAssertion({ type: 'cloudRequest', route: 'put', status: [401] }, s);
+  assert.strictEqual(unauthorized.pass, true);
+  assert.strictEqual(unauthorized.detail.matches.length, 1);
+
+  const missing = await runAssertion({ type: 'cloudRequest', route: 'get' }, s);
+  assert.strictEqual(missing.pass, false);
+  assert.strictEqual(missing.detail.totalRequests, 4);
+});
+
+test('cloudState 断言：字段支持点路径与类型比较', async () => {
+  const s = {
+    cloudState: async () => ({
+      loginCalls: 1,
+      counts: { login: 1, put: 2, total: 3 },
+      last: { put: { status: 200 } },
+    }),
+  };
+  const ok = await runAssertion({ type: 'cloudState', fields: { 'counts.login': 1, 'last.put.status': 200 } }, s);
+  assert.strictEqual(ok.pass, true);
+
+  const bad = await runAssertion({ type: 'cloudState', fields: { 'counts.login': 2 } }, s);
+  assert.strictEqual(bad.pass, false);
+  assert.match(bad.detail.errors.join(';'), /counts\.login/);
+
+  const min = await runAssertion({ type: 'cloudState', minCounts: { 'counts.login': 1, 'counts.put': 1 } }, s);
+  assert.strictEqual(min.pass, true);
+  const minBad = await runAssertion({ type: 'cloudState', minCounts: { 'counts.put': 3 } }, s);
+  assert.strictEqual(minBad.pass, false);
+  assert.match(minBad.detail.errors.join(';'), /至少 3/);
+});
+
+test('runtime 断言：fields 深比较 + patterns 正则；探针抛错不崩', async () => {
+  const s = {
+    evaluate: async () => ({ loggedIn: false, message: '未登录云端，无法恢复', nested: { n: 1 } }),
+  };
+  const ok = await runAssertion({
+    type: 'runtime',
+    code: 'return 1;',
+    fields: { loggedIn: false, 'nested.n': 1 },
+    patterns: { message: '未登录云端' },
+  }, s);
+  assert.strictEqual(ok.pass, true);
+
+  const bad = await runAssertion({
+    type: 'runtime', code: 'return 1;', fields: { loggedIn: true }, patterns: { message: '已登录' },
+  }, s);
+  assert.strictEqual(bad.pass, false);
+  assert.strictEqual(bad.detail.errors.length, 2);
+
+  const boom = { evaluate: async () => { throw new Error('probe failed'); } };
+  const r = await runAssertion({ type: 'runtime', code: 'throw new Error("x")' }, boom);
+  assert.strictEqual(r.pass, false);
+  assert.match(r.detail.error, /probe failed/);
+});

@@ -99,7 +99,7 @@ jobs:
       - name: Key E2E files present
         run: |
           set -e
-          for f in test/e2e/mock/ble-mock.js test/e2e/daemon/daemon.py; do
+          for f in test/e2e/mock/ble-mock.js test/e2e/mock/cloud-mock.js test/e2e/daemon/daemon.py; do
             test -f "$f" || { echo "::error::缺少关键文件 $f"; exit 1; }
           done
           ls test/e2e/cases/*.json >/dev/null || { echo "::error::test/e2e/cases 下没有用例 JSON"; exit 1; }
