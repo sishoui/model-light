@@ -106,7 +106,7 @@ test('buildCaseDef：DATA 按 MLOTA_CHUNK_MAX=241 B 分片，seq LE 递增、字
   }
 });
 
-test('真实用例：不再 skip，schema 合法（690 步 daemonWrite 的巨幅用例）', () => {
+test('真实用例：不再 skip，schema 合法（770+ 步 daemonWrite 的巨幅用例）', () => {
   const c = realCase();
   assert.strictEqual(c.skip, undefined);
   const validation = validateCase(c);

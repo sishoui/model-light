@@ -75,106 +75,144 @@ test('navigate 失败 → 抛错带 errMsg', async () => {
   await assert.rejects(s.navigate('/pages/x/x'), /navigateTo:fail page/);
 });
 
-test('restartDiscoverScan 驱动页面方法 stopScan→startScan（devices 非空即成功）', async () => {
-  const calls = [];
-  const mini = {
+/**
+ * 沙箱 evaluate：把 E2ESession 生成的函数源码在假 wx/getCurrentPages 下真实
+ * 执行，让 restartDiscoverScan 的断言落在运行时行为（返回对象、页面方法调用、
+ * reLaunch 调用）上，而不是源码文本（#96：evaluate 超时包裹由 withTimeout
+ * 在 module 层完成，测试里用构造参数 evaluateTimeoutMs 控制）。
+ */
+function sandboxMini({ wx, getCurrentPages }) {
+  return {
     evaluate: async (src, ...args) => {
-      calls.push({ src, args });
-      if (src.includes('getCurrentPages()')) {
-        return {
-          route: 'pages/discover/discover',
-          scanning: false, // setData 时序不可靠：扫描中标志未同步也不能判失败
-          deviceCount: 1,
-          scanCount: 1,
-          triggered: true,
-          relaunched: false,
-          error: null,
-        };
-      }
-      return { scanCount: 0 }; // mock 基线
+      // src 已是 E2ESession 生成的完整 async function 源码，直接求值并调用
+      const fn = new Function('wx', 'getCurrentPages', `"use strict"; return (${src});`);
+      return fn(wx, getCurrentPages)(...args);
     },
   };
-  const s = new E2ESession({ mini, http: {}, mockSource: '' });
+}
+
+/** 让测试结束后不泄漏 globalThis.__bleMock 到其它用例。 */
+async function withBleMock(mock, fn) {
+  const prev = globalThis.__bleMock;
+  globalThis.__bleMock = mock;
+  try { return await fn(); } finally { globalThis.__bleMock = prev; }
+}
+
+function makeDiscoverPage(opts = {}) {
+  return {
+    route: 'pages/discover/discover',
+    data: { scanning: false, devices: [{ deviceId: 'ML-8DCC' }] },
+    stopScan: async () => { },
+    startScan: async () => { },
+    ...opts,
+  };
+}
+
+test('restartDiscoverScan 驱动页面方法 stopScan→startScan（devices 非空即成功）', async () => {
+  const calls = { stopScan: 0, startScan: 0, reLaunch: 0 };
+  let currentPage = makeDiscoverPage({
+    data: { scanning: false, devices: [{ deviceId: 'ML-8DCC' }] },
+    stopScan: async () => { calls.stopScan += 1; },
+    startScan: async () => { calls.startScan += 1; },
+  });
+  const s = new E2ESession({
+    mini: sandboxMini({
+      wx: { reLaunch: () => { calls.reLaunch += 1; throw new Error('已在 discover 页，不该 reLaunch'); } },
+      getCurrentPages: () => [currentPage],
+    }),
+    http: {},
+    mockSource: '',
+  });
   const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
+  assert.strictEqual(st.route, 'pages/discover/discover');
+  assert.strictEqual(st.relaunched, false);
+  // 无 __bleMock：scanCount 不可用，成功应由 devices 列表非空判定
+  assert.strictEqual(st.scanCount, null);
   assert.strictEqual(st.deviceCount, 1);
-  const probe = calls.find((c) => c.src.includes('wx.reLaunch'));
-  assert.ok(probe, '重扫探测代码应包含 reLaunch 分支');
-  assert.ok(probe.src.includes('await p.stopScan()'));
-  assert.ok(probe.src.includes('await p.startScan()'));
-  assert.ok(probe.src.includes('getCurrentPages()'), 'reLaunch 后应用 route 稳定轮询');
-  assert.ok(!probe.src.includes('setTimeout(resolve, 300)'), '固定 300 ms 等待已被 route 稳定轮询替代');
+  assert.strictEqual(st.triggered, true);
+  // 页面方法确实被调用（运行时行为，非源码文本）
+  assert.strictEqual(calls.stopScan, 1);
+  assert.strictEqual(calls.startScan, 1);
+  assert.strictEqual(calls.reLaunch, 0);
 });
 
 test('restartDiscoverScan 判定用 mock scanCount 增长（scanning=false 且 devices 空也成功）', async () => {
-  const mini = {
-    evaluate: async (src) => {
-      if (src.includes('getCurrentPages()')) {
-        return {
-          route: 'pages/discover/discover',
-          scanning: false,
-          deviceCount: 0,
-          scanCount: 6,
-          triggered: true,
-          relaunched: false,
-          error: null,
-        };
-      }
-      return { scanCount: 5 }; // mock 基线
-    },
-  };
-  const s = new E2ESession({ mini, http: {}, mockSource: '' });
-  const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
-  assert.strictEqual(st.scanCount, 6);
+  let scanCount = 5; // 重扫前基线
+  let currentPage = makeDiscoverPage({
+    data: { scanning: false, devices: [] },
+    stopScan: async () => { },
+    startScan: async () => { scanCount += 1; }, // 页面扫描让 mock 计数 +1
+  });
+  const s = new E2ESession({
+    mini: sandboxMini({
+      wx: { reLaunch: () => { throw new Error('不该 reLaunch'); } },
+      getCurrentPages: () => [currentPage],
+    }),
+    http: {},
+    mockSource: '',
+  });
+  await withBleMock({ getState: () => ({ scanCount }) }, async () => {
+    const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
+    // scanning=false 且 devices=0：只有 mock scanCount 增长 5→6 时才应判成功
+    assert.strictEqual(st.route, 'pages/discover/discover');
+    assert.strictEqual(st.scanCount, 6);
+    assert.strictEqual(st.deviceCount, 0);
+  });
 });
 
-test('restartDiscoverScan 不在 discover 页时先 reLaunch 再重扫', async () => {
-  const calls = [];
-  const mini = {
-    evaluate: async (src) => {
-      calls.push(src);
-      if (src.includes('getCurrentPages()')) {
-        return {
-          route: 'pages/discover/discover',
-          scanning: true,
-          deviceCount: 0,
-          scanCount: null,
-          triggered: true,
-          relaunched: true,
-          error: null,
-        };
-      }
-      return null; // 无 mock 钩子 → 退化为 scanning 判定
+test('restartDiscoverScan 不在 discover 页时先 reLaunch，等 route 稳定后再重扫', async () => {
+  const calls = { stopScan: 0, startScan: 0, reLaunch: [], getCurrentPages: 0 };
+  // webview 重建慢：reLaunch 后 getCurrentPages 约 450 ms 内仍返回旧页面，
+  // 页面才切到 discover；5 s 的轮询窗口应足够（无固定 300 ms 等待）。
+  const t0 = Date.now();
+  let currentPage = { route: 'pages/device/device', data: {} };
+  const discoverPage = makeDiscoverPage({
+    data: { scanning: true, devices: [] },
+    stopScan: async () => { calls.stopScan += 1; },
+    startScan: async () => { calls.startScan += 1; },
+  });
+  const mini = sandboxMini({
+    wx: {
+      reLaunch: ({ url, success }) => {
+        calls.reLaunch.push(url);
+        // 模拟 webview 重建：延迟后页面才到达 discover
+        setTimeout(() => { currentPage = discoverPage; }, 450);
+        setTimeout(() => { if (success) success(); }, 350);
+      },
     },
-  };
+    getCurrentPages: () => { calls.getCurrentPages += 1; return [currentPage]; },
+  });
   const s = new E2ESession({ mini, http: {}, mockSource: '' });
   const st = await s.restartDiscoverScan({ timeoutMs: 5000 });
+  assert.strictEqual(st.route, 'pages/discover/discover');
+  assert.strictEqual(st.relaunched, true);
+  // 无 __bleMock：退化为 scanning 判定（页面仍标记 scanning）
   assert.strictEqual(st.scanning, true);
-  assert.ok(calls.some((src) => src.includes('wx.reLaunch({')));
-  assert.ok(calls.some((src) => src.includes("url: '/pages/discover/discover'")));
+  // reLaunch 去了 discover；轮询到了 route 稳定后再执行 stopScan→startScan
+  assert.deepStrictEqual(calls.reLaunch, ['/pages/discover/discover']);
+  assert.ok(calls.getCurrentPages > 1, '应轮询 getCurrentPages 直到 route 稳定');
+  assert.strictEqual(calls.stopScan, 1);
+  assert.strictEqual(calls.startScan, 1);
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed >= 350, `页面切换后应等待到 route 稳定，实际耗时 ${elapsed} ms`);
+  assert.ok(elapsed < 5000, `不应等到整个超时窗口，实际耗时 ${elapsed} ms`);
 });
 
 test('restartDiscoverScan 超时抛错带 discover 重扫归因（scanning 恒 false 不黑洞）', async () => {
-  const mini = {
-    evaluate: async (src) => {
-      if (src.includes('getCurrentPages()')) {
-        return {
-          route: 'pages/discover/discover',
-          scanning: false,
-          deviceCount: 0,
-          scanCount: 0, // 无增长、无设备、scanning=false → 应继续重试到超时
-          triggered: true,
-          relaunched: false,
-          error: null,
-        };
-      }
-      return { scanCount: 0 };
-    },
-  };
-  const s = new E2ESession({ mini, http: {}, mockSource: '' });
-  await assert.rejects(
-    s.restartDiscoverScan({ timeoutMs: 300 }),
-    /discover 重扫失败：等待超时（300 ms）：discover 重扫/
-  );
+  const s = new E2ESession({
+    mini: sandboxMini({
+      wx: { reLaunch: () => { throw new Error('不该重试 reLaunch'); } },
+      getCurrentPages: () => [{ route: 'pages/discover/discover', data: { scanning: false, devices: [] }, stopScan: async () => { }, startScan: async () => { } }],
+    }),
+    http: {},
+    mockSource: '',
+  });
+  await withBleMock({ getState: () => ({ scanCount: 0 }) }, async () => {
+    await assert.rejects(
+      s.restartDiscoverScan({ timeoutMs: 300 }),
+      /discover 重扫失败：等待超时（300 ms）：discover 重扫/
+    );
+  });
 });
 
 test('evaluate 超时归因（mini.evaluate 悬挂不让 poll 无限等待）', async () => {

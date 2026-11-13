@@ -7,7 +7,11 @@ const { poll } = require('./util');
 
 const NAV_METHODS = new Set(['navigateTo', 'redirectTo', 'switchTab', 'reLaunch']);
 
-const EVALUATE_TIMEOUT_MS = 10000; // 单次 evaluate 上限：悬挂时归因超时，不让 poll 45 s 黑洞（#96）
+const EVALUATE_TIMEOUT_MS = 10000;        // 单次 evaluate 上限：悬挂时归因超时，不让 poll 45 s 黑洞（#96）
+const SCAN_RESTART_TIMEOUT_MS = 45000;    // discover 重扫整体超时（连续用例切换窗口，#96）
+const SCAN_POLL_INTERVAL_MS = 1000;       // 重扫整体轮询间隔
+const ROUTE_STABLE_TIMEOUT_MS = 6000;     // reLaunch 后等 discover 页出现（route 稳定）的上限
+const ROUTE_POLL_INTERVAL_MS = 100;       // route 稳定轮询间隔
 
 /**
  * 给 promise 包超时：mini.evaluate 在 DevTools 运行时忙（刚重启、webview 重建、
@@ -130,14 +134,15 @@ class E2ESession {
    * 'use strict' 指令时，非简单参数列表会让整个函数 SyntaxError（ble-mock
    * 全文以 'use strict' 开头，注入即靠这条）。
    *
-   * #96：mini.evaluate 悬挂时加超时包裹（默认 10 s，见 EVALUATE_TIMEOUT_MS），
-   * 超时错误带步骤标签（代码首行），poll 的重试与超时归因都基于它。
+   * #96：mini.evaluate 悬挂时加超时包裹（默认 10 s，见 EVALUATE_TIMEOUT_MS，
+   * 可经构造参数 evaluateTimeoutMs 覆盖）；超时错误带步骤标签（代码首行），
+   * poll 的重试与超时归因都基于它。
    */
-  async evaluate(code, args = [], { timeoutMs = this.evaluateTimeoutMs } = {}) {
+  async evaluate(code, args = []) {
     const params = args.map((_, i) => `__e2eArg${i}`).join(', ');
     const src = `async function(${params}) {\n${code}\n}`;
     const label = String(code).trim().split('\n')[0].slice(0, 60) || 'evaluate';
-    return withTimeout(this.mini.evaluate(src, ...args), timeoutMs, label);
+    return withTimeout(this.mini.evaluate(src, ...args), this.evaluateTimeoutMs, label);
   }
 
   async currentPath() {
@@ -183,7 +188,7 @@ class E2ESession {
    * 或 devices 列表非空（扫描端到端可用）；mock 钩子缺失时才退化到 scanning。
    * reLaunch 后的固定 300 ms 等待换成 getCurrentPages 轮询直到 route 稳定。
    */
-  async restartDiscoverScan({ timeoutMs = 45000 } = {}) {
+  async restartDiscoverScan({ timeoutMs = SCAN_RESTART_TIMEOUT_MS } = {}) {
     try {
       // 重扫前 mock 基线：注入后、扫描前的 scanCount（钩子不可用时为 null）
       let baselineScanCount = null;
@@ -208,10 +213,12 @@ class E2ESession {
                 fail: () => resolve(),
               });
             });
-            // #96：固定 300 ms 在 webview 重建慢时不够；轮询等 discover 页出现（≤6 s）
-            const deadline = Date.now() + 6000;
+            // #96：固定 300 ms 在 webview 重建慢时不够；轮询等 discover 页出现
+            // （上限 ROUTE_STABLE_TIMEOUT_MS，见模块头常量；插值进运行时代码，
+            // DevTools 侧没有 Node 模块作用域）
+            const deadline = Date.now() + ${ROUTE_STABLE_TIMEOUT_MS};
             for (;;) {
-              await new Promise((resolve) => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, ${ROUTE_POLL_INTERVAL_MS}));
               const ps = getCurrentPages();
               p = ps[ps.length - 1];
               if ((p && p.route === 'pages/discover/discover') || Date.now() >= deadline) break;
@@ -252,7 +259,7 @@ class E2ESession {
         const hasDevices = st.deviceCount > 0;
         const scanningFallback = baselineScanCount == null && st.scanning === true;
         return onDiscover && (mockRestarted || hasDevices || scanningFallback) ? st : null;
-      }, { timeoutMs, intervalMs: 1000, label: 'discover 重扫' });
+      }, { timeoutMs, intervalMs: SCAN_POLL_INTERVAL_MS, label: 'discover 重扫' });
     } catch (e) {
       throw new Error(`discover 重扫失败：${e.message}${e.cause ? `；原因：${e.cause.message}` : ''}`);
     }

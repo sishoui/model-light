@@ -30,14 +30,28 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const BIN_PATH = path.join(FIXTURE_DIR, 'ml-fixture.bin');
 const CASE_PATH = path.join(REPO_ROOT, 'test', 'e2e', 'cases', 'ota-01-ota-state-machine.json');
 
-// MLOTA_CHUNK_MAX（firmware/components/mlota/include/mlota.h）：ATT MTU 244
-// 帧 − 3 B 帧头。DATA payload 上限 241 B；daemon MAX_WRITE_BYTES=512 装得下
-// 244 B 整帧。688 片 × 每片一步 daemonWrite（2 空格缩进）≈ 用例 JSON 700 KB。
+// 跨边界副本：必须与固件 MLOTA_CHUNK_MAX 保持一致
+// （firmware/components/mlota/include/mlota.h：ATT MTU 244 帧 − 3 B 帧头；
+// 固件侧改动需同步这里，否则 DATA 分片会被设备拒收）。daemon
+// MAX_WRITE_BYTES=512 装得下 244 B 整帧。771 片 × 每片一步 daemonWrite
+// （2 空格缩进）≈ 用例 JSON 800 KB。
 const OTA_CHUNK_PAYLOAD = 241;
 // 与页面 startUpgrade 一致：v1 传全 0 sha256 前缀（设备视为新会话），
 // appVersion '1.0.0'（32 B ASCII NUL 填充），crc32 = 整份镜像 CRC。
 const OTA_APP_VERSION = '1.0.0';
 const CHAR_OTA = '0006';
+// OTA COMMIT 帧（0x23）与页面编码同走 buildOtaCommit，不再手写 [0x23,0x00,0x00]。
+const COMMIT_FRAME = buildOtaCommit(0);
+const COMMIT_HEX = Buffer.from(COMMIT_FRAME).toString('hex'); // '230000'
+// log_rx 恒按 4 B 打 data=%02x%02x%02x%02x（不足处补 0），3 B COMMIT 帧的
+// rx 行即 data=23000000（第 4 字节是补位 0）。
+const COMMIT_RX_DATA_HEX = (COMMIT_HEX + '00000000').slice(0, 8); // '23000000'
+const COMMIT_CMD_HEX = COMMIT_HEX.slice(0, 2);                   // '23'
+
+/** 把 Uint8Array 帧渲染为可嵌入评估代码的字节数组字面量（如 [0x23, 0x00, 0x00]）。 */
+function frameBytesLiteral(frame) {
+  return '[' + Array.from(frame).map((b) => `0x${b.toString(16).padStart(2, '0')}`).join(', ') + ']';
+}
 
 const DISCOVER_TAP = `
 const pages = getCurrentPages();
@@ -117,7 +131,7 @@ if (!p || !p.ble) throw new Error('当前不在 OTA 页: ' + (p && p.route));
 // fire-and-forget（与 #86 页面发送器同语义——那边 buildOtaCommit 的写失败也
 // 被吞、成败以串口/通知为准）。成败断言落在串口锚点（COMMIT 帧 rx 行 /
 // set_boot ok / 新镜像横幅）与 mock 截获的 0006 写。
-p.ble.writeOta(new Uint8Array([0x23, 0x00, 0x00])).catch(() => {});
+p.ble.writeOta(new Uint8Array(${frameBytesLiteral(COMMIT_FRAME)})).catch(() => {});
 return { commitSent: true };
 `;
 
@@ -214,7 +228,7 @@ function buildCaseDef(hex = fs.readFileSync(BIN_PATH).toString('hex')) {
       // COMMIT 帧到达设备的锚点：chr_ota_access 对非 DATA 帧打 rx 行（COMMITTING
       // 状态本身没有串口行——迁移发生在写处理里，esp_restart 先于下一次 poll，
       // ota_poll_task 的迁移行只覆盖 mlota_poll 内的暂停）。
-      { action: 'waitForSerial', pattern: 'rx chr=7c9f0006 len=3 data=23000000', timeoutMs: 30000 },
+      { action: 'waitForSerial', pattern: `rx chr=7c9f0006 len=${COMMIT_FRAME.length} data=${COMMIT_RX_DATA_HEX}`, timeoutMs: 30000 },
       { action: 'waitForSerial', pattern: 'ota set_boot ok, rebooting', timeoutMs: 240000 },
       { action: 'waitForSerial', pattern: 'fixture app booted', timeoutMs: 90000 },
       { action: 'evaluate', code: OTA_CLEANUP, saveAs: 'cleanup' },
@@ -228,16 +242,16 @@ function buildCaseDef(hex = fs.readFileSync(BIN_PATH).toString('hex')) {
       // seq 0 + 3 B 帧）。COMMITTING 状态本身没有串口行——提交路径的迁移发生
       // 在写处理里，esp_restart 先于下一次 poll；提交成功的证据是 set_boot 行
       // 与重启后的新镜像横幅。
-      { type: 'serial', pattern: 'rx chr=7c9f0006 len=3 data=23000000', minCount: 1 },
+      { type: 'serial', pattern: `rx chr=7c9f0006 len=${COMMIT_FRAME.length} data=${COMMIT_RX_DATA_HEX}`, minCount: 1 },
       { type: 'serial', pattern: 'ota set_boot ok, rebooting', minCount: 1 },
       { type: 'serial', pattern: 'fixture app booted', minCount: 1 },
-      // 状态帧 §7.1：传输中 mode=2（status_task 5 s 心跳 + 1% 节流刷新，daemon
-      // 缓存最后一帧；重启前最后一次推送即 mode=2）。
+      // 状态帧 spec-ota-wire-format §7.1：传输中 mode=2（status_task 5 s 心跳
+      // + 1% 节流刷新，daemon 缓存最后一帧；重启前最后一次推送即 mode=2）。
       { type: 'statusFrame', hexLength: 12, fields: { mode: 2 }, timeoutMs: 10000 },
       // 心跳（0001 写 "15"）与 COMMIT（0006 写 "23"）走页面真实写路径、经
       // mock 截获；BEGIN/DATA 经 daemonWrite 直连 daemon，由串口锚点覆盖。
       { type: 'bleWrite', short: '0001', data: '15', minCount: 1 },
-      { type: 'bleWrite', short: '0006', data: '23', minCount: 1 },
+      { type: 'bleWrite', short: '0006', data: COMMIT_CMD_HEX, minCount: 1 },
       { type: 'console', level: 'error' },
     ],
     teardown: [

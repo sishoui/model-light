@@ -3,8 +3,12 @@
 `ota-01` 用例刷入的最小合法 ESP-IDF app。**为什么不是 1 KB 随机 dummy**：
 随机/截断字节不是合法 ESP32 镜像，`COMMIT` 会在 `esp_ota_end()` 校验失败并
 回滚（只能覆盖到 FAILED 状态）；本 fixture 是真实编译出的最小 app
-（约 20 KB），COMMIT 走完整 `esp_ota_end → set_boot → 重启` 的 DONE 路径，
+（约 181 KB），COMMIT 走完整 `esp_ota_end → set_boot → 重启` 的 DONE 路径，
 满足 #86 验收的 BEGUN → SENDING → COMMITTING → DONE 状态机断言。
+
+启动时与正式固件（`firmware/main/main.c`）同策略确认 OTA 镜像状态
+（#94：PENDING_VERIFY → `esp_ota_mark_app_valid_cancel_rollback()`），
+避免刷入后跨复位被 bootloader 回滚到旧槽。
 
 ## 文件
 

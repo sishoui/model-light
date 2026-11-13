@@ -230,7 +230,7 @@ Assertion（`type` 之一）：
 - **OTA fixture 用最小合法 app，不是 1 KB dummy**（#92/#86）：`esp_ota_end()` 会校验
   ESP-IDF 镜像的 SHA256/CRC，随机或截断字节只能在 `COMMIT` 阶段失败并回滚，覆盖不到
   `COMMITTING → DONE`。因此 `test/e2e/ota-fixture/` 放的是真实编译出的最小 app
-  （约 162 KB），用完整 `esp_ota_end → set_boot → 重启` 路径满足状态机断言。
+  （约 181 KB），用完整 `esp_ota_end → set_boot → 重启` 路径满足状态机断言。  
   代价：跑 ota-01 会刷 fixture、设备重启后无 BLE，跑完必须重刷正式固件。
 - **cloud-mock 替代真实后端**（#87）：AUTH/CLOUD/NET 用例默认拦截 `/v1/*`，构造 JWT、
   备份、401、500、网络错误与延迟，保证 hermetic（无 DB / AppSecret / 外网）。真实后端
@@ -280,7 +280,8 @@ ble-mock → cloud-mock → 重扫后，用例的 setup 再显式触发登录/�
   断言轮询到这个字段变化，即证明整条链路（mock → daemon → 固件令牌机 → 状态帧回流）
   闭合。
 - 默认不烧录；改固件后用 `--flash`。
-- `npm run test:mini` 里的 preview/realtime 基线失败与本目录无关。
+- `npm run test:mini` 里的 preview/realtime 失败已确认为测试过期（非产品回归），
+  修复记录见 `docs/e2e-flake-notes.md`（#97）。
 - **双 daemon 的已知环境限制（#85 实测）**：Windows 的蓝牙栈对同一 BLE 外设
   同一时刻只维持一个 GATT 会话。A 连上后，第二个 bleak 客户端即使扫描到设备，
   `connect()` 也只会拿到 Windows 缓存的标准服务（GAP/DIS），固件串口不会出现

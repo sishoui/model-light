@@ -2,3 +2,6 @@
 # 减少变量：esp32c3 + 4 MB flash 是这台设备的实际配置）。
 CONFIG_IDF_TARGET="esp32c3"
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# 与正式固件（docs/spec.md §3.4）一致开回滚自检：本镜像经 OTA 刷入后首次
+# 启动处于 PENDING_VERIFY，main.c 启动时即确认（#94），避免跨复位回滚。
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
