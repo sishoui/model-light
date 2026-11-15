@@ -47,13 +47,29 @@ Page({
     this.setData({ scanning: false });
   },
 
+  async onTapScan() {
+    if (this.data.scanning) {
+      await this.stopScan();
+      return;
+    }
+    await this.startScan();
+  },
+
   async onTapDevice(e) {
     const deviceId = e.currentTarget.dataset.deviceId;
-    const name = e.currentTarget.dataset.name;
-    if (!deviceId) return;
+    const name = e.currentTarget.dataset.itemName;
+    if (
+      !deviceId ||
+      typeof deviceId !== 'string' ||
+      deviceId.trim().length === 0 ||
+      deviceId === 'undefined'
+    ) {
+      wx.showToast({ title: '设备 ID 无效，请重新扫描', icon: 'none' });
+      return;
+    }
     await this.stopScan();
     wx.navigateTo({
-      url: `../device-info/device-info?deviceId=${encodeURIComponent(deviceId)}&name=${encodeURIComponent(name || '')}`,
+      url: `../device/device?deviceId=${encodeURIComponent(deviceId)}&name=${encodeURIComponent(name || '')}`,
     });
   },
 });

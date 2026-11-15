@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>model-light 小程序 UI Demo — 极简 vs 新拟物化</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff;
+    --surface: #f5f5f7;
+    --text: #1a1a1a;
+    --muted: #666666;
+    --line: #e5e5e5;
+    --accent: #007aff;
+    --accent-hover: #005ecb;
+    --danger: #ff3b30;
+    --success: #34c759;
+    --radius: 4px;
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  /* ---------- 新拟物化变量 ---------- */
+  :root.neumorphic {
+    --bg: #e0e5ec;
+    --surface: #ffffff;
+    --text: #4a5568;
+    --muted: #8a94a6;
+    --line: #c7cfd9;
+    --accent: #6c9de8;
+    --accent-hover: #5a8bd0;
+    --danger: #d66a6a;
+    --success: #7eb87e;
+    --radius: 24px;
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+  .page-wrap { max-width: 414px; margin: 0 auto; min-height: 100vh; padding: 12px 16px; }
+
+  /* ---------- 顶部选项卡 ---------- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .tab { flex: 1; padding: 10px; border: none; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; border-radius: var(--radius); font-weight: 600; }
+  .tab.active { color: var(--accent); }
+  .tab.minimal.active { background: #eef2ff; color: var(--accent); }
+  .tab.neumorphic.active {
+    box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff;
+    color: var(--accent);
+  }
+
+  /* ---------- 通用小程序样式 ---------- */
+  .page { padding: 0 0 80px 0; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; }
+  .toolbar .title { font-size: 18px; font-weight: 700; }
+  .version-tag { font-size: 11px; padding: 4px 10px; border-radius: 12px; background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+  .btn { border: none; border-radius: var(--radius); font-size: 15px; font-weight: 600; cursor: pointer; padding: 12px 20px; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-default { background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+  .error { color: var(--danger); font-size: 13px; padding: 10px 0; text-align: center; }
+  .empty { color: var(--muted); font-size: 14px; padding: 48px 0; text-align: center; }
+
+  /* ---------- 极简：设备卡片 ---------- */
+  .minimal .device-card {
+    background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .minimal .device-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(0,122,255,0.06); }
+  .minimal .device-name { font-size: 17px; font-weight: 700; }
+  .minimal .device-meta { font-size: 13px; color: var(--muted); }
+  .minimal .fw { color: var(--muted); margin-right: 12px; }
+  .minimal .addr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+  /* ---------- 极简：设备详情卡片 ---------- */
+  .minimal .info-card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+  .minimal .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--surface); }
+  .minimal .info-row:last-child { border-bottom: none; }
+  .minimal .info-label { color: var(--muted); font-size: 14px; }
+  .minimal .info-value { font-weight: 600; color: var(--text); }
+
+  /* ---------- 极简：引脚卡片 ---------- */
+  .minimal .pin-card {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px; width: 30%; margin-bottom: 12px;
+  }
+  .minimal .pin-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .minimal .pin-title { font-size: 15px; font-weight: 700; flex: 1; }
+  .minimal .leds { display: flex; flex-wrap: wrap; gap: 8px; }
+  .minimal .led { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line); background: #f2f2f2; }
+  .minimal .led.selected { background: var(--accent); border-color: var(--accent-hover); }
+  .minimal .led.occupied { background: #d1d5db; border-color: #9ca3af; opacity: 0.6; }
+
+  /* ---------- 新拟物化：设备卡片 ---------- */
+  .neumorphic .device-card {
+    background: var(--surface); border-radius: 20px; padding: 18px; margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+    box-shadow: 5px 5px 10px #cfd6e0, -5px -5px 10px #ffffff;
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+  .neumorphic .device-card:active {
+    box-shadow: inset 3px 3px 6px #cfd6e0, inset -3px -3px 6px #ffffff;
+    transform: scale(0.98);
+  }
+  .neumorphic .device-name { font-size: 16px; font-weight: 700; color: var(--text); }
+  .neumorphic .device-meta { font-size: 12.5px; color: var(--muted); }
+  .neumorphic .fw { color: var(--muted); margin-right: 10px; }
+  .neumorphic .addr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--muted); }
+
+  /* ---------- 新拟物化：设备详情卡片 ---------- */
+  .neumorphic .info-card {
+    background: var(--surface); border-radius: 24px; padding: 22px; margin-bottom: 18px;
+    box-shadow: 5px 5px 10px #cfd6e0, -5px -5px 10px #ffffff;
+  }
+  .neumorphic .info-row { display: flex; justify-content: space-between; padding: 12px 0; }
+  .neumorphic .info-label { color: var(--muted); font-size: 13px; }
+  .neumorphic .info-value { font-weight: 700; color: var(--text); }
+
+  /* ---------- 新拟物化：引脚卡片 ---------- */
+  .neumorphic .pin-card {
+    background: var(--surface); border-radius: 20px; padding: 18px; width: 30%; margin-bottom: 14px;
+    box-shadow: 4px 4px 8px #cfd6e0, -4px -4px 8px #ffffff;
+  }
+  .neumorphic .pin-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .neumorphic .pin-title { font-size: 14px; font-weight: 700; flex: 1; color: var(--text); }
+  .neumorphic .leds { display: flex; flex-wrap: wrap; gap: 10px; }
+  .neumorphic .led {
+    width: 30px; height: 30px; border-radius: 10px;
+    box-shadow: 2px 2px 4px #cfd6e0, -2px -2px 4px #ffffff;
+    background: #ffffff;
+  }
+  .neumorphic .led.selected {
+    background: var(--accent);
+    box-shadow: inset 2px 2px 4px #5a8bd0, inset -2px -2px 4px #7eafff;
+  }
+  .neumorphic .led.occupied {
+    background: #e2e6ea;
+    box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff;
+    opacity: 1;
+  }
+
+  /* ---------- 按钮风格 ---------- */
+  .minimal .btn-primary { box-shadow: 0 2px 4px rgba(0,122,255,0.2); }
+  .minimal .btn-primary:active { background: var(--accent-hover); transform: scale(0.98); }
+  .minimal .btn-default:active { background: #e5e5ea; transform: scale(0.98); }
+  .neumorphic .btn-primary {
+    background: #ffffff;
+    box-shadow: 4px 4px 8px #cfd6e0, -4px -4px 8px #ffffff;
+    color: var(--accent);
+  }
+  .neumorphic .btn-primary:active {
+    box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff;
+    transform: scale(0.97);
+  }
+  .neumorphic .btn-default {
+    background: #ffffff;
+    box-shadow: 2px 2px 4px #cfd6e0, -2px -2px 4px #ffffff;
+    color: var(--muted);
+    border: none;
+  }
+  .neumorphic .btn-default:active {
+    box-shadow: inset 1px 1px 2px #cfd6e0, inset -1px -1px 2px #ffffff;
+    transform: scale(0.97);
+  }
+
+  /* ---------- tabBar ---------- */
+  .tabbar { position: fixed; bottom: 0; left: 0; right: 0; height: 60px; display: flex; border-top: 1px solid var(--line); z-index: 10; }
+  .minimal .tabbar { background: #fff; }
+  .neumorphic .tabbar { background: #ffffff; box-shadow: 0 -2px 4px #cfd6e0; }
+  .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; color: var(--muted); cursor: pointer; }
+  .tab-item.active { color: var(--accent); font-weight: 700; }
+  .tab-item .icon { font-size: 20px; margin-bottom: 2px; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .legend { margin-top: 16px; padding: 12px; border-radius: 12px; background: var(--surface); font-size: 12px; color: var(--muted); border: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="tabs">
+  <button class="tab minimal active" onclick="switchTheme('minimal')">极简</button>
+  <button class="tab neumorphic" onclick="switchTheme('neumorphic')">新拟物化</button>
+</div>
+
+<div class="page-wrap">
+  <!-- 极简版 -->
+  <div id="view-minimal" class="view theme minimal active"></div>
+  <!-- 新拟物化版 -->
+  <div id="view-neumorphic" class="view theme neumorphic"></div>
+</div>
+
+<script>
+  const groups = ['A 组', 'B 组', 'C 组', 'D 组'];
+
+  function render(theme, containerId) {
+    const c = document.getElementById(containerId);
+    const accent = theme === 'minimal' ? '#007aff' : '#6c9de8';
+    c.innerHTML = `
+      <div class="page">
+        <!-- 发现页 -->
+        <div class="toolbar">
+          <div class="title">设备</div>
+          <div class="version-tag">v1.0.0-demo</div>
+        </div>
+        <button class="btn btn-primary" onclick="alert('扫描设备（模拟）')">扫描设备</button>
+        <div class="error" id="err-${theme}" style="display:none">暂未发现设备</div>
+        <div class="list">
+          ${[
+            { name: 'ML-8A3F', major: 2, minor: 1, id: 'E3:4A:2C:1F:9B:4A' },
+            { name: 'ML-2B9D', major: 1, minor: 5, id: 'D1:7E:5A:3C:8F:21' },
+            { name: 'ML-7E41', major: 2, minor: 0, id: 'A9:02:4B:6E:1D:5C' },
+          ].map(d => `
+            <div class="device-card" onclick="openDetail('${theme}', '${d.id}', '${d.name}')">
+              <div>
+                <div class="device-name">${d.name}</div>
+                <div class="device-meta"><span class="fw">固件 v${d.major}.${d.minor}</span><span class="addr">${d.id}</span></div>
+              </div>
+              <div style="font-size:14px;color:${accent};font-weight:700">▶</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="empty" id="empty-${theme}" style="display:none">未发现设备。点击“扫描设备”发现广播 ML-XXXX 的灯控器。</div>
+
+        <!-- 设备详情页 -->
+        <div id="detail-${theme}" style="margin-top:24px;display:none">
+          <div class="toolbar">
+            <div class="title" id="dname-${theme}">设备信息</div>
+            <button class="btn btn-primary" id="dconn-${theme}" onclick="toggleConn('${theme}')">连接</button>
+          </div>
+          <div class="error" id="derr-${theme}" style="display:none"></div>
+          <div class="info-card" id="dcard-${theme}" style="display:none">
+            <div class="info-row"><span class="info-label">设备 ID</span><span class="info-value" id="ddid-${theme}">—</span></div>
+            <div class="info-row"><span class="info-label">名称</span><span class="info-value" id="dnm-${theme}">—</span></div>
+            <div class="info-row"><span class="info-label">运行模式</span><span class="info-value" id="dmode-${theme}">回放</span></div>
+            <div class="info-row"><span class="info-label">令牌持有者</span><span class="info-value" id="dtok-${theme}">本机</span></div>
+          </div>
+          <div class="actions" style="margin-top:16px;display:flex;flex-direction:column;gap:10px;display:none" id="daction-${theme}">
+            <button class="btn btn-primary" onclick="openPin('${theme}')">进入 8 引脚（可命名）</button>
+            <button class="btn btn-default" onclick="alert('进入灯组编辑')">进入灯组</button>
+          </div>
+        </div>
+
+        <!-- 引脚编辑页 -->
+        <div id="pin-${theme}" style="margin-top:24px;display:none">
+          <div class="toolbar">
+            <div class="title">8 引脚（可命名）</div>
+            <div class="group-picker" style="display:flex;gap:8px;align-items:center">
+              <span class="label" style="font-size:13px;color:var(--muted)">灯组：</span>
+              ${groups.map(g => `<span class="chip ${g === 'A 组' ? 'active' : ''}" onclick="selectGroup('${theme}','${g}')" style="font-size:12px;padding:6px 12px;border-radius:10px;border:1px solid var(--line);color:var(--muted);cursor:pointer;background:${g === 'A 组' ? 'var(--accent)' : '#ffffff'};color:${g === 'A 组' ? '#fff' : 'var(--muted)'}">${g}</span>`).join('')}
+            </div>
+          </div>
+          <div class="pins">
+            ${Array.from({length: 8}, (_, p) => `
+              <div class="pin-card">
+                <div class="pin-header">
+                  <div class="pin-title" onclick="renamePin('${theme}', ${p})">引脚 ${p + 1}</div>
+                </div>
+                <div class="leds">
+                  ${Array.from({length: 8}, (_, l) => `<div class="led${l % 3 === 0 ? ' occupied' : ''}${l % 4 === 0 ? ' selected' : ''}" data-pin="${p}" data-led="${l}" onclick="toggleLed('${theme}', ${p}, ${l}, this)}"></div>`).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div style="margin-top:16px">
+            <button class="btn btn-primary" onclick="alert('预览选中像素')">预览选中像素</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function switchTheme(theme) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const btn = document.querySelector(`.tab.${theme}`);
+    if (!btn) return;
+    btn.classList.add('active');
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(`view-${theme}`).classList.add('active');
+    document.documentElement.classList.remove('minimal', 'neumorphic');
+    document.documentElement.classList.add(theme);
+    render(theme, `view-${theme}`);
+  }
+
+  function openDetail(theme, id, name) {
+    document.getElementById(`dname-${theme}`).textContent = name;
+    document.getElementById(`ddid-${theme}`).textContent = id;
+    document.getElementById(`dnm-${theme}`).textContent = name;
+    document.getElementById(`detail-${theme}`).style.display = 'block';
+    document.getElementById(`pin-${theme}`).style.display = 'none';
+    document.getElementById(`daction-${theme}`).style.display = 'none';
+    document.getElementById(`dcard-${theme}`).style.display = 'none';
+    document.getElementById(`dconn-${theme}`).textContent = '连接';
+    document.getElementById(`derr-${theme}`).style.display = 'none';
+  }
+
+  function toggleConn(theme) {
+    const btn = document.getElementById(`dconn-${theme}`);
+    const card = document.getElementById(`dcard-${theme}`);
+    const action = document.getElementById(`daction-${theme}`);
+    const err = document.getElementById(`derr-${theme}`);
+    if (btn.textContent === '连接') {
+      btn.textContent = '断开';
+      btn.className = 'btn btn-default';
+      card.style.display = 'block';
+      action.style.display = 'flex';
+      err.style.display = 'none';
+    } else {
+      btn.textContent = '连接';
+      btn.className = 'btn btn-primary';
+      card.style.display = 'none';
+      action.style.display = 'none';
+    }
+  }
+
+  function openPin(theme) {
+    document.getElementById(`detail-${theme}`).style.display = 'none';
+    document.getElementById(`pin-${theme}`).style.display = 'block';
+  }
+
+  function selectGroup(theme, g) {
+    document.querySelectorAll(`#pin-${theme} .chip`).forEach(ch => {
+      if (ch.textContent === g) {
+        ch.style.background = 'var(--accent)';
+        ch.style.color = '#fff';
+      } else {
+        ch.style.background = 'transparent';
+        ch.style.color = 'var(--muted)';
+      }
+    });
+  }
+
+  function renamePin(theme, p) {
+    const name = prompt(`重命名引脚 ${p + 1}`, `引脚 ${p + 1}`);
+    if (name) {
+      const el = document.querySelector(`#pin-${theme} .pin-card:nth-child(${p + 1}) .pin-title`);
+      if (el) el.textContent = name;
+    }
+  }
+
+  function toggleLed(theme, p, l, el) {
+    el.classList.toggle('selected');
+  }
+
+  // 初始化
+  document.documentElement.classList.add('minimal');
+  render('minimal', 'view-minimal');
+</script>
+</body>
+</html>

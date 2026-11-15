@@ -18,6 +18,7 @@ struct mlt {
     mlt_send_fn send;
     mlt_change_fn change;
     mlt_reset_fn reset;
+    mlt_control_fn control;
     void *user;
 
     enum mlt_state state;
@@ -48,6 +49,15 @@ static void send_grant(mlt_t *t, uint16_t conn, uint8_t outcome)
     }
 }
 
+/* 0x17 ACK：控制命令结果（1 B 结果码）。 */
+static void send_result(mlt_t *t, uint16_t conn, uint8_t result)
+{
+    uint8_t p = result;
+    if (t->send != NULL) {
+        t->send(t->user, conn, MLT_CMD_ACK, &p, 1);
+    }
+}
+
 static void set_holder(mlt_t *t, uint16_t conn, uint32_t now)
 {
     t->state = MLT_STATE_HELD;
@@ -58,7 +68,7 @@ static void set_holder(mlt_t *t, uint16_t conn, uint32_t now)
 }
 
 mlt_t *mlt_new(mlt_send_fn send, mlt_change_fn change, mlt_reset_fn reset,
-               void *user)
+               mlt_control_fn control, void *user)
 {
     mlt_t *t = calloc(1, sizeof *t);
     if (t == NULL) {
@@ -67,6 +77,7 @@ mlt_t *mlt_new(mlt_send_fn send, mlt_change_fn change, mlt_reset_fn reset,
     t->send = send;
     t->change = change;
     t->reset = reset;
+    t->control = control;
     t->user = user;
     t->state = MLT_STATE_FREE;
     return t;
@@ -180,6 +191,46 @@ void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
             t->error_since = now;
             notify_change(t);
         }
+        break;
+
+    /* ---- 设备控制命令（0x20–0x25）：令牌门禁 + 委托 control 回调 ----
+     * 帧布局 cmd(1)+seq(2)+payload(n)，seq 在此忽略（与 0x10–0x16 一致）。
+     * SET_* 与 ACTIVATE_SCENE 要求 mlt_can_write（§2.4：无令牌的一切写拒
+     * 绝），失败回 ACK=1；SCENE_QUERY 只读，不要求令牌。 */
+    case MLT_CMD_SET_POWER:
+    case MLT_CMD_SET_BRIGHTNESS:
+    case MLT_CMD_SET_LED_COUNT:
+    case MLT_CMD_ACTIVATE_SCENE: {
+        if (!mlt_can_write(t, conn)) {
+            send_result(t, conn, MLT_ACK_FAIL);
+            break;
+        }
+        if (t->control == NULL) {
+            send_result(t, conn, MLT_ACK_UNSUPPORTED);
+            break;
+        }
+        const uint8_t *pl = len > 3 ? buf + 3 : NULL;
+        uint16_t pl_len = len > 3 ? (uint16_t)(len - 3) : 0;
+        int rc = t->control(t, conn, buf[0], pl, pl_len, now);
+        send_result(t, conn, rc == 0 ? MLT_ACK_OK : MLT_ACK_FAIL);
+        break;
+    }
+
+    case MLT_CMD_SCENE_QUERY: {
+        /* 只读查询：无令牌门禁；回复由 control 回调直接发 0x25
+         * SCENE_REPORT（mltoken 不另发 ACK）。 */
+        if (t->control == NULL) {
+            send_result(t, conn, MLT_ACK_UNSUPPORTED);
+            break;
+        }
+        const uint8_t *pl = len > 3 ? buf + 3 : NULL;
+        uint16_t pl_len = len > 3 ? (uint16_t)(len - 3) : 0;
+        t->control(t, conn, buf[0], pl, pl_len, now);
+        break;
+    }
+
+    case MLT_CMD_ACK:
+        /* 0x17 是设备→小程序方向的结果码，host 发来即非法/陈旧帧，忽略。 */
         break;
 
     default:

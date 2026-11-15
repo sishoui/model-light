@@ -1,29 +1,39 @@
-.page { padding: 20rpx; }
+.page { padding: 20rpx; background: #e0e5ec; min-height: 100vh; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16rpx; }
-.toolbar-title { font-size: 32rpx; font-weight: 600; color: #f9fafb; }
+.toolbar-title { font-size: 32rpx; font-weight: 600; color: #4a5568; }
 .group-picker { display: flex; gap: 10rpx; align-items: center; }
-.label { color: #9ca3af; font-size: 26rpx; margin-right: 6rpx; }
+.label { color: #8a94a6; font-size: 26rpx; margin-right: 6rpx; }
 .chip {
-  font-size: 24rpx; padding: 6rpx 14rpx; border-radius: 10rpx;
-  border: 1rpx solid #374151; color: #9ca3af;
+  font-size: 24rpx; padding: 6rpx 14rpx; border-radius: 16rpx;
+  background: #ffffff; color: #8a94a6; border: none;
+  box-shadow: 2px 2px 4px #cfd6e0, -2px -2px 4px #ffffff;
 }
-.chip.active { border-color: #60a5fa; color: #60a5fa; background: rgba(96,165,250,0.1); }
-.error { color: #f87171; padding: 10rpx 0; text-align: center; }
+.chip.active { background: #60a5fa; color: #ffffff;
+  box-shadow: inset 2px 2px 4px #3b82f6, inset -2px -2px 4px #7eafff; }
+.error { color: #d66a6a; padding: 10rpx 0; text-align: center; }
 .pins { display: flex; flex-wrap: wrap; gap: 16rpx; }
 .pin-card {
-  background: #1f2937; border-radius: 14rpx; padding: 16rpx; border: 1rpx solid #374151;
-  width: 220rpx;
+  background: #ffffff; border-radius: 24rpx; padding: 20rpx;
+  width: 240rpx;
+  box-shadow: 4px 4px 8px #cfd6e0, -4px -4px 8px #ffffff;
 }
 .pin-header { display: flex; align-items: center; gap: 8rpx; margin-bottom: 12rpx; }
-.pin-title { font-size: 26rpx; font-weight: 600; color: #e5e7eb; flex: 1; }
+.pin-title { font-size: 26rpx; font-weight: 600; color: #344049; flex: 1; }
 .pin-title.renaming { color: #60a5fa; }
-.rename-input { font-size: 24rpx; color: #f9fafb; background: #111827; border: 1rpx solid #60a5fa; border-radius: 8rpx; padding: 4rpx 8rpx; flex: 1; }
+.rename-input { font-size: 24rpx; color: #4a5568; background: #ffffff; border: 1rpx solid #cfd6e0; border-radius: 8rpx; padding: 4rpx 8rpx; flex: 1;
+  box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff; }
 .rename-actions { display: flex; gap: 6rpx; }
-.rename-btn { font-size: 22rpx; color: #9ca3af; }
-.leds { display: flex; flex-wrap: wrap; gap: 6rpx; }
+.rename-btn { font-size: 22rpx; color: #8a94a6; }
+.leds { display: flex; flex-wrap: wrap; gap: 8rpx; }
 .led {
-  width: 22rpx; height: 22rpx; border-radius: 6rpx; background: #374151; border: 1rpx solid #4b5563;
+  width: 26rpx; height: 26rpx; border-radius: 8rpx; background: #ffffff;
+  box-shadow: 2px 2px 4px #cfd6e0, -2px -2px 4px #ffffff;
 }
-.led.selected { background: #60a5fa; border-color: #3b82f6; }
-.led.occupied { background: #9ca3af; border-color: #6b7280; opacity: 0.55; }
+.led.selected { background: #60a5fa;
+  box-shadow: inset 2px 2px 4px #3b82f6, inset -2px -2px 4px #7eafff; }
+.led.occupied { background: #e2e6ea;
+  box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff; }
 .footer { margin-top: 20rpx; }
+.footer button { height: 80rpx; background: #ffffff; color: #60a5fa; font-weight: 600; border-radius: 16rpx; border: none;
+  box-shadow: 4px 4px 8px #cfd6e0, -4px -4px 8px #ffffff; }
+.footer button:active { box-shadow: inset 3px 3px 6px #cfd6e0, inset -3px -3px 6px #ffffff; }

@@ -1,27 +1,67 @@
-.page { padding: 24rpx; }
-.topbar { background: #1f2937; border-radius: 16rpx; padding: 24rpx; border: 1rpx solid #374151; }
-.row { display: flex; align-items: center; justify-content: space-between; }
-.name { font-size: 36rpx; font-weight: 700; color: #f9fafb; }
-.meta { margin-top: 16rpx; gap: 24rpx; color: #9ca3af; font-size: 26rpx; }
+/* 设备详情页：新拟物化（#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa）。
+   class 结构沿用原 wxml，仅替换视觉；新增「设备控制」面板样式。 */
+.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; }
+
+/* 顶栏卡片 */
+.topbar { background: #ffffff; border-radius: 24rpx; padding: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.name { font-size: 36rpx; font-weight: 700; color: #4a5568; }
+.meta { margin-top: 16rpx; gap: 24rpx; color: #8a94a6; font-size: 26rpx; }
 .badge { font-size: 24rpx; padding: 6rpx 16rpx; border-radius: 999rpx; }
-.badge.ok { background: #064e3b; color: #34d399; }
-.badge.warn { background: #78350f; color: #fbbf24; }
-.badge.bad { background: #7f1d1d; color: #f87171; }
-.error-bar { margin-top: 16rpx; background: #7f1d1d; color: #fecaca; padding: 16rpx 24rpx; border-radius: 12rpx; }
-.visitor-bar { margin-top: 16rpx; background: #78350f; color: #fde68a; padding: 16rpx 24rpx; border-radius: 12rpx; }
-.panel { margin-top: 24rpx; display: flex; gap: 16rpx; }
-.stat { flex: 1; background: #1f2937; border-radius: 16rpx; padding: 24rpx; border: 1rpx solid #374151; }
-.k { color: #9ca3af; font-size: 24rpx; display: block; }
-.v { color: #f9fafb; font-size: 32rpx; margin-top: 8rpx; display: block; }
+.badge.ok { background: #e6f0fd; color: #3b82f6; }
+.badge.warn { background: #fdf3e3; color: #b45309; }
+.badge.bad { background: #fdeaea; color: #d66a6a; }
+.error-bar { margin-top: 16rpx; background: #fdeaea; color: #d66a6a; padding: 16rpx 24rpx; border-radius: 16rpx;
+  box-shadow: inset 2rpx 2rpx 4rpx #f0d5d5, inset -2rpx -2rpx 4rpx #ffffff; }
+.visitor-bar { margin-top: 16rpx; background: #fdf3e3; color: #b45309; padding: 16rpx 24rpx; border-radius: 16rpx; }
 
-.panel .debug-btn { margin-top: 12rpx; }
-.transfer-msg { font-size: 24rpx; color: #9ca3af; margin-top: 8rpx; }
-.panel-title { color: #f9fafb; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
-.pin-row { display: flex; align-items: center; gap: 16rpx; padding: 16rpx 0; border-bottom: 1rpx solid #374151; }
-.pin-label { color: #9ca3af; font-size: 26rpx; width: 110rpx; }
-.pin-name { color: #f9fafb; font-size: 28rpx; flex: 1; }
-.pin-meta { color: #9ca3af; font-size: 24rpx; }
-.push-btn { background: #2563eb; color: #fff; font-size: 28rpx; }
+/* 面板：纵向堆叠的白色卡片；stat 为内凹小块 */
+.panel { margin-top: 24rpx; background: #ffffff; border-radius: 24rpx; padding: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.stat { background: #e0e5ec; border-radius: 16rpx; padding: 24rpx;
+  box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
+.stat + .stat { margin-top: 16rpx; }
+.k { color: #8a94a6; font-size: 24rpx; display: block; }
+.v { color: #4a5568; font-size: 32rpx; margin-top: 8rpx; display: block; }
 
+/* 设备控制（电源 / 亮度 / 场景入口） */
+.ctrl-row { display: flex; align-items: center; gap: 24rpx; padding: 8rpx 0; }
+.ctrl-label { color: #4a5568; font-size: 28rpx; width: 96rpx; }
+.ctrl-slider { flex: 1; }
+.scene-btn { margin-top: 16rpx; }
+
+/* 按钮统一：纯白底 / 强调色字 / 无默认边框 / 按下内凹 */
+.push-btn { height: 80rpx; background: #ffffff; color: #60a5fa; font-size: 28rpx; font-weight: 600;
+  border-radius: 16rpx; border: none;
+  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
+.push-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
+.debug-btn { margin-top: 12rpx; height: 64rpx; background: #ffffff; color: #60a5fa; font-size: 24rpx; font-weight: 600;
+  border-radius: 14rpx; border: none;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.debug-btn:active { box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
 .restore-btn { margin-top: 16rpx; }
-.muted { color: #999; }
+.transfer-msg { font-size: 24rpx; color: #4a5568; margin-top: 8rpx; display: block; }
+.panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
+
+/* 引脚行 + 行内灯珠数编辑 */
+.pin-row { padding: 14rpx 0; border-bottom: 1rpx solid #e6eaf0; }
+.pin-row:last-child { border-bottom: none; }
+.pin-line { display: flex; align-items: center; gap: 16rpx; }
+.pin-label { color: #8a94a6; font-size: 26rpx; width: 110rpx; }
+.pin-name { color: #4a5568; font-size: 28rpx; flex: 1; }
+.pin-meta { color: #8a94a6; font-size: 24rpx; }
+.pin-count-btn { margin: 0; padding: 0 20rpx; height: 56rpx; line-height: 56rpx; font-size: 22rpx;
+  background: #ffffff; color: #60a5fa; border: none; border-radius: 12rpx;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.pin-count-btn:active { box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
+.led-count-editor { display: flex; align-items: center; gap: 16rpx; margin-top: 12rpx; }
+.led-count-input { flex: 1; background: #e0e5ec; color: #4a5568; font-size: 26rpx;
+  border-radius: 12rpx; padding: 10rpx 20rpx;
+  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
+.led-count-ok { margin: 0; padding: 0 28rpx; height: 64rpx; line-height: 64rpx; font-size: 24rpx; font-weight: 600;
+  background: #ffffff; color: #60a5fa; border: none; border-radius: 14rpx;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.led-count-ok:active { box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
+
+.muted { color: #8a94a6; }

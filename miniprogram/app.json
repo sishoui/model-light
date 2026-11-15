@@ -10,13 +10,14 @@
     "pages/group/group",
     "pages/stage/stage",
     "pages/preview/preview",
-    "pages/ota/ota"
+    "pages/ota/ota",
+    "pages/scene/scene"
   ],
   "tabBar": {
     "custom": true,
-    "color": "#9ca3af",
+    "color": "#8a94a6",
     "selectedColor": "#60a5fa",
-    "backgroundColor": "#111827",
+    "backgroundColor": "#e0e5ec",
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/discover/discover", "text": "设备" },
@@ -25,9 +26,9 @@
   },
   "window": {
     "navigationBarTitleText": "模型灯效",
-    "navigationBarBackgroundColor": "#1f2937",
-    "navigationBarTextStyle": "white",
-    "backgroundColor": "#111827"
+    "navigationBarBackgroundColor": "#e0e5ec",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#e0e5ec"
   },
   "requiredPrivateInfos": [],
   "permission": {},

@@ -88,7 +88,7 @@ describe('render-engine (wayfinder #64)', () => {
     });
   });
 
-  describe('硬切 + 可选 fadeInMs', () => {
+  describe('硬切 + 可选 fadeInMs（阶段首段从黑放大，与固件一致）', () => {
     const hardCut = group({
       ranges: [{ start: 0, end: 3 }],
       stages: [solidLayer([255, 0, 0]), solidLayer([0, 0, 255])], // total 1000
@@ -113,23 +113,40 @@ describe('render-engine (wayfinder #64)', () => {
       expect([prev[0], prev[1], prev[2]]).toEqual([255, 0, 0]);
     });
 
-    it('fadeInMs > 0 时在阶段首段与上一阶段线性过渡，过后全新色', () => {
+    it('fadeInMs > 0 时阶段首段从黑放大，过后全新色', () => {
       const arr = createArrangement();
       arr.pins[0].length = 3;
       arr.pins[0].groups = [faded];
-      // tInStage = 0 -> 淡入起点 = 上一阶段末色（全红）
+      // tInStage = 0 -> k = 0 -> 全黑（固件从黑放大，非上一阶段色）
       expect([renderPinFrame(arr, 0, 500)[0], renderPinFrame(arr, 0, 500)[1], renderPinFrame(arr, 0, 500)[2]]).toEqual(
-        [255, 0, 0]
+        [0, 0, 0]
       );
-      // tInStage = 50 / fadeInMs 100 -> 50% 过渡 [128, 0, 128]
+      // tInStage = 50 / fadeInMs 100 -> k = 50*255/100 = 127（截断），蓝 255*127/255 = 127
       const mid = renderPinFrame(arr, 0, 550);
-      expect([mid[0], mid[1], mid[2]]).toEqual([128, 0, 128]);
-      // tInStage = 100 = fadeInMs -> 不再过渡，全新色（全蓝）
+      expect([mid[0], mid[1], mid[2]]).toEqual([0, 0, 127]);
+      // tInStage = 100 = fadeInMs -> 不再淡入，全新色（全蓝）
       const full = renderPinFrame(arr, 0, 600);
       expect([full[0], full[1], full[2]]).toEqual([0, 0, 255]);
-      // 后续正常循环：1550 % 1000 = 550 → 阶段 1 tInStage = 50，再次过渡
+      // 后续正常循环：1550 % 1000 = 550 → 阶段 1 tInStage = 50，再次从黑放大
       const later = renderPinFrame(arr, 0, 1550);
-      expect([later[0], later[1], later[2]]).toEqual([128, 0, 128]);
+      expect([later[0], later[1], later[2]]).toEqual([0, 0, 127]);
+    });
+
+    it('阶段 0 带 fadeInMs 同样从黑放大（含回环后的阶段首）', () => {
+      const g0faded = group({
+        ranges: [{ start: 0, end: 3 }],
+        stages: [solidLayer([0, 0, 255], { durationMs: 500, fadeInMs: 100 })],
+      });
+      const arr = createArrangement();
+      arr.pins[0].length = 3;
+      arr.pins[0].groups = [g0faded];
+      expect([renderPinFrame(arr, 0, 0)[0], renderPinFrame(arr, 0, 0)[1], renderPinFrame(arr, 0, 0)[2]]).toEqual([0, 0, 0]);
+      const mid = renderPinFrame(arr, 0, 50);
+      expect([mid[0], mid[1], mid[2]]).toEqual([0, 0, 127]);
+      const full = renderPinFrame(arr, 0, 100);
+      expect([full[0], full[1], full[2]]).toEqual([0, 0, 255]);
+      // 回环：clockMs = 500 → 阶段 0 tInStage = 0 → 再次全黑
+      expect([renderPinFrame(arr, 0, 500)[0], renderPinFrame(arr, 0, 500)[1], renderPinFrame(arr, 0, 500)[2]]).toEqual([0, 0, 0]);
     });
   });
 

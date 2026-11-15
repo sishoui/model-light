@@ -1,13 +1,14 @@
 // 实时参数帧构造 — spec.md §2.3
 // Realtime := pin(1) + groupIndex(1) + stageIndex(1) + layer(1) + paramIdx(1)
 //           + valueLen(1) + value(valueLen)
-// 最短 6 B（valueLen=0，空值），颜色 8 B（valueLen=2），整数/枚举 7 B（valueLen=1），
-// 上限 9 B（[r,g,b] 3 字节）。永远单帧，不分片。
+// 整数/枚举 7 B（valueLen=1），颜色 8 B（valueLen=2），[r,g,b] 上限 9 B（valueLen=3）。
+// 永远单帧，不分片。不构造 valueLen=0 的 6 B 空帧：固件 mlrt_on_packet 要求
+// len ≥ 7 且 value_len ≥ 1，6 B 帧会被静默丢弃（两端不一致，故本模块直接拒绝）。
 // layer：0 = background，1 = dynamic。
 // 只改叶子参数：本模块只构造帧，不动编排/ NVS；寻址失败由设备静默丢弃（无 ACK 通道），
 // 错误只走状态帧错误码（ble 层 writeNoResponse 失败亦静默，见 realtime-throttle）。
 
-const REALTIME_MIN_LEN = 6;   // 6 字节头 + 0 字节值
+const REALTIME_MIN_LEN = 7;   // 6 字节头 + 至少 1 字节值（valueLen=0 的 6 B 帧固件会丢弃）
 const REALTIME_MAX_LEN = 9;   // 6 字节头 + 最多 3 字节值
 const MAX_VALUE_LEN = REALTIME_MAX_LEN - 6;
 
@@ -18,12 +19,13 @@ function clampU8(v) {
 /**
  * @param {object} p { pin, groupIndex, stageIndex, layer, paramIdx, value }
  *   pin 0–7；groupIndex/stageIndex/paramIdx 0–255；layer 0=背景 / 1=动态。
- *   value:
- *     - undefined / null / []  → valueLen 0，6 B 空帧（取消 / 无覆盖）
+ *   value（不可为空——固件 mlrt_on_packet 要求 valueLen ≥ 1，空值帧会被静默丢弃）：
  *     - number / boolean       → valueLen 1，7 B（整数 / 枚举 / 布尔）
  *     - [a, b] (长度 2)        → valueLen 2，8 B（颜色）
  *     - [a, b, c] (长度 3)     → valueLen 3，9 B（[r,g,b] 颜色，上限）
- * @returns {Uint8Array} 6..9 B 单帧，不分片
+ * @returns {Uint8Array} 7..9 B 单帧，不分片
+ * @throws {RangeError} value 为空（undefined / null / []）——与固件 len ≥ 7 且
+ *   value_len ≥ 1 的判定对齐，不再构造 6 B 空帧
  */
 function buildRealtimeFrame({ pin, groupIndex, stageIndex, layer, paramIdx, value }) {
   if (!Number.isInteger(pin) || pin < 0 || pin > 7) throw new Error('pin 取值 0–7');
@@ -34,10 +36,10 @@ function buildRealtimeFrame({ pin, groupIndex, stageIndex, layer, paramIdx, valu
 
   let bytes;
   if (value === undefined || value === null) {
-    bytes = [];
+    throw new RangeError('value 不可为空（固件 mlrt_on_packet 要求 valueLen ≥ 1）');
   } else if (Array.isArray(value)) {
     if (value.length === 0) {
-      bytes = [];
+      throw new RangeError('value 不可为空数组（固件 mlrt_on_packet 要求 valueLen ≥ 1）');
     } else if (value.length <= MAX_VALUE_LEN) {
       bytes = value.map(clampU8);
     } else {

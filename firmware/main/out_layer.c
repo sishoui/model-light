@@ -20,7 +20,8 @@ static const char *TAG = "out";
 
 typedef struct {
     led_strip_handle_t strip;
-    uint16_t led_count;
+    uint16_t led_count;   /* 当前物理长度（SET_LED_COUNT 写入，重启恢复 30） */
+    uint16_t max_leds;    /* init 时按 led_strip 配置的最大，commit 钳制上限 */
 } strip_t;
 
 /* Double buffer, allocated once at boot from internal RAM (§3.2). */
@@ -60,6 +61,7 @@ int out_layer_init(void)
         return -1;
     }
     s_strips[0].led_count = ML_PIN0_LED_COUNT;
+    s_strips[0].max_leds = ML_PIN0_LED_COUNT;
 
     ESP_LOGI(TAG, "output layer ready: %u B double buffer in internal RAM",
              (unsigned)(bytes * 2));
@@ -80,6 +82,25 @@ void out_layer_set_pixel(uint8_t pin, uint16_t index, uint8_t r, uint8_t g, uint
     back[off + 2] = b;
 }
 
+int ml_out_set_led_count(uint8_t pin, uint8_t count)
+{
+    if (pin >= ML_PIN_COUNT) {
+        return -1;
+    }
+    /* 未点亮的引脚（strip == NULL）也记录长度：上层按 pin 寻址，
+     * 等对应灯带接上/启用后即生效；渲染侧 ml_out_led_count 返回它。 */
+    s_strips[pin].led_count = count;
+    return 0;
+}
+
+uint8_t ml_out_led_count(uint8_t pin)
+{
+    if (pin >= ML_PIN_COUNT) {
+        return 0;
+    }
+    return (uint8_t)s_strips[pin].led_count;
+}
+
 void out_layer_commit(void)
 {
     strip_t *s = &s_strips[0];
@@ -88,7 +109,10 @@ void out_layer_commit(void)
     }
     s_front ^= 1;
     const uint8_t *front = s_buf[s_front];
-    for (uint16_t i = 0; i < s->led_count; i++) {
+    /* led_count 可被 SET_LED_COUNT 改到超过 strip 配置的 max_leds：
+     * 传输按 max_leds 钳制（多出的像素不进 RMT，帧缓冲本身够大）。 */
+    uint16_t n = s->led_count > s->max_leds ? s->max_leds : s->led_count;
+    for (uint16_t i = 0; i < n; i++) {
         uint16_t off = i * 3;
         /* led_strip handles GRB reordering internally when fed r,g,b. */
         led_strip_set_pixel(s->strip, i, front[off], front[off + 1], front[off + 2]);

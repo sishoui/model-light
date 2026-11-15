@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <string.h>
 
 static const char *TAG = "frame";
 
@@ -54,6 +55,20 @@ static ml_arrangement_t s_arr;
 static int s_have_arr;
 static mlrt_t *s_rt;                  /* F6 realtime override engine */
 static volatile uint8_t s_run_mode;   /* MLPROTO_MODE_* */
+
+/* 设备控制（0x20/0x21）：掉电不持久化，重启默认开 / 100%。 */
+static volatile uint8_t s_power;      /* 1 = 开（默认） */
+static volatile uint8_t s_brightness = 100; /* 全局亮度缩放 % */
+
+void frame_set_power(int on)
+{
+    s_power = on ? 1 : 0;
+}
+
+void frame_set_brightness(uint8_t pct)
+{
+    s_brightness = pct > 100 ? 100 : pct;
+}
 
 /* Notification that realtime mode just ended (3 s idle fallback) so the
  * status frame goes out without waiting for the 5 s heartbeat. */
@@ -151,6 +166,26 @@ void frame_task(void *arg)
     uint32_t ota_frame = 0;
 
     while (1) {
+        /* 本轮渲染的像素数：跟随 SET_LED_COUNT 写入的物理长度，钳到
+         * 帧缓冲容量（静态缓冲按 ML_PIN0_LED_COUNT 分配）。 */
+        uint16_t n_leds = ml_out_led_count(0);
+        if (n_leds > ML_PIN0_LED_COUNT) {
+            n_leds = ML_PIN0_LED_COUNT;
+        }
+        /* 0x20 SET_POWER 关：渲染全黑但保持连接与状态帧心跳（status_task
+         * 独立运行，5 s 心跳不受影响）；实时包照常吸收（mlrt 打补丁，
+         * 不渲染），开电后继续当前时间轴。OTA 传输指示让位于用户电源
+         * 意图：关 = 全黑。 */
+        if (!s_power) {
+            memset(frame, 0, sizeof frame);
+            for (uint16_t i = 0; i < n_leds; i++) {
+                out_layer_set_pixel(0, i, 0, 0, 0);
+            }
+            out_layer_commit();
+            out_layer_wait_done();
+            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ML_FRAME_PERIOD_MS));
+            continue;
+        }
         /* F7 §7.2: OTA transfer pauses the arrangement render. */
         if (ble_ota_active()) {
             ota_frame++;
@@ -162,7 +197,8 @@ void frame_task(void *arg)
             uint8_t r = (uint8_t)((OTA_R * w * lim) / (255 * 100));
             uint8_t g = (uint8_t)((OTA_G * w * lim) / (255 * 100));
             uint8_t b = (uint8_t)((OTA_B * w * lim) / (255 * 100));
-            for (uint16_t i = 0; i < ML_PIN0_LED_COUNT; i++) {
+            /* OTA 呼吸是传输状态指示：已是低亮度，不再叠用户亮度缩放。 */
+            for (uint16_t i = 0; i < n_leds; i++) {
                 out_layer_set_pixel(0, i, r, g, b);
             }
             out_layer_commit();
@@ -200,12 +236,17 @@ void frame_task(void *arg)
          * Ble tinting comes free: colors come from the arrangement. */
         uint32_t clock_ms = esp_timer_get_time() / 1000;
         frame_realtime_poll();
-        mlarr_render(&s_arr, clock_ms, 0, frame, ML_PIN0_LED_COUNT);
-        for (uint16_t i = 0; i < ML_PIN0_LED_COUNT; i++) {
+        mlarr_render(&s_arr, clock_ms, 0, frame, n_leds);
+        for (uint16_t i = 0; i < n_leds; i++) {
             uint8_t r = frame[i * 3], g = frame[i * 3 + 1], b = frame[i * 3 + 2];
             apply_brightness(&r, ML_BRIGHTNESS_LIMIT_DEFAULT);
             apply_brightness(&g, ML_BRIGHTNESS_LIMIT_DEFAULT);
             apply_brightness(&b, ML_BRIGHTNESS_LIMIT_DEFAULT);
+            /* 0x21 用户亮度缩放：顺序 = 先硬限亮（30% 保护），后全局百分比
+             * （乘法可交换，此顺序让 100% 恰好等于限亮后满值，语义直观）。 */
+            r = (uint8_t)((uint16_t)r * s_brightness / 100);
+            g = (uint8_t)((uint16_t)g * s_brightness / 100);
+            b = (uint8_t)((uint16_t)b * s_brightness / 100);
             out_layer_set_pixel(0, i, r, g, b);
         }
         out_layer_commit();

@@ -40,11 +40,53 @@ static void cap_send(void *user, uint16_t conn, uint8_t cmd,
 static void cap_change(void *user) { (void)user; change_count++; }
 static void cap_reset(void *user)  { (void)user; reset_count++; }
 
+/* ---- control 回调捕获（0x20–0x25 设备控制命令）---- */
+static int control_calls;
+static uint8_t control_last_cmd;
+static uint8_t control_last_payload[8];
+static uint16_t control_last_len;
+static uint32_t control_last_now;
+static int control_ret;                 /* 控制回调返回值：0 / -1 */
+
+static void reset_control(void)
+{
+    control_calls = 0;
+    control_last_cmd = 0;
+    memset(control_last_payload, 0, sizeof control_last_payload);
+    control_last_len = 0;
+    control_last_now = 0;
+    control_ret = 0;
+}
+
+static int cap_control(mlt_t *t, uint16_t conn, uint8_t cmd,
+                       const uint8_t *payload, uint16_t len, uint32_t now)
+{
+    (void)t; (void)conn;
+    control_calls++;
+    control_last_cmd = cmd;
+    if (payload != NULL && len > 0) {
+        memcpy(control_last_payload, payload,
+               len < sizeof control_last_payload ? len
+                                                 : sizeof control_last_payload);
+    }
+    control_last_len = len;
+    control_last_now = now;
+    return control_ret;
+}
+
 static mlt_t *new_mlt(void)
 {
     reset_harness();
-    mlt_t *t = mlt_new(cap_send, cap_change, cap_reset, NULL);
+    mlt_t *t = mlt_new(cap_send, cap_change, cap_reset, NULL, NULL);
     return t;
+}
+
+/* 带 control 回调的 mlt（0x20–0x25 测试用）。 */
+static mlt_t *new_mlt_ctrl(void)
+{
+    reset_harness();
+    reset_control();
+    return mlt_new(cap_send, cap_change, cap_reset, cap_control, NULL);
 }
 
 static const ev_t *find_ev(uint8_t cmd, uint16_t conn)
@@ -53,6 +95,15 @@ static const ev_t *find_ev(uint8_t cmd, uint16_t conn)
         if (evs[i].cmd == cmd && evs[i].conn == conn) return &evs[i];
     }
     return NULL;
+}
+
+static const ev_t *find_ev_last(uint8_t cmd, uint16_t conn)
+{
+    const ev_t *last = NULL;
+    for (size_t i = 0; i < ev_count; i++) {
+        if (evs[i].cmd == cmd && evs[i].conn == conn) last = &evs[i];
+    }
+    return last;
 }
 
 static void req(mlt_t *t, uint16_t conn, uint32_t now)
@@ -389,6 +440,138 @@ static void test_holder_accessor_tracks_suspend(void)
     mlt_free(t);
 }
 
+/* ---- 设备控制命令（0x20–0x25）：令牌门禁 + control 委托 + 0x17 ACK ---- */
+
+/* 无令牌 → ACK=1 且回调不执行；有令牌 → 走回调，成功 ACK=0 / 失败 ACK=1 */
+static void test_control_needs_token_and_acks(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 100);                        /* conn 1 holds the token */
+    ev_count = 0;
+    reset_control();
+
+    uint8_t f[4] = { MLT_CMD_SET_POWER, 0, 0, 1 };  /* 关 */
+    mlt_on_command(t, 2, f, sizeof f, 200);         /* conn 2: no token */
+    const ev_t *a = find_ev(MLT_CMD_ACK, 2);
+    assert(a != NULL && a->len == 1 && a->payload[0] == MLT_ACK_FAIL);
+    assert(control_calls == 0);                     /* 门禁挡在回调之前 */
+
+    mlt_on_command(t, 1, f, sizeof f, 300);         /* holder: OK */
+    a = find_ev_last(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->payload[0] == MLT_ACK_OK);
+    assert(control_calls == 1 && control_last_cmd == MLT_CMD_SET_POWER);
+    assert(control_last_len == 1 && control_last_payload[0] == 1);
+    assert(control_last_now == 300);
+
+    control_ret = -1;                               /* 回调失败 → ACK=1 */
+    mlt_on_command(t, 1, f, sizeof f, 400);
+    a = find_ev_last(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->payload[0] == MLT_ACK_FAIL);
+    mlt_free(t);
+}
+
+/* 2 B payload 的帧：payload 从 buf+3 起、长度 = len-3 */
+static void test_control_payload_offset_two_bytes(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 0);
+    reset_control();
+    uint8_t f[5] = { MLT_CMD_SET_LED_COUNT, 0x34, 0x12, 3, 60 };
+    mlt_on_command(t, 1, f, sizeof f, 100);
+    assert(control_calls == 1);
+    assert(control_last_cmd == MLT_CMD_SET_LED_COUNT);
+    assert(control_last_len == 2);
+    assert(control_last_payload[0] == 3 && control_last_payload[1] == 60);
+    const ev_t *a = find_ev(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->payload[0] == MLT_ACK_OK);
+    mlt_free(t);
+}
+
+/* 无 payload 帧：pl=NULL / pl_len=0，真实回调拒绝（ACK=1） */
+static void test_control_missing_payload_fails(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 0);
+    control_ret = -1;                     /* 真实 control_cb 对缺 payload 拒绝 */
+    uint8_t f[1] = { MLT_CMD_SET_BRIGHTNESS };
+    mlt_on_command(t, 1, f, sizeof f, 100);
+    const ev_t *a = find_ev(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->payload[0] == MLT_ACK_FAIL);
+    assert(control_calls == 1 && control_last_len == 0);
+    mlt_free(t);
+}
+
+/* control == NULL（旧固件/未接线）→ ACK=2 不支持 */
+static void test_control_null_acks_unsupported(void)
+{
+    mlt_t *t = new_mlt();
+    req(t, 1, 0);
+    uint8_t f[4] = { MLT_CMD_SET_POWER, 0, 0, 1 };
+    mlt_on_command(t, 1, f, sizeof f, 100);
+    const ev_t *a = find_ev(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->len == 1 && a->payload[0] == MLT_ACK_UNSUPPORTED);
+    mlt_free(t);
+}
+
+/* SCENE_QUERY 不要求令牌：非持有者也能触发回调，且 mltoken 不另发 ACK
+ * （0x25 报告由回调自己发）。 */
+static void test_scene_query_not_token_gated(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 100);                        /* token on conn 1 */
+    ev_count = 0;
+    reset_control();
+    uint8_t f[4] = { MLT_CMD_SCENE_QUERY, 0, 0, 2 };
+    mlt_on_command(t, 2, f, sizeof f, 200);         /* conn 2 has no token */
+    assert(control_calls == 1);
+    assert(control_last_cmd == MLT_CMD_SCENE_QUERY);
+    assert(control_last_len == 1 && control_last_payload[0] == 2);
+    assert(find_ev(MLT_CMD_ACK, 2) == NULL);        /* no ACK for query */
+    mlt_free(t);
+}
+
+/* 无 control 回调时 SCENE_QUERY 回 ACK=2（不支持） */
+static void test_scene_query_null_control_unsupported(void)
+{
+    mlt_t *t = new_mlt();
+    req(t, 1, 0);
+    uint8_t f[4] = { MLT_CMD_SCENE_QUERY, 0, 0, 0 };
+    mlt_on_command(t, 1, f, sizeof f, 100);
+    const ev_t *a = find_ev(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->payload[0] == MLT_ACK_UNSUPPORTED);
+    mlt_free(t);
+}
+
+/* ACTIVATE_SCENE 同样受令牌门禁（无令牌 ACK=1，有令牌走回调） */
+static void test_activate_scene_token_gate(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 0);
+    ev_count = 0;
+    reset_control();
+    uint8_t f[4] = { MLT_CMD_ACTIVATE_SCENE, 0, 0, 1 };
+    mlt_on_command(t, 2, f, sizeof f, 100);         /* no token → ACK=1 */
+    assert(control_calls == 0);
+    assert(find_ev(MLT_CMD_ACK, 2)->payload[0] == MLT_ACK_FAIL);
+    mlt_on_command(t, 1, f, sizeof f, 200);         /* holder → callback */
+    assert(control_calls == 1);
+    assert(find_ev(MLT_CMD_ACK, 1)->payload[0] == MLT_ACK_OK);
+    mlt_free(t);
+}
+
+/* host 方向误发 0x17（设备→手机的结果码）→ 忽略，不产生任何通知 */
+static void test_ack_from_host_ignored(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 0);
+    ev_count = 0;
+    uint8_t f[4] = { MLT_CMD_ACK, 0, 0, 0 };
+    mlt_on_command(t, 1, f, sizeof f, 100);
+    assert(ev_count == 0);
+    assert(control_calls == 0);
+    mlt_free(t);
+}
+
 int main(void)
 {
     test_first_request_granted_without_probe();
@@ -409,6 +592,14 @@ int main(void)
     test_ota_busy_refuses_handover();
     test_holder_accessor_tracks_grant_and_release();
     test_holder_accessor_tracks_suspend();
+    test_control_needs_token_and_acks();
+    test_control_payload_offset_two_bytes();
+    test_control_missing_payload_fails();
+    test_control_null_acks_unsupported();
+    test_scene_query_not_token_gated();
+    test_scene_query_null_control_unsupported();
+    test_activate_scene_token_gate();
+    test_ack_from_host_ignored();
     printf("all mltoken tests passed\n");
     return 0;
 }

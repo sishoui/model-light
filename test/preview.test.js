@@ -206,7 +206,7 @@ test('simulatePin: dy.blink 熄灭段露出背景层', () => {
   assert.deepEqual([...off.slice(0, 3)], [1, 2, 3]);
 });
 
-test('simulatePin: 淡入期间背景色向当前阶段过渡（fadeIn 中点约为一半）', () => {
+test('simulatePin: 淡入从黑放大（整数运算与固件一致：k=t*255/fadeInMs 截断）', () => {
   const g = createGroup({
     ranges: [{ start: 0, end: 1 }],
     stages: [
@@ -215,10 +215,12 @@ test('simulatePin: 淡入期间背景色向当前阶段过渡（fadeIn 中点约
     ],
   });
   const arr = arrWith(0, 1, [g]);
+  // t = 50 / fadeInMs 100 → k = 50*255/100 = 127（截断）；红 200*127/255 = 99.6 → 99（截断）
   const mid = simulatePin(arr, 0, 400 + 50, { groupIndex: 0, scope: 'group' });
-  const c = [...mid.slice(0, 3)];
-  // 中点 ≈ (0 + 200)/2 = 100，允许 ±2 舍入
-  assert.ok(Math.abs(c[0] - 100) <= 2, `期望 ~100，实际 ${c}`);
+  assert.deepEqual([...mid.slice(0, 3)], [99, 0, 0]);
+  // 淡入结束（tInStage = 100 = fadeInMs）→ 本阶段全色
+  const full = simulatePin(arr, 0, 400 + 100, { groupIndex: 0, scope: 'group' });
+  assert.deepEqual([...full.slice(0, 3)], [200, 0, 0]);
 });
 
 // ---- syncHint：三种原因，不混为一谈 ----

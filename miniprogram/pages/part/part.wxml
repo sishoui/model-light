@@ -40,6 +40,6 @@
   </view>
 
   <view class="footer">
-    <button type="primary" bindtap="onPreviewSelection">预览选中像素</button>
+    <button bindtap="onPreviewSelection">预览选中像素</button>
   </view>
 </view>

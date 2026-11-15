@@ -640,6 +640,66 @@ int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
     return MLARR_OK;
 }
 
+/* ---- 场景槽：纯 C 编解码 + 激活（无 ESP-IDF 依赖） ---- */
+
+#define MLARR_SCENE_BLOB_OVERHEAD 4 /* len(u16 LE) + version(u16 LE) */
+
+/* 把一份编排打成可落 NVS 的场景 blob（len+version+bytes）。校验链：
+ * len ≥ 4 → len ≤ MLARR_ARR_MAX_BYTES → mlarr_validate 通过。 */
+size_t mlarr_scene_blob_encode(uint8_t *out, size_t cap,
+                               const uint8_t *arr, uint16_t len,
+                               uint16_t version)
+{
+    if (out == NULL || arr == NULL || len < 4) return 0;
+    if ((size_t)(len + MLARR_SCENE_BLOB_OVERHEAD) > cap) return 0;
+    if (len > MLARR_ARR_MAX_BYTES) return 0;
+    if (mlarr_validate(arr, len) != MLARR_OK) return 0;
+    out[0] = (uint8_t)(len & 0xFF);
+    out[1] = (uint8_t)(len >> 8);
+    out[2] = (uint8_t)(version & 0xFF);
+    out[3] = (uint8_t)(version >> 8);
+    memcpy(out + MLARR_SCENE_BLOB_OVERHEAD, arr, len);
+    return (size_t)(MLARR_SCENE_BLOB_OVERHEAD + len);
+}
+
+/* 解析槽 blob：声明长度必须可读（len ≥ 4 且 ≤ blob_len − 4）；
+ * 编排字节指向 blob 内部（调用方自行拷走）。 */
+int mlarr_scene_blob_decode(const uint8_t *blob, size_t blob_len,
+                            const uint8_t **arr, uint16_t *len,
+                            uint16_t *version)
+{
+    if (blob == NULL || blob_len < MLARR_SCENE_BLOB_OVERHEAD) return -1;
+    uint16_t l = (uint16_t)(blob[0] | (blob[1] << 8));
+    uint16_t v = (uint16_t)(blob[2] | (blob[3] << 8));
+    if (l < 4) return -1;
+    if ((size_t)l > blob_len - MLARR_SCENE_BLOB_OVERHEAD) return -1;
+    if (arr != NULL) *arr = blob + MLARR_SCENE_BLOB_OVERHEAD;
+    if (len != NULL) *len = l;
+    if (version != NULL) *version = v;
+    return 0;
+}
+
+/* 激活场景槽：载入 → 校验 → parse → 提交，等价于一次编排提交，且提交
+ * 走 mlarr 的 commit 回调（与 §2.2 FIN 路径相同，不复制粘贴）。
+ * 载入/校验/parse/commit 任一失败返回 -1，活动编排不做任何改动。 */
+int mlarr_scene_activate(mlarr_scene_load_fn load, mlarr_commit_fn commit,
+                         void *user, uint8_t slot, uint16_t *version_out)
+{
+    if (slot >= MLARR_SCENE_SLOTS || load == NULL || commit == NULL) {
+        return -1;
+    }
+    static uint8_t buf[MLARR_ARR_MAX_BYTES];
+    uint16_t len = 0, version = 0;
+    if (load(user, slot, buf, sizeof buf, &len, &version) != 0) return -1;
+    if (len < 4 || len > MLARR_ARR_MAX_BYTES) return -1;
+    if (mlarr_validate(buf, len) != MLARR_OK) return -1;
+    static ml_arrangement_t model;
+    if (mlarr_parse(buf, len, &model) != MLARR_OK) return -1;
+    if (commit(user, buf, len, model.version) != 0) return -1;
+    if (version_out != NULL) *version_out = model.version;
+    return 0;
+}
+
 /* ---------------- rx transfer state machine (F2, §2.2) ----------------
  * FIN → 校验链：长度 → CRC32 → TLV validate（含像素互斥、payload version）。
  * 任一失败回 NAK 并整体丢弃；全过才经 commit 回调整体写 NVS。 */

@@ -31,6 +31,13 @@ void frame_realtime_poll(void);
 /* F6: returns 1 once when the 3 s idle fallback just ended realtime mode
  * (caller pushes a status frame, §2.9). */
 uint8_t frame_realtime_take_change(void);
+
+/* 设备控制（0x20/0x21）：电源开关与全局亮度缩放。内部 volatile 变量，
+ * 掉电不持久化（重启默认开 / 100%）。frame_set_power(0) 渲染全黑但保持
+ * 连接与 5 s 状态帧心跳；亮度缩放应用在硬限亮（ML_BRIGHTNESS_LIMIT_DEFAULT）
+ * 之后。渲染路径在 frame_task.c 的帧循环里读取。 */
+void frame_set_power(int on);
+void frame_set_brightness(uint8_t pct);
 #ifdef __cplusplus
 }
 #endif

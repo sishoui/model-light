@@ -3,7 +3,6 @@
     <view class="title">{{name || '设备信息'}}</view>
     <button
       class="conn-btn"
-      type="{{connected ? 'default' : 'primary'}}"
       loading="{{connecting}}"
       bindtap="{{connected ? 'onTapDisconnect' : 'connect'}}"
     >
@@ -37,7 +36,7 @@
   </view>
 
   <view class="actions" wx:if="{{connected}}">
-    <button type="primary" bindtap="onTapPin">进入 8 引脚（可命名）</button>
+    <button bindtap="onTapPin">进入 8 引脚（可命名）</button>
     <button bindtap="onTapGroup">进入灯组</button>
   </view>
 </view>

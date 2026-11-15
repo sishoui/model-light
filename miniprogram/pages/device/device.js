@@ -16,6 +16,8 @@ const { pushArrangement } = require('../../lib/arrangement-push');
 const { createTokenClient } = require('../../lib/token-client');
 const { createRealtimeThrottle } = require('../../lib/realtime-throttle');
 const { encode } = require('../../lib/arrangement');
+const { createDeviceControl } = require('../../lib/device-control');
+const { ACK_RESULT } = require('../../lib/device-control-frames');
 
 // 固定测试 TLV：最小编排（version/payloadVersion + 1 引脚 0 灯组占位），
 // 真实编排由编辑器票产出；这里只为验证传输链路。
@@ -55,6 +57,10 @@ Page({
     transferMessage: '',
     pins: [],        // { index, label, name, length, groupCount }
     pushVersion: null,
+    powerOn: false,    // 设备控制：电源开关（ACK result=0 才更新；失败回滚）
+    brightness: 100,   // 设备控制：亮度滑条（ACK result=0 才更新）
+    editingPin: -1,    // 灯珠数行内编辑：当前编辑的引脚（-1 = 无）
+    ledCountDraft: '', // 灯珠数行内编辑：输入框草稿
   },
 
   onLoad(query) {
@@ -64,6 +70,16 @@ Page({
     this.store = createArrangementStore(wx);
     this._lastStatusFrame = null; // pushArrangement 版本校验用
     this._tokenClient = createTokenClient(this.ble); // §2.5 令牌握手（页面持有同一实例）
+    // §2.1 设备控制（命令通道 ...0001 请求/应答）：dc 依赖页面实例
+    // （write/notify/token），onLoad 即建；只在用户交互后使用——
+    // requestToken 回调做存在性判断，write 回调在 ble 未就绪时回 rejected
+    // promise，连接前调用也能安全失败（不在 onLoad 阶段调 dc 方法）。
+    this.dc = createDeviceControl({
+      write: (bytes) => this._dcWrite(bytes),
+      onCommandNotify: (cb) => (this.ble ? this.ble.onCommandNotify(cb) : null),
+      requestToken: () => this._dcRequestToken(),
+      timeoutMs: 5000,
+    });
     this._realtime = null; // 连接成功后建（需要 write 通道）
     this.setData({ name: this._deviceName });
     this.backoff = { attempt: 0 };
@@ -81,6 +97,7 @@ Page({
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
     this._cleanupBle();
+    if (this.dc) this.dc.dispose(); // 解绑命令 notify，在途等待按 disposed 结算
     if (this._offConnectionState) this._offConnectionState();
     const app = getApp();
     if (app && app._reconnectHook === this._appShowHook) app._reconnectHook = null;
@@ -136,6 +153,8 @@ Page({
         this.applyFrame(frame);
       });
       this.setData({ connected: true, reconnecting: false });
+      // usage-log：连接成功记录一条 connect 事件（spec 决策 #4，未配后端静默）
+      this._recordUsage('connect', { deviceName: this._deviceName, ts: Date.now() });
       getApp().rememberDevice(this._deviceName, this.deviceId);
       this.reloadPins();
       await this.probeDeviceCapabilities();
@@ -218,6 +237,151 @@ Page({
       this.setData({ transferMessage: e.message || '令牌请求失败' });
       return { granted: false, reason: 'error' };
     }
+  },
+
+  // ===== §2.1 设备控制（命令通道 ...0001 请求 / 应答）=====
+  // dc = createDeviceControl 实例（onLoad 创建）：setPower / setBrightness /
+  // setLedCount（+ 场景页用 activateScene / queryScene）。ACK result=0 才更新
+  // 本地状态；1=失败（无令牌/设备拒绝）、2=固件不支持；超时/写失败走 reason。
+
+  /** 命令通道写（dc 依赖注入）：ble 未就绪时回 rejected promise，不抛同步错。 */
+  _dcWrite(bytes) {
+    if (!this.ble) return Promise.reject(new Error('BLE 会话未就绪'));
+    return this.ble.write(bytes);
+  },
+
+  /** 令牌请求（dc 依赖注入）：token-client 未创建时直接 denied。 */
+  async _dcRequestToken() {
+    if (!this._tokenClient) return { granted: false, reason: 'no-token' };
+    return this._tokenClient.requestToken();
+  },
+
+  /** ACK 结果 → 提示文案；成功（result=0）返回 null，调用方据此更新本地状态。 */
+  _ackMessage(r) {
+    if (!r) return '设备控制失败';
+    if (r.ok) {
+      if (r.result === ACK_RESULT.OK) return null;
+      if (r.result === ACK_RESULT.FAILED) return '设备拒绝：未获得控制令牌或操作失败';
+      if (r.result === ACK_RESULT.UNSUPPORTED) return '固件版本不支持此控制命令';
+      return `设备返回未知结果 ${r.result}`;
+    }
+    const why = {
+      'no-token': '未获得控制令牌（他人占用中或设备无应答）',
+      'timeout': '设备无响应（超时）',
+      'write-failed': '命令发送失败',
+      'disposed': '页面已卸载',
+    };
+    return why[r.reason] || `设备控制失败（${r.reason}）`;
+  },
+
+  /** 电源开关：切换 → dc.setPower → ACK OK 才更新 powerOn，失败回滚开关显示。 */
+  async onTogglePower(e) {
+    const on = !!e.detail.value;
+    if (this._dcBusy) return;
+    this._dcBusy = true;
+    try {
+      let r;
+      try {
+        r = await this.dc.setPower(on);
+      } catch (err) {
+        // requestToken 抛错向调用方透传（如令牌请求并发）
+        this.setData({ powerOn: !on, transferMessage: `电源切换异常：${err.message}` });
+        return;
+      }
+      const msg = this._ackMessage(r);
+      if (msg) {
+        this.setData({ powerOn: !on, transferMessage: msg });
+        return;
+      }
+      this.setData({ powerOn: on, transferMessage: '' });
+      this._recordUsage('control:power', { deviceName: this._deviceName, on, ts: Date.now() });
+    } finally {
+      this._dcBusy = false;
+    }
+  },
+
+  /** 亮度滑条：拖动结束（bindchange）才下发；ACK OK 才更新本地 brightness。 */
+  async onBrightnessChange(e) {
+    const pct = Number(e.detail.value);
+    if (this._dcBusy) return;
+    this._dcBusy = true;
+    try {
+      let r;
+      try {
+        r = await this.dc.setBrightness(pct);
+      } catch (err) {
+        // 越界等由帧构造层抛 RangeError，透传到提示条
+        this.setData({ transferMessage: `亮度取值非法：${err.message}` });
+        return;
+      }
+      const msg = this._ackMessage(r);
+      if (msg) {
+        this.setData({ transferMessage: msg });
+        return;
+      }
+      this.setData({ brightness: pct, transferMessage: '' });
+      this._recordUsage('control:brightness', { deviceName: this._deviceName, pct, ts: Date.now() });
+    } finally {
+      this._dcBusy = false;
+    }
+  },
+
+  /** 灯珠数：打开引脚行内编辑（点行内「灯数」按钮，catchtap 不触发行进编辑页）。 */
+  openLedCountEditor(e) {
+    const pin = Number(e.currentTarget.dataset.pin);
+    const item = this.data.pins.find((p) => p.index === pin);
+    this.setData({ editingPin: pin, ledCountDraft: item ? String(item.length) : '' });
+  },
+
+  onLedCountInput(e) {
+    this.setData({ ledCountDraft: e.detail.value });
+  },
+
+  /** 灯珠数确认：dc.setLedCount(pin, count)；ACK OK 后更新该 pin 的 length 显示。 */
+  async onLedCountConfirm(e) {
+    const pin = Number(e.currentTarget.dataset.pin);
+    const count = parseInt(this.data.ledCountDraft, 10);
+    if (!Number.isInteger(count) || count < 0 || count > 255) {
+      this.setData({ transferMessage: '灯珠数取值 0–255 的整数' });
+      return;
+    }
+    if (this._dcBusy) return;
+    this._dcBusy = true;
+    try {
+      let r;
+      try {
+        r = await this.dc.setLedCount(pin, count);
+      } catch (err) {
+        this.setData({ transferMessage: `灯珠数下发失败：${err.message}` });
+        return;
+      }
+      const msg = this._ackMessage(r);
+      if (msg) {
+        this.setData({ transferMessage: msg });
+        return;
+      }
+      const pins = this.data.pins.map((p) => (p.index === pin ? { ...p, length: count } : p));
+      this.setData({ pins, editingPin: -1, transferMessage: `引脚 ${pin} 灯珠数已设为 ${count}` });
+      this._recordUsage('control:led-count', { deviceName: this._deviceName, pin, count, ts: Date.now() });
+    } finally {
+      this._dcBusy = false;
+    }
+  },
+
+  /** 场景页入口（参数与 openOta 一致：deviceId / name / chunkSize）。 */
+  openScene() {
+    if (!this.connected) return;
+    wx.navigateTo({
+      url: `../scene/scene?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&chunkSize=${this._chunkSize || 20}`,
+    });
+  },
+
+  /** usage-log 记录（spec 决策 #4）：未配后端时 lib 返回 null 静默，不阻塞主流程。 */
+  _recordUsage(type, payload) {
+    try {
+      const app = getApp();
+      if (app && app.usageLog) app.usageLog.log(type, payload);
+    } catch (e) { /* 静默：使用日志不影响任何主流程 */ }
   },
 
   /** §2.3：stage 编辑页拖动参数时调用（leaf 参数实时下发，50 ms 节流） */

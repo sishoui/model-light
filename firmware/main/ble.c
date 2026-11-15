@@ -23,6 +23,8 @@
 #include "frame_task.h"
 #include "ota.h"
 #include "app_config.h"
+#include "out_layer.h"
+#include "scene_store.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -308,6 +310,80 @@ static int chr_ota_access(uint16_t conn, uint16_t attr,
 
 
 
+/* ---- 设备控制命令回调（0x20–0x25，注入 mlt）----
+ * 令牌门禁与 0x17 ACK 由 mltoken 统一处理；这里只做具体动作：
+ *   SET_POWER / SET_BRIGHTNESS → frame_task 的 volatile setter（掉电不持久）
+ *   SET_LED_COUNT             → out_layer 的 s_strips 物理长度
+ *   ACTIVATE_SCENE            → 场景槽载入 + 等价一次编排提交 + 状态帧
+ *   SCENE_QUERY               → 回 0x25 SCENE_REPORT（TLV 原始字节，>247 截断）
+ * 返回 0/-1（mltoken 映射为 ACK=0/1）。 */
+static int scene_load_cb(void *user, uint8_t slot, uint8_t *buf, uint16_t cap,
+                         uint16_t *len, uint16_t *version)
+{
+    (void)user;
+    return scene_store_load(slot, buf, cap, len, version);
+}
+
+static int control_cb(mlt_t *t, uint16_t conn, uint8_t cmd,
+                      const uint8_t *payload, uint16_t len, uint32_t now_ms)
+{
+    (void)t; (void)now_ms;
+    switch (cmd) {
+    case MLT_CMD_SET_POWER:
+        if (len < 1) return -1;
+        frame_set_power(payload[0] ? 1 : 0);
+        ESP_LOGI(TAG, "control power=%u", (unsigned)(payload[0] ? 1 : 0));
+        return 0;
+    case MLT_CMD_SET_BRIGHTNESS:
+        if (len < 1 || payload[0] > 100) return -1;
+        frame_set_brightness(payload[0]);
+        ESP_LOGI(TAG, "control brightness=%u%%", (unsigned)payload[0]);
+        return 0;
+    case MLT_CMD_SET_LED_COUNT:
+        if (len < 2) return -1;
+        if (ml_out_set_led_count(payload[0], payload[1]) != 0) return -1;
+        ESP_LOGI(TAG, "control led_count pin=%u count=%u",
+                 (unsigned)payload[0], (unsigned)payload[1]);
+        return 0;
+    case MLT_CMD_ACTIVATE_SCENE: {
+        if (len < 1) return -1;
+        uint8_t slot = payload[0];
+        uint16_t ver = 0;
+        if (mlarr_scene_activate(scene_load_cb, xfer_commit, NULL, slot,
+                                 &ver) != 0) {
+            ESP_LOGW(TAG, "activate scene slot=%u failed (empty/invalid)",
+                     (unsigned)slot);
+            return -1; /* 槽为空/校验失败：活动编排不动 */
+        }
+        ESP_LOGI(TAG, "control activate scene slot=%u version=%u",
+                 (unsigned)slot, (unsigned)ver);
+        ble_push_status(); /* 换入立刻反映到状态帧（arrVersion 变） */
+        return 0;
+    }
+    case MLT_CMD_SCENE_QUERY: {
+        if (len < 1) return -1;
+        uint8_t slot = payload[0];
+        uint8_t out[3 + MLARR_SCENE_REPORT_MAX]; /* 0x25 + seq(2) + ≤247 */
+        uint16_t arr_len = 0, ver = 0, n = 0;
+        out[0] = MLT_CMD_SCENE_REPORT;
+        out[1] = 0;
+        out[2] = 0;
+        if (scene_store_load(slot, out + 3, MLARR_SCENE_REPORT_MAX,
+                             &arr_len, &ver) == 0) {
+            /* 槽 len > 247：只回前 247 B（不分片），小程序按声明长度
+             * 自行判断不完整（TLV 截断可解析出） */
+            n = arr_len > MLARR_SCENE_REPORT_MAX ? MLARR_SCENE_REPORT_MAX
+                                                 : arr_len;
+        }
+        /* 槽为空：回长度 0 的 0x25（out 只有 3 B 头） */
+        ble_notify_command_to(conn, out, (uint16_t)(3 + n));
+        return 0;
+    }
+    default:
+        return -1;
+    }
+}
+
 /* ...0001 command channel: token request/grant/heartbeat, factory reset. */
 static int chr_command_access(uint16_t conn, uint16_t attr,
                               struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -569,7 +645,7 @@ int ble_start(void)
     if (ml_store_init() != 0) {
         ESP_LOGE(TAG, "store init failed");
     }
-    s_mlt = mlt_new(token_send, token_change, token_reset, NULL);
+    s_mlt = mlt_new(token_send, token_change, token_reset, control_cb, NULL);
     if (s_mlt == NULL) {
         ESP_LOGE(TAG, "token state machine alloc failed");
         return -1;

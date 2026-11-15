@@ -1,27 +1,24 @@
 // 子票 #73：实时参数帧 — spec.md §2.3
 // Realtime := pin(1) + groupIndex(1) + stageIndex(1) + layer(1) + paramIdx(1)
 //           + valueLen(1) + value(valueLen)
-// 最短 6 B / 颜色 8 B / 整数枚举 7 B，永远单帧 ≤ 9 B，不分片。
+// 整数/枚举 7 B / 颜色 8 B / [r,g,b] 9 B，永远单帧 ≤ 9 B，不分片。
+// 不构造 valueLen=0 的 6 B 空帧：固件 mlrt_on_packet 要求 len ≥ 7 且 value_len ≥ 1，
+// 6 B 帧会被静默丢弃（两端不一致，故本模块直接拒绝）。
 // 纯函数，Node/vitest 可运行，无 wx 依赖。
 
 const { buildRealtimeFrame, REALTIME_MIN_LEN, REALTIME_MAX_LEN } = require('../realtime-frame');
 
 describe('realtime-frame (#73) spec §2.3', () => {
-  it('帧长度边界：最短 6 B，上限 9 B', () => {
-    expect(REALTIME_MIN_LEN).toBe(6);
+  it('帧长度边界：最短 7 B，上限 9 B', () => {
+    expect(REALTIME_MIN_LEN).toBe(7);
     expect(REALTIME_MAX_LEN).toBe(9);
   });
 
-  it('空值帧：valueLen=0，总长 6 B（最短帧）', () => {
-    const f = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0 });
-    expect(f.length).toBe(6);
-    expect([...f]).toEqual([0, 0, 0, 0, 0, 0]);
-  });
-
-  it('空值数组 [] 亦为 6 B 空帧', () => {
-    const f = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [] });
-    expect(f.length).toBe(6);
-    expect(f[5]).toBe(0);
+  it('空值帧被拒绝：valueLen=0 的 6 B 帧固件会静默丢弃，构造即抛 RangeError', () => {
+    const base = { pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0 };
+    expect(() => buildRealtimeFrame(base)).toThrow(RangeError); // value 缺省
+    expect(() => buildRealtimeFrame({ ...base, value: null })).toThrow(RangeError);
+    expect(() => buildRealtimeFrame({ ...base, value: [] })).toThrow(RangeError);
   });
 
   it('整数/枚举帧：valueLen=1，总长 7 B', () => {
@@ -83,8 +80,8 @@ describe('realtime-frame (#73) spec §2.3', () => {
     expect(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: NaN })).toThrow();
   });
 
-  it('单帧不分片：所有合法 value 的总长都在 6–9 B 之间', () => {
-    const values = [undefined, null, [], [1], [1, 2], [1, 2, 3], 0, 255, true, false];
+  it('单帧不分片：所有合法 value 的总长都在 7–9 B 之间', () => {
+    const values = [[1], [1, 2], [1, 2, 3], 0, 255, true, false];
     for (const value of values) {
       const f = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value });
       expect(f.length).toBeGreaterThanOrEqual(6);

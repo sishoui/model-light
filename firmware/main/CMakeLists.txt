@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" "ble.c" "ota.c" "out_layer.c" "frame_task.c" "store.c"
+idf_component_register(SRCS "main.c" "ble.c" "ota.c" "out_layer.c" "frame_task.c" "store.c" "scene_store.c"
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES bt esp_timer driver nvs_flash app_update esp_partition)
 

@@ -4,6 +4,7 @@
 const { createCloudAuth } = require('./lib/cloud-auth');
 const { createCloudApi } = require('./lib/cloud-api');
 const { createCloudSync, makeMemoryStorage } = require('./lib/cloud-sync');
+const { createUsageLog } = require('./lib/usage-log');
 
 App({
   onLaunch() {
@@ -20,6 +21,11 @@ App({
       loginCode: null,
     });
     this.cloudApi = createCloudApi({ wxApi: wx, auth: this.cloudAuth });
+    // 使用日志（spec 决策 #4）：HTTP 接缝走 cloudApi.rawRequest（{statusCode}，
+    // 网络错误抛出）；未配后端时 log()/flush() 返回 null 静默，不阻塞任何主流程。
+    this.usageLog = createUsageLog({
+      request: (url, body) => this.cloudApi.rawRequest({ method: 'POST', url, body }),
+    });
     // requester 接到 wx.request 通道
     this._rebuildCloudAuth();
     this.silentLogin();
@@ -58,9 +64,11 @@ App({
     });
   },
 
-  /** onAppShow：用缓存 deviceId 直连而不重扫（§2.5） */
+  /** onAppShow：用缓存 deviceId 直连而不重扫（§2.5）；并补报使用日志待发记录 */
   onAppShow() {
     if (this._reconnectHook) this._reconnectHook();
+    // usage-log：前台 fire-and-forget flush（lib 内部已吞请求错误，兜底防未处理拒绝）
+    if (this.usageLog) this.usageLog.flush().catch(() => {});
   },
 
   /** 记住一个设备（只记名字，deviceId 由当前会话在内存中引用） */

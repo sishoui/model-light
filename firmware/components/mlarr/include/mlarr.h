@@ -222,6 +222,42 @@ uint16_t mlarr_rx_chunks(const mlarr_rx_t *rx); /* contiguous DATA chunks of the
 uint16_t mlarr_rx_arrangement_version(const mlarr_rx_t *rx); /* last committed, 0 if none */
 uint32_t mlarr_rx_arrangement_crc32(const mlarr_rx_t *rx);   /* last committed */
 
+/* ---- 场景槽（0x22/0x23/0x24 命令的纯 C 部分） ----
+ * 槽的 NVS 读写由 firmware/main/scene_store.c 实现（ESP-IDF），mlarr 保持
+ * 无依赖：这里只做 blob 编解码（含校验）与"激活"编排逻辑，激活通过注入的
+ * 载入/提交回调拿到槽字节并复用 §2.2 的提交路径。
+ * blob 布局：len(u16 LE) + version(u16 LE) + 编排原始字节。 */
+
+#define MLARR_SCENE_SLOTS 4                    /* 场景槽 0–3 */
+#define MLARR_SCENE_REPORT_MAX 247             /* 0x25 SCENE_REPORT 单帧 payload 上限 */
+
+/* 把一份已校验的编排打成槽 blob。校验链：len ≥ 4、len ≤
+ * MLARR_ARR_MAX_BYTES、mlarr_validate() 通过。成功返回 blob 字节数
+ * （= 4 + len），失败返回 0（out 内容不动）。 */
+size_t mlarr_scene_blob_encode(uint8_t *out, size_t cap,
+                               const uint8_t *arr, uint16_t len,
+                               uint16_t version);
+
+/* 解析槽 blob：拷出头部声明的 len/version，*arr 指向 blob 内部的编排
+ * 字节（调用方自行拷走）。成功 0，失败 -1（blob 太短 / len 越界）。 */
+int mlarr_scene_blob_decode(const uint8_t *blob, size_t blob_len,
+                            const uint8_t **arr, uint16_t *len,
+                            uint16_t *version);
+
+/* 载入函数：从持久层（scene_store.c）读槽 slot 的 blob，解出编排字节拷入
+ * buf（最多 cap B，超长截断），*len 返回槽内声明的完整长度（可 > cap），
+ * *version 返回 blob 头部版本。槽不存在/损坏返回 -1。 */
+typedef int (*mlarr_scene_load_fn)(void *user, uint8_t slot, uint8_t *buf,
+                                   uint16_t cap, uint16_t *len,
+                                   uint16_t *version);
+
+/* 激活场景槽：load → 校验 → parse → 提交，等价于一次编排提交（复用 rx 的
+ * commit 回调，不复制粘贴）。slot ≥ MLARR_SCENE_SLOTS、载入失败、校验/
+ * parse 失败、commit 失败一律返回 -1，且失败时**不调用 commit**（活动编排
+ * 保持不动）。成功返回 0，*version_out（可为 NULL）得到编排版本。 */
+int mlarr_scene_activate(mlarr_scene_load_fn load, mlarr_commit_fn commit,
+                         void *user, uint8_t slot, uint16_t *version_out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -3,7 +3,7 @@
 // 约定（spec §9 / 决策 #9 渲染引擎/preview 对齐 / #16 架构 seam）：
 // - 单一全局帧时钟，固定 40 FPS（25 ms/帧）；所有灯组共享 clockMs，
 //   各自按 clockMs % groupTotalMs 独立定位阶段，循环不漂移。
-// - 阶段切换为硬切；stage.fadeInMs > 0 时在阶段首段做线性淡入（软化）。
+// - 阶段切换为硬切；stage.fadeInMs > 0 时阶段首段从黑线性放大（与固件 fadeIn 一致）。
 // - 未被灯组覆盖的像素渲染为黑色 [0,0,0]，不留残影（纯函数，每帧重新计算）。
 // - 同一 pin 内灯组像素互斥；范围重叠由 validatePixelExclusivity 拒绝（整份编排）。
 //
@@ -84,7 +84,7 @@ function renderPinFrame(arr, pinIndex, clockMs, opts = {}) {
     }
     const { stageIndex, tInStage } = resolveGroupStage(g, clockMs);
     const st = g.stages[stageIndex];
-    const c = stageColorAt(st, tInStage, i, n, schema, g, stageIndex);
+    const c = stageColorAt(st, tInStage, i, n, schema);
     out[base] = c[0];
     out[base + 1] = c[1];
     out[base + 2] = c[2];

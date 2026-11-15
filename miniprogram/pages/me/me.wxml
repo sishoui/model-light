@@ -3,5 +3,6 @@
     <text class="title">我的</text>
     <text class="hint">模型灯效 小程序</text>
     <text class="meta">版本 {{version}}</text>
+    <text class="meta">待上报使用日志 {{pendingUsage}} 条</text>
   </view>
 </view>

@@ -1,18 +1,22 @@
-.page { padding: 24rpx; }
+/* 设备列表页：新拟物化（#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa） */
+.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; }
 .toolbar { margin-bottom: 24rpx; }
-.error { color: #f87171; padding: 16rpx 0; }
-.empty { color: #9ca3af; padding: 48rpx 0; text-align: center; }
+/* scan-btn 带 type="primary"（内建样式带属性选择器），用两级类选择器压过它 */
+.toolbar .scan-btn { height: 80rpx; background: #ffffff; color: #60a5fa; font-size: 30rpx; font-weight: 600;
+  border-radius: 20rpx; border: none;
+  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
+.toolbar .scan-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
+.error { color: #d66a6a; padding: 16rpx 0; text-align: center; }
+.empty { color: #8a94a6; padding: 48rpx 0; text-align: center; }
 .list { display: flex; flex-direction: column; gap: 16rpx; }
-.device-card {
-  background: #1f2937; border-radius: 16rpx; padding: 24rpx;
-  border: 1rpx solid #374151;
-}
-.device-card.known { border-color: #60a5fa; }
-.device-name { font-size: 32rpx; font-weight: 600; color: #f9fafb; }
+.device-card { background: #ffffff; border-radius: 24rpx; padding: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.device-card.known { box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff, inset 0 0 0 3rpx #60a5fa; }
+.device-name { font-size: 32rpx; font-weight: 600; color: #4a5568; }
 .device-meta { display: flex; justify-content: space-between; margin-top: 12rpx; }
-.fw { color: #9ca3af; font-size: 26rpx; }
+.fw { color: #8a94a6; font-size: 26rpx; }
 .state { font-size: 26rpx; }
-.state-0 { color: #34d399; }
+.state-0 { color: #3b82f6; }
 .state-1 { color: #60a5fa; }
-.state-2 { color: #fbbf24; }
-.state-3 { color: #f87171; }
+.state-2 { color: #b45309; }
+.state-3 { color: #d66a6a; }

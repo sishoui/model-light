@@ -1280,6 +1280,162 @@ static void test_render_perf_8pins(void)
     assert(elapsed <= 25000); /* 25 ms per frame ceiling */
 }
 
+/* ---- 场景槽：blob 编解码 + 激活（纯 C 部分；NVS 在 scene_store.c，
+ * host 侧用 fake load 注入）---- */
+
+/* fake load：把给定字节当槽内容（len 为声明完整长度，可 > cap 以模拟
+ * SCENE_REPORT 截断场景）；fail 非 0 模拟槽为空。 */
+typedef struct {
+    const uint8_t *bytes;
+    uint16_t len;
+    uint16_t version;
+    int fail;
+} fake_slot_t;
+
+static int fake_load(void *user, uint8_t slot, uint8_t *buf, uint16_t cap,
+                     uint16_t *len, uint16_t *version)
+{
+    fake_slot_t *fs = user;
+    if (fs->fail) return -1;
+    uint16_t copy = fs->len > cap ? cap : fs->len;
+    memcpy(buf, fs->bytes, copy);
+    *len = fs->len;   /* 声明完整长度（可 > cap：调用方按此判截断） */
+    *version = fs->version;
+    (void)slot;
+    return 0;
+}
+
+static void test_scene_blob_roundtrip(void)
+{
+    uint8_t arr[256];
+    size_t n = build_valid(arr);              /* 188 B，version 7 */
+    uint8_t blob[300];
+    size_t blob_len = mlarr_scene_blob_encode(blob, sizeof blob, arr,
+                                              (uint16_t)n, 7);
+    assert(blob_len == 4 + n);
+    assert(blob[0] == (uint8_t)(n & 0xFF) && blob[1] == (uint8_t)(n >> 8));
+    assert(blob[2] == 7 && blob[3] == 0);
+    assert(memcmp(blob + 4, arr, n) == 0);
+
+    const uint8_t *a2 = NULL;
+    uint16_t l2 = 0, v2 = 0;
+    assert(mlarr_scene_blob_decode(blob, blob_len, &a2, &l2, &v2) == 0);
+    assert(l2 == n && v2 == 7);
+    assert(a2 == blob + 4 && memcmp(a2, arr, n) == 0);
+}
+
+static void test_scene_blob_encode_rejects(void)
+{
+    uint8_t arr[256];
+    size_t n = build_valid(arr);
+    uint8_t blob[300];
+
+    /* TLV 校验失败（overlap 故障）→ 0，不产出 blob */
+    uint8_t bad[256];
+    memcpy(bad, arr, n);
+    bad[OFF_BAD_TLV_OVERLAP] = 5;
+    assert(mlarr_scene_blob_encode(blob, sizeof blob, bad, (uint16_t)n, 1) == 0);
+
+    /* len < 4 → 0 */
+    assert(mlarr_scene_blob_encode(blob, sizeof blob, arr, 3, 1) == 0);
+    /* len > MLARR_ARR_MAX_BYTES → 0（先判长度再校验，不读越界） */
+    assert(mlarr_scene_blob_encode(blob, sizeof blob, arr,
+                                   (uint16_t)(MLARR_ARR_MAX_BYTES + 1), 1) == 0);
+    /* cap 装不下 len+4 的 blob → 0 */
+    assert(mlarr_scene_blob_encode(blob, 8, arr, (uint16_t)n, 1) == 0);
+}
+
+static void test_scene_blob_decode_rejects(void)
+{
+    uint8_t blob[8] = { 0 };
+    const uint8_t *a = NULL;
+    uint16_t l = 0, v = 0;
+    assert(mlarr_scene_blob_decode(blob, 3, &a, &l, &v) == -1); /* < 4 B */
+    blob[0] = 100; blob[1] = 0;                                /* 声明 100 B */
+    assert(mlarr_scene_blob_decode(blob, 4, &a, &l, &v) == -1); /* 数据缺失 */
+    blob[0] = 2; blob[1] = 0;                                  /* len < 4 */
+    assert(mlarr_scene_blob_decode(blob, 4, &a, &l, &v) == -1);
+}
+
+/* 同时承载 fake 槽内容与 commit 记录的上下文：mlarr_scene_activate 把
+ * 同一个 user 同时给 load（读槽）与 commit（记录提交），两者不可混。 */
+typedef struct {
+    fake_slot_t fs;
+    events_t ev;
+} scene_ctx_t;
+
+static int scene_load(void *user, uint8_t slot, uint8_t *buf, uint16_t cap,
+                      uint16_t *len, uint16_t *version)
+{
+    scene_ctx_t *c = user;
+    return fake_load(&c->fs, slot, buf, cap, len, version);
+}
+
+static int scene_commit(void *user, const uint8_t *buf, uint16_t len,
+                        uint16_t version)
+{
+    scene_ctx_t *c = user;
+    return ev_commit(&c->ev, buf, len, version);
+}
+
+/* 激活成功：走 mlarr 的 commit 回调（与 §2.2 FIN 路径同一个 ev_commit），
+ * 提交字节/长度/版本与槽内容一致 */
+static void test_scene_activate_success(void)
+{
+    uint8_t arr[256];
+    size_t n = build_valid(arr);
+    scene_ctx_t c = { .fs = { arr, (uint16_t)n, 7, 0 }, .ev = { 0 } };
+    uint16_t ver_out = 0;
+    assert(mlarr_scene_activate(scene_load, scene_commit, &c, 2, &ver_out) == 0);
+    assert(c.ev.committed_n == 1);
+    assert(c.ev.committed[0].len == n);
+    assert(c.ev.committed[0].version == 7);
+    assert(memcmp(c.ev.committed[0].buf, arr, n) == 0);
+    assert(ver_out == 7);
+}
+
+static void test_scene_activate_slot_out_of_range(void)
+{
+    scene_ctx_t c = { .fs = { NULL, 0, 0, 0 }, .ev = { 0 } };
+    assert(mlarr_scene_activate(scene_load, scene_commit, &c, 4, NULL) == -1);
+    assert(mlarr_scene_activate(scene_load, scene_commit, &c, 255, NULL) == -1);
+    assert(c.ev.committed_n == 0);
+}
+
+/* 槽为空 → -1，不触发 commit（活动编排不动） */
+static void test_scene_activate_load_fail(void)
+{
+    scene_ctx_t c = { .fs = { NULL, 0, 0, 1 }, .ev = { 0 } };
+    assert(mlarr_scene_activate(scene_load, scene_commit, &c, 1, NULL) == -1);
+    assert(c.ev.committed_n == 0);
+}
+
+/* 槽内字节损坏 → -1，不触发 commit（活动编排保持不动） */
+static void test_scene_activate_validation_fail_keeps_active(void)
+{
+    uint8_t arr[256];
+    size_t n = build_valid(arr);
+    arr[OFF_BAD_TLV_OVERLAP] = 5;             /* TLV overlap */
+    scene_ctx_t c = { .fs = { arr, (uint16_t)n, 7, 0 }, .ev = { 0 } };
+    assert(mlarr_scene_activate(scene_load, scene_commit, &c, 0, NULL) == -1);
+    assert(c.ev.committed_n == 0);
+
+    /* 声明长度超过实际（截断）也失败 */
+    scene_ctx_t c2 = { .fs = { arr, (uint16_t)(n - 1), 7, 0 }, .ev = { 0 } };
+    assert(mlarr_scene_activate(scene_load, scene_commit, &c2, 0, NULL) == -1);
+    assert(c2.ev.committed_n == 0);
+}
+
+/* 提交回调失败（NVS 写失败场景）→ -1 */
+static void test_scene_activate_commit_fail(void)
+{
+    uint8_t arr[256];
+    size_t n = build_valid(arr);
+    scene_ctx_t c = { .fs = { arr, (uint16_t)n, 7, 0 }, .ev = { 0 } };
+    assert(mlarr_scene_activate(scene_load, failing_commit, &c, 3, NULL) == -1);
+    assert(c.ev.committed_n == 0);
+}
+
 int main(void)
 {
     test_parse_minimal();
@@ -1325,7 +1481,15 @@ int main(void)
     test_rx_commit_fail_cb_nak();
     test_rx_total_len_too_big();
     test_rx_data_before_start_ignored();
-    /* 43 = 上面 test_*() 调用的数量（增删用例时同步更新）。 */
-    printf("all mlarr host tests passed (%d cases)\n", 43);
+    test_scene_blob_roundtrip();
+    test_scene_blob_encode_rejects();
+    test_scene_blob_decode_rejects();
+    test_scene_activate_success();
+    test_scene_activate_slot_out_of_range();
+    test_scene_activate_load_fail();
+    test_scene_activate_validation_fail_keeps_active();
+    test_scene_activate_commit_fail();
+    /* 51 = 上面 test_*() 调用的数量（增删用例时同步更新）。 */
+    printf("all mlarr host tests passed (%d cases)\n", 51);
     return 0;
 }

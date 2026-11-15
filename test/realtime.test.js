@@ -1,6 +1,7 @@
 // 实时参数通道手机侧 — spec.md §2.3
 // Realtime := pin(1) + groupIndex(1) + stageIndex(1) + layer(1) + paramIdx(1) + valueLen(1) + value(valueLen)
-// 最短 6 B（valueLen 为 0 空帧），整数/枚举/布尔 7 B（valueLen 1），颜色 [a,b] 8 B，[a,b,c] 9 B。永远单帧不分片。
+// 整数/枚举/布尔 7 B（valueLen 1），颜色 [a,b] 8 B，[a,b,c] 9 B。永远单帧不分片。
+// 不构造 valueLen=0 的 6 B 空帧：固件 mlrt_on_packet 要求 len ≥ 7 且 value_len ≥ 1。
 // 节流 50 ms（20 Hz）：最新值覆盖，窗口内中间值丢弃。
 
 const test = require('node:test');
@@ -35,15 +36,15 @@ test('buildRealtimeFrame: 数值钳制到 u8、非法参数抛错', () => {
   assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: 'x' }));
 });
 
-test('帧长边界 6..9 B（§2.3 永远单帧，valueLen 可为 0）', () => {
-  assert.ok(REALTIME_MIN_LEN === 6 && REALTIME_MAX_LEN === 9);
+test('帧长边界 7..9 B（§2.3 永远单帧，valueLen ≥ 1）', () => {
+  assert.ok(REALTIME_MIN_LEN === 7 && REALTIME_MAX_LEN === 9);
   const bool = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: false });
   assert.equal(bool.length, 7); // bool 1 B
 });
 
-test('buildRealtimeFrame: valueLen 为 0 → 6 B 空帧', () => {
-  const f = buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [] });
-  assert.deepEqual(Array.from(f), [0, 0, 0, 0, 0, 0]);
+test('buildRealtimeFrame: valueLen 为 0 → 抛错（固件 len ≥ 7 且 value_len ≥ 1，6 B 空帧会被丢弃）', () => {
+  assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0 }), RangeError);
+  assert.throws(() => buildRealtimeFrame({ pin: 0, groupIndex: 0, stageIndex: 0, layer: 0, paramIdx: 0, value: [] }), RangeError);
 });
 
 test('throttle: 50 ms 窗口内多次更新只发最新值', async () => {

@@ -200,9 +200,19 @@ function hsv(h, s, v) {
   }
 }
 
-/** 单阶段在 tInStage 时给某颗取色：背景层打底，动态层覆盖（压在背景上面）。
- * fadeInMs > 0 时从上一阶段的颜色线性过渡到本阶段。 */
-function stageColorAt(stage, tInStage, pixelIndex, pixelCount, schema, group = null, stageIndex = -1) {
+/**
+ * 单阶段在 tInStage 时给某颗取色：背景层打底，动态层覆盖（压在背景上面）。
+ * fadeInMs > 0 时阶段首段从黑线性放大——与固件 mlarr.c mlarr_render（602–605 行）
+ * 一致：k = t*255/fadeInMs（整数截断），再逐通道 channel*k/255（整数截断，
+ * 对齐固件 scale_rgb 的 uint16/uint32 除法语义）。
+ * @param {object} stage 阶段（layers / fadeInMs）
+ * @param {number} tInStage 阶段内时刻（ms）
+ * @param {number} pixelIndex 灯珠序号
+ * @param {number} pixelCount 灯板颗数
+ * @param {object} schema 灯效表
+ * @returns {number[]} [r,g,b]（0–255）
+ */
+function stageColorAt(stage, tInStage, pixelIndex, pixelCount, schema) {
   let bg = null;
   let dy = null;
   stage.layers.forEach((l) => {
@@ -215,16 +225,15 @@ function stageColorAt(stage, tInStage, pixelIndex, pixelCount, schema, group = n
     if (fx.role === 1) dy = c; // dy 为 null = 本刻动态层不覆盖
   });
   let c = dy ?? bg ?? DIM_COLOR;
-  // 淡入：与上一阶段（同 t 相位？取其阶段内 tInStage）颜色线性过渡
+  // 淡入：阶段首段从黑线性放大（固件 mlarr.c 602–605：t < fade_in_ms 时
+  // scale_rgb(k = t*255/fade_in_ms)，逐通道 channel*k/255，均整数截断）。
   const fadeInMs = stage.fadeInMs ?? 0;
-  if (fadeInMs > 0 && tInStage < fadeInMs && group && stageIndex > 0) {
-    const prev = group.stages[stageIndex - 1];
-    const cPrev = stageColorAt(prev, prev.durationMs, pixelIndex, pixelCount, schema);
-    const f = tInStage / fadeInMs;
+  if (fadeInMs > 0 && tInStage < fadeInMs) {
+    const k = Math.floor((tInStage * 255) / fadeInMs);
     c = [
-      cPrev[0] + (c[0] - cPrev[0]) * f,
-      cPrev[1] + (c[1] - cPrev[1]) * f,
-      cPrev[2] + (c[2] - cPrev[2]) * f,
+      Math.floor((c[0] * k) / 255),
+      Math.floor((c[1] * k) / 255),
+      Math.floor((c[2] * k) / 255),
     ];
   }
   return [clampByte(c[0]), clampByte(c[1]), clampByte(c[2])];
@@ -274,7 +283,7 @@ function simulatePin(arr, pinIndex, now, opts = {}) {
     }
     const { stageIndex, tInStage } = resolveStage(g, now);
     const st = g.stages[stageIndex];
-    const c = stageColorAt(st, tInStage, i, n, schema, g, stageIndex);
+    const c = stageColorAt(st, tInStage, i, n, schema);
     out[i * 3] = c[0]; out[i * 3 + 1] = c[1]; out[i * 3 + 2] = c[2];
   }
   return out;
