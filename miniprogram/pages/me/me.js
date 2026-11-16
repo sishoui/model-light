@@ -107,6 +107,7 @@ Page({
     pendingUsage: 0,
     pendingUsageText: '无待上报',
     hasPrivacyGuide: false,
+    mockEnabled: false,
   },
 
   onLoad() {
@@ -167,7 +168,20 @@ Page({
       pendingUsage,
       pendingUsageText,
       hasPrivacyGuide: true,
+      mockEnabled: this._readMockEnabled(),
     });
+  },
+
+  /** 模拟模式开关（storage: mock:enabled）。无真机时开启，重启后全流程走模拟数据。 */
+  _readMockEnabled() {
+    try { return !!wx.getStorageSync('mock:enabled'); } catch (e) { return false; }
+  },
+
+  onToggleMock(e) {
+    const on = !!(e && e.detail && e.detail.value);
+    try { wx.setStorageSync('mock:enabled', on); } catch (err) { /* ignore */ }
+    wx.showToast({ title: on ? '已开启模拟模式，正在重启' : '已关闭模拟模式，正在重启', icon: 'none' });
+    setTimeout(() => wx.reLaunch({ url: '/pages/discover/discover' }), 300);
   },
 
   /** 隐私指引入口：轻提示，不做页面跳转。 */
