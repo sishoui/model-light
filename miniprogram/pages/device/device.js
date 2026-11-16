@@ -1,26 +1,29 @@
-const { createBleClient, SERVICE_UUID, CHAR_STATUS } = require('../../lib/ble');
-const { parseStatusFrame } = require('../../lib/status-frame');
+// 设备页 v2（#129）：顶部整体开关 + 8 引脚卡片纵向滚动。
+// 整体开关关 → 下发 SET_POWER(0) 全灭，8 张卡置灰且点按/长按都被挡；开 → SET_POWER(1) 恢复。
+// 引脚状态：12 B 状态帧（§2.9）没有逐引脚字段，按设备 mode 映射到全部 8 张卡
+// （0 回放→闪烁 / 1 实时→点亮 / 2 传输中、3 错误→关闭），开关关时一律关闭。
+// 状态帧同时写 status-cache（#111 跨页契约）；arrangementVersion 记在 data 供顶栏展示。
+// 连接：onHide 让出（断连 + 停令牌心跳），onShow 用 query 的 deviceId 直连重连（#111）；
+// 意外断连按 1/2/4/8 s 退避重连（§2.5）。deviceId 跨会话可能为空 → 不连接，只渲染本地卡片。
+// 卡片数据来自 arrangement-store（arrangement:<name>）的 8 引脚；长按菜单改名的落点也是它。
+
+const { createBleClient } = require('../../lib/ble');
 const { nextBackoffMs, resetBackoff } = require('../../lib/backoff');
 const { MODE_LABELS, ERROR_MESSAGES, TOKEN_LABELS } = require('../../lib/labels');
-const { computeChunkSize } = require('../../lib/chunk-size');
-const { parseDeviceInfo } = require('../../lib/device-info');
-const { isReadOnlyProtocol, describeNakStatus } = require('../../lib/device-protocol');
+const { isReadOnlyProtocol } = require('../../lib/device-protocol');
 const { createArrangementStore } = require('../../lib/arrangement-store');
-const { pushArrangement } = require('../../lib/arrangement-push');
 const { createTokenClient } = require('../../lib/token-client');
-const { createRealtimeThrottle } = require('../../lib/realtime-throttle');
-const { encode } = require('../../lib/arrangement');
 const { createDeviceControl } = require('../../lib/device-control');
 const { ACK_RESULT } = require('../../lib/device-control-frames');
 const { createStatusCache } = require('../../lib/status-cache');
-
-// 设备详情页 — 连接中枢 + 设备控制 + 编排推送 + 折叠卡。
-// 首屏：顶栏 → 设备控制卡 → 三列状态 → 折叠卡区。
-// §2.9：状态帧变化立即发，否则每 5 s 心跳全量；收到即写 status-cache（跨页契约）。
-// §2.5：断连按 1/2/4/8 s 退避重连；onHide 断开让出，onShow 用缓存 deviceId 直连重连。
+const { PIN_COUNT } = require('../../lib/arrangement');
+const { setPinName } = require('../../lib/pin-editor');
 
 const PROTO_MAJOR = 1;
 const PROTO_MINOR = 0;
+
+// 引脚卡片状态（关闭 / 点亮 / 闪烁）的人话标签
+const STATE_LABELS = { off: '关闭', on: '点亮', blink: '闪烁' };
 
 /** app 实例安全获取：真机 getApp()；测试环境可能未定义。 */
 function safeGetApp() {
@@ -28,34 +31,43 @@ function safeGetApp() {
   try { return getApp(); } catch (e) { return null; }
 }
 
+/** 固定 8 张卡的默认视图模型（无编排缓存 / 设备名缺失时的兜底）。 */
+function defaultPinCards() {
+  const pins = [];
+  for (let i = 0; i < PIN_COUNT; i++) {
+    pins.push({
+      index: i,
+      gpio: `GPIO${i}`,
+      name: `引脚 ${i}`,
+      cover: '',
+      state: 'off',
+      stateLabel: STATE_LABELS.off,
+      length: 0,
+      groupCount: 0,
+    });
+  }
+  return pins;
+}
+
 Page({
   data: {
     name: '',
     connected: false,
     reconnecting: false,
-    modeLabel: '—',
-    modeRaw: null,
+    powerOn: true,          // 整体开关；false = 全灭 + 卡片置灰不可点
+    readOnly: false,        // 协议 major 不同 → 只读（#111 信息分层）
     firmwareLabel: '—',
-    brightnessLimit: null,
+    modeLabel: '—',
     tokenLabel: '',
     errorMessage: '',
-    temperature: null,
-    visitorMode: false,
-    framesSeen: 0,
-    protoLabel: '',
-    readOnly: false,
-    chunkSize: null,
-    transferring: false,
-    progressLabel: '',
-    transferMessage: '',
-    pins: [],
-    pushVersion: null,
-    powerOn: false,
-    brightness: 100,
-    editingPin: -1,
-    ledCountDraft: '',
-    folds: { pins: false, push: false, ota: false },
-    otaUpgrading: false, // OTA 升级中徽标（读 ota 页写入的共享键）
+    arrangementVersion: null, // 状态帧里的设备编排版本
+    pins: [],                 // 固定 8 张卡（不可增删）
+    menuOpen: false,          // 长按底部编辑菜单
+    menuPin: -1,
+    renameOpen: false,        // 重命名弹层
+    renamePin: -1,
+    renameDraft: '',
+    transferMessage: '',      // 开关命令结果提示
   },
 
   onLoad(query) {
@@ -66,9 +78,7 @@ Page({
     this._statusCache = createStatusCache(wx);
     this._lastStatusFrame = null;
     this._tokenClient = null;
-    this._realtime = null;
     this._tokenTimer = null;
-    this._offStatus = null;
     this._reconnectTimer = null;
     this._lastFrameJson = null;
     this._disconnectedByUser = false;
@@ -83,6 +93,7 @@ Page({
     });
 
     this._watchConnectionState();
+    this.reloadPins();
     this.connect();
   },
 
@@ -96,21 +107,14 @@ Page({
   },
 
   async onShow() {
-    this._refreshOtaBadge();
     if (this.deviceId) {
       this._disconnectedByUser = false;
       this._reconnectTimer = null;
       await this.connect();
-    } else if (this.store) {
+    } else {
+      // 无 deviceId（跨会话）：不连接，但子页可能改过编排，刷新卡片
       this.reloadPins();
     }
-  },
-
-  // OTA 升级中徽标：OTA 页在升级期间写 `ota:upgrading:<deviceId>`，本页回前台时读它
-  _refreshOtaBadge() {
-    let upgrading = false;
-    try { upgrading = wx.getStorageSync(`ota:upgrading:${this.deviceId}`) === true; } catch (e) { /* 读失败按未升级 */ }
-    if (upgrading !== this.data.otaUpgrading) this.setData({ otaUpgrading: upgrading });
   },
 
   onUnload() {
@@ -139,7 +143,6 @@ Page({
     if (this._offStatus) { this._offStatus(); this._offStatus = null; }
     if (this._tokenTimer) { clearInterval(this._tokenTimer); this._tokenTimer = null; }
     if (this._tokenClient) { this._tokenClient.dispose(); this._tokenClient = null; }
-    this._realtime = null;
   },
 
   onBleDisconnected() {
@@ -159,7 +162,6 @@ Page({
       await this.ble.connect(this.deviceId);
       resetBackoff(this.backoff);
       this._offStatus = this.ble.onStatusFrame((frame) => {
-        this._lastStatusFrame = frame;
         this._statusCache.save(this._deviceName, frame);
         this.applyFrame(frame);
       });
@@ -174,70 +176,63 @@ Page({
       this._tokenTimer = setInterval(() => {
         if (this._tokenClient) this._tokenClient.tick();
       }, 2000);
-      this._realtime = createRealtimeThrottle({
-        send: (frame) => this.ble.writeRealtime(frame),
-      });
     } catch (e) {
       this.scheduleReconnect();
     }
   },
 
+  // #111 信息分层：固件版本 / 协议只读判定来自设备信息特征 ...0005
   async probeDeviceCapabilities() {
     try {
       const info = await this.ble.readDeviceInfo();
       if (!info) return;
       this._fwVersion = info.fwMajor != null ? `${info.fwMajor}.${info.fwMinor}` : null;
-      const local = { major: PROTO_MAJOR, minor: PROTO_MINOR };
-      const remote = { major: info.protoMajor, minor: info.protoMinor };
-      const readOnly = isReadOnlyProtocol(local, remote);
-      this.setData({
-        firmwareLabel: this._fwVersion || '—',
-        protoLabel: `v${info.protoMajor}.${info.protoMinor}`,
-        readOnly,
-      });
-      try { wx.setStorageSync(`capabilities:${this._deviceName}`, info.capabilities); } catch (e) { /* 缓存失败不阻塞 */ }
-      const sys = wx.getSystemInfoSync();
-      const { chunkSize } = await this.ble.negotiateChunkSize(sys.platform);
-      this.setData({ chunkSize });
-      this._chunkSize = chunkSize;
+      const readOnly = isReadOnlyProtocol(
+        { major: PROTO_MAJOR, minor: PROTO_MINOR },
+        { major: info.protoMajor, minor: info.protoMinor },
+      );
+      this.setData({ firmwareLabel: this._fwVersion || '—', readOnly });
     } catch (e) {
       this.setData({ readOnly: true });
     }
   },
 
+  // 固定 8 张卡：编排缓存优先，无缓存 / 无设备名用默认视图模型
   reloadPins() {
-    const arr = this.store.loadOrCreate(this._deviceName);
-    const pins = arr.pins.map((p, i) => ({
-      index: i,
-      label: `引脚 ${i}`,
-      name: p.name || '（未命名）',
-      length: p.length,
-      groupCount: p.groups.length,
-    }));
-    this.setData({ pins, pushVersion: arr.version });
-  },
-
-  _arrangementTransport() {
-    return {
-      write: (bytes) => this.ble.writeSequence(bytes),
-      onFrame: (cb) => this.ble.onSequenceNotify(cb),
-    };
-  },
-
-  async requestToken() {
-    if (!this._tokenClient) return { granted: false, reason: 'no-token' };
-    try {
-      const r = await this._tokenClient.requestToken();
-      this.setData({ tokenLabel: r.granted ? '本机持有' : '令牌获取失败' });
-      if (!r.granted) {
-        const why = { denied: '持有者拒绝了交接', busy: '设备正忙', timeout: '无应答（可能无持有者或已断连）' };
-        this.setData({ transferMessage: `未拿到令牌：${why[r.reason] || r.reason}` });
-      }
-      return r;
-    } catch (e) {
-      this.setData({ transferMessage: e.message || '令牌请求失败' });
-      return { granted: false, reason: 'error' };
+    const arr = this._deviceName ? this.store.loadOrCreate(this._deviceName) : null;
+    const pins = defaultPinCards();
+    if (arr && Array.isArray(arr.pins)) {
+      arr.pins.slice(0, PIN_COUNT).forEach((p, i) => {
+        pins[i].name = p.name || `引脚 ${i}`;
+        pins[i].cover = typeof p.cover === 'string' ? p.cover : '';
+        pins[i].length = p.length;
+        pins[i].groupCount = Array.isArray(p.groups) ? p.groups.length : 0;
+      });
     }
+    this._applyPowerState(pins);
+    this.setData({ pins });
+  },
+
+  // 整体开关 → 卡片状态：关一律「关闭」；开按最近一帧 mode 映射（见文件头注释）
+  _pinState() {
+    if (!this.data.powerOn) return 'off';
+    const mode = this._lastStatusFrame ? this._lastStatusFrame.mode : null;
+    if (mode === 0) return 'blink';
+    if (mode === 1) return 'on';
+    return 'off';
+  },
+
+  _applyPowerState(pins) {
+    const state = this._pinState();
+    pins.forEach((p) => {
+      p.state = state;
+      p.stateLabel = STATE_LABELS[state];
+    });
+    return pins;
+  },
+
+  _applyPowerStateToCards() {
+    this.setData({ pins: this._applyPowerState(this.data.pins.map((p) => ({ ...p }))) });
   },
 
   _dcWrite(bytes) {
@@ -267,164 +262,138 @@ Page({
     return why[r.reason] || `设备控制失败（${r.reason}）`;
   },
 
+  // 整体开关：乐观更新（先置灰/恢复卡片再下发），ACK 失败回滚并说明原因（#111 开关语义）
   async onTogglePower(e) {
     const on = !!e.detail.value;
+    if (on === this.data.powerOn) return;
+    if (!this.data.connected) {
+      wx.showToast({ title: '设备未连接', icon: 'none' });
+      return;
+    }
     if (this._dcBusy) return;
     this._dcBusy = true;
     try {
+      this.setData({ powerOn: on, transferMessage: '' });
+      this._applyPowerStateToCards();
       let r;
       try {
         r = await this.dc.setPower(on);
       } catch (err) {
         this.setData({ powerOn: !on, transferMessage: `电源切换异常：${err.message}` });
+        this._applyPowerStateToCards();
         return;
       }
       const msg = this._ackMessage(r);
       if (msg) {
         this.setData({ powerOn: !on, transferMessage: msg });
-        return;
+        this._applyPowerStateToCards();
       }
-      this.setData({ powerOn: on, transferMessage: '' });
     } finally {
       this._dcBusy = false;
     }
   },
 
-  async onBrightnessChange(e) {
-    const pct = Number(e.detail.value);
-    if (this._dcBusy) return;
-    this._dcBusy = true;
-    try {
-      let r;
-      try {
-        r = await this.dc.setBrightness(pct);
-      } catch (err) {
-        this.setData({ transferMessage: `亮度取值非法：${err.message}` });
-        return;
-      }
-      const msg = this._ackMessage(r);
-      if (msg) {
-        this.setData({ transferMessage: msg });
-        return;
-      }
-      this.setData({ brightness: pct, transferMessage: '' });
-    } finally {
-      this._dcBusy = false;
-    }
-  },
-
-  openLedCountEditor(e) {
+  // 点卡片 → 引脚页（带设备 + 引脚标识）；整体关闭时不可点
+  onTapPin(e) {
+    if (!this.data.powerOn) return;
     const pin = Number(e.currentTarget.dataset.pin);
-    const item = this.data.pins.find((p) => p.index === pin);
-    this.setData({ editingPin: pin, ledCountDraft: item ? String(item.length) : '' });
-  },
-
-  onLedCountInput(e) {
-    this.setData({ ledCountDraft: e.detail.value });
-  },
-
-  async onLedCountConfirm(e) {
-    const pin = Number(e.currentTarget.dataset.pin);
-    const count = parseInt(this.data.ledCountDraft, 10);
-    if (!Number.isInteger(count) || count < 0 || count > 255) {
-      this.setData({ transferMessage: '灯珠数取值 0–255 的整数' });
-      return;
-    }
-    if (this._dcBusy) return;
-    this._dcBusy = true;
-    try {
-      let r;
-      try {
-        r = await this.dc.setLedCount(pin, count);
-      } catch (err) {
-        this.setData({ transferMessage: `灯珠数下发失败：${err.message}` });
-        return;
-      }
-      const msg = this._ackMessage(r);
-      if (msg) {
-        this.setData({ transferMessage: msg });
-        return;
-      }
-      const pins = this.data.pins.map((p) => (p.index === pin ? { ...p, length: count } : p));
-      this.setData({ pins, editingPin: -1, transferMessage: `引脚 ${pin} 灯珠数已设为 ${count}` });
-    } finally {
-      this._dcBusy = false;
-    }
-  },
-
-  sendRealtimeParam(params) {
-    if (!this._realtime || this.data.readOnly) return;
-    this._realtime.push(params);
-  },
-
-  onToggleFold(e) {
-    const key = e.currentTarget.dataset.key;
-    if (!key) return;
-    this.setData({ [`folds.${key}`]: !this.data.folds[key] });
-  },
-
-  openPin(e) {
-    const { pin } = e.currentTarget.dataset;
+    if (!Number.isInteger(pin) || pin < 0 || pin >= PIN_COUNT) return;
     wx.navigateTo({
-      url: `../pin/pin?name=${encodeURIComponent(this._deviceName)}&pin=${pin}`,
+      url: `/pages/pin/pin?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&pin=${pin}`,
     });
   },
 
-  openOta() {
-    if (!this.data.connected) return;
-    wx.navigateTo({
-      url: `../ota/ota?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&chunkSize=${this._chunkSize || 20}`,
-    });
+  // 长按卡片 → 底部编辑菜单；整体关闭时不可点
+  onLongPressPin(e) {
+    if (!this.data.powerOn) return;
+    const pin = Number(e.currentTarget.dataset.pin);
+    if (!Number.isInteger(pin) || pin < 0 || pin >= PIN_COUNT) return;
+    this.setData({ menuOpen: true, menuPin: pin });
   },
 
-  async pushArrangementAction() {
-    if (this._senderActive || this.data.readOnly || !this._chunkSize) return;
-    let payloadBytes;
-    let version;
-    try {
-      const arr = this.store.loadOrCreate(this._deviceName);
-      version = arr.version;
-      payloadBytes = new Uint8Array(encode(arr));
-    } catch (e) {
-      this.setData({ transferMessage: `编排不完整：${e.message}（本地已保存，可继续编辑）` });
-      return;
-    }
-    this._senderActive = true;
-    this.setData({ transferring: true, progressLabel: '0%', transferMessage: '' });
-    try {
-      const result = await pushArrangement(this.ble, {
-        chunkSize: this._chunkSize,
-        payloadBytes,
-        version,
-        getStatusFrame: () => this._lastStatusFrame,
-        token: this._tokenClient,
-        transport: this._arrangementTransport(),
+  onMenuClose() {
+    this.setData({ menuOpen: false });
+  },
+
+  onMenuAction(e) {
+    const action = e.currentTarget.dataset.action;
+    const pin = this.data.menuPin;
+    if (action === 'rename') {
+      const card = this.data.pins[pin];
+      this.setData({
+        renameDraft: card ? card.name : '',
+        renamePin: pin,
+        renameOpen: true,
+        menuOpen: false,
       });
-      if (result.ok) {
-        this.setData({ transferMessage: '推送成功，设备版本已确认' });
-      } else if (result.reason === 'no-token') {
-        const why = { denied: '当前持有者拒绝了令牌交接', busy: '设备正忙，稍后再试', timeout: '令牌握手超时' };
-        this.setData({ transferMessage: `未获得控制令牌：${why[result.detail] || result.detail}` });
-      } else if (result.reason === 'nak') {
-        this.setData({ transferMessage: describeNakStatus(result.status) });
-      } else if (result.reason === 'version-mismatch') {
-        this.setData({ transferMessage: '设备版本与本机不一致，请重试' });
-      } else if (result.reason === 'no-ack') {
-        this.setData({ transferMessage: '设备无响应，已发送 RESET，旧编排未变' });
-      } else if (result.reason === 'timeout') {
-        this.setData({ transferMessage: '传输超时（30 s），已发送 RESET，旧编排未变' });
-      } else {
-        this.setData({ transferMessage: '传输已取消' });
-      }
-    } finally {
-      this._senderActive = false;
-      this.setData({ transferring: false });
+      return;
+    }
+    if (action === 'cover') {
+      this._chooseCover(pin);
     }
   },
 
-  deviceFirmwareVersion() {
-    return this._fwVersion || null;
+  // 更换图片（v2 占位）：有 wx.chooseImage 就选图存临时路径（客户端专属字段，encode 忽略），否则 toast
+  _chooseCover(pin) {
+    this.setData({ menuOpen: false });
+    if (!this._deviceName) {
+      wx.showToast({ title: '设备名缺失，无法保存图片', icon: 'none' });
+      return;
+    }
+    if (typeof wx.chooseImage !== 'function') {
+      wx.showToast({ title: '当前环境暂不支持更换图片', icon: 'none' });
+      return;
+    }
+    wx.chooseImage({
+      count: 1,
+      success: (res) => {
+        const path = res && Array.isArray(res.tempFilePaths) ? res.tempFilePaths[0] : '';
+        if (!path) return;
+        const arr = this.store.loadOrCreate(this._deviceName);
+        if (!arr || !arr.pins[pin]) return;
+        arr.pins[pin].cover = path;
+        this.store.save(this._deviceName, arr);
+        this.reloadPins();
+        wx.showToast({ title: '图片已更换', icon: 'success' });
+      },
+      fail: () => { /* 用户取消 / 选择失败不打扰 */ },
+    });
   },
+
+  onRenameInput(e) {
+    this.setData({ renameDraft: e.detail.value });
+  },
+
+  onRenameCancel() {
+    this.setData({ renameOpen: false, renamePin: -1 });
+  },
+
+  // 重命名：校验（≤16 B UTF-8）→ 落 arrangement-store → 重渲染卡片
+  onRenameConfirm() {
+    const pin = this.data.renamePin;
+    const draft = (this.data.renameDraft || '').trim();
+    if (!this._deviceName) {
+      wx.showToast({ title: '设备名缺失，无法保存', icon: 'none' });
+      return;
+    }
+    if (!draft) {
+      wx.showToast({ title: '名称不能为空', icon: 'none' });
+      return;
+    }
+    const arr = this.store.loadOrCreate(this._deviceName);
+    const r = setPinName(arr, pin, draft);
+    if (!r.ok) {
+      wx.showToast({ title: r.error, icon: 'none' });
+      return;
+    }
+    this.store.save(this._deviceName, arr);
+    this.setData({ renameOpen: false, renamePin: -1 });
+    this.reloadPins();
+    wx.showToast({ title: '已重命名', icon: 'success' });
+  },
+
+  // 阻止面板内部点击冒泡到遮罩（WXML catchtap 目标）
+  noop() {},
 
   scheduleReconnect() {
     if (this._disconnectedByUser) return;
@@ -435,22 +404,23 @@ Page({
     this._reconnectTimer = setTimeout(() => this.connect(), delay);
   },
 
+  // 12 B 状态帧 → 顶栏信息 + 卡片引脚状态；同帧不重复重渲染卡片
   applyFrame(frame) {
+    this._lastStatusFrame = frame;
     const json = JSON.stringify(frame);
-    if (json === this._lastFrameJson) {
-      this.setData({ framesSeen: this.data.framesSeen + 1 });
-      return;
-    }
+    const changed = json !== this._lastFrameJson;
     this._lastFrameJson = json;
-    this.setData({
-      framesSeen: this.data.framesSeen + 1,
-      modeRaw: frame.mode,
+    const patch = {
+      arrangementVersion: frame.arrangementVersion,
       modeLabel: MODE_LABELS[frame.mode] ?? `未知(${frame.mode})`,
-      brightnessLimit: frame.brightnessLimit,
       tokenLabel: TOKEN_LABELS[frame.tokenHolder] ?? '',
-      errorMessage: frame.errorCode ? (ERROR_MESSAGES[frame.errorCode] ?? `错误 0x${frame.errorCode.toString(16)}`) : '',
-      temperature: frame.temperature,
-      visitorMode: frame.visitorMode,
-    });
+      errorMessage: frame.errorCode
+        ? (ERROR_MESSAGES[frame.errorCode] ?? `错误 0x${frame.errorCode.toString(16)}`)
+        : '',
+    };
+    if (changed) {
+      patch.pins = this._applyPowerState(this.data.pins.map((p) => ({ ...p })));
+    }
+    this.setData(patch);
   },
 });
