@@ -1,37 +1,69 @@
-/* 引脚编辑页：新拟物化（#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa） */
-.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; }
+/* 引脚页 v2（#130）样式 — 新拟物：底 #e0e5ec / 卡片 #ffffff / 柔和双阴影 / 强调 #60a5fa。
+   结构：顶栏 → 灯组 tab 行 → 方格矩阵 → #131 内容槽 → 长按菜单 → 重命名弹层。 */
+
+.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; box-sizing: border-box; }
+
+/* 顶栏 */
+.topbar { background: #ffffff; border-radius: 24rpx; padding: 24rpx; margin-bottom: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.name { font-size: 36rpx; font-weight: 700; color: #4a5568; }
+.meta { margin-top: 16rpx; color: #8a94a6; font-size: 26rpx; }
+.badge { font-size: 24rpx; color: #3b82f6; }
+.pending { margin-top: 10rpx; color: #b45309; font-size: 24rpx; font-weight: 600; }
+
+/* 灯组 tab 行（横向滚动，末尾「+」） */
+.tab-bar { margin-bottom: 16rpx; white-space: nowrap; }
+.tab { display: inline-block; color: #8a94a6; font-size: 28rpx; font-weight: 500;
+  padding: 0 22rpx; height: 72rpx; line-height: 72rpx; border-radius: 36rpx;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.tab + .tab { margin-left: 10rpx; }
+.tab.on { color: #ffffff; background: #60a5fa; font-weight: 600;
+  box-shadow: inset 2rpx 2rpx 4rpx #2563eb, inset -2rpx -2rpx 4rpx #7bb8ff; }
+.tab-add { color: #60a5fa; font-size: 36rpx; font-weight: 700; padding: 0 26rpx; }
+.tab-add.off { color: #cbd5e1; pointer-events: none; }
+
+/* 卡片与矩阵头 */
 .panel { background: #ffffff; border-radius: 24rpx; padding: 24rpx; margin-bottom: 24rpx;
   box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
-.panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
-.field { margin-bottom: 20rpx; }
-.k { color: #8a94a6; font-size: 24rpx; display: block; margin-bottom: 8rpx; }
-.input { background: #ffffff; color: #4a5568; border: none; border-radius: 12rpx; padding: 12rpx 20rpx; font-size: 28rpx;
-  box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.save-btn { margin-top: 16rpx; background: #ffffff; color: #60a5fa; font-size: 24rpx; font-weight: 600;
-  border-radius: 14rpx; border: none;
-  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
-.save-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.error { color: #d66a6a; font-size: 24rpx; }
-.group-row { display: flex; align-items: center; justify-content: space-between; padding: 16rpx 0; border-bottom: 1rpx solid #e6eaf0; }
-.group-row:last-child { border-bottom: none; }
-.group-info { flex: 1; }
-.group-name { color: #4a5568; font-size: 28rpx; display: block; }
-.group-meta { color: #8a94a6; font-size: 24rpx; }
-.del-btn { background: #ffffff; color: #d66a6a; font-size: 22rpx; border: none; border-radius: 12rpx;
-  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
-.del-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.empty { color: #8a94a6; font-size: 26rpx; padding: 24rpx 0; }
-.chips { display: flex; flex-wrap: wrap; gap: 12rpx; }
-.chip { background: #ffffff; color: #4a5568; font-size: 24rpx; border: none; border-radius: 12rpx;
-  padding: 8rpx 20rpx; margin: 0;
-  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
-.chip.on { color: #ffffff; background: #60a5fa;
-  box-shadow: inset 2rpx 2rpx 4rpx #4a90e2, inset -2rpx -2rpx 4rpx #7bb8ff; }
-.pill { background: #ffffff; color: #60a5fa; font-size: 24rpx; font-weight: 600;
-  border: none; border-radius: 14rpx; padding: 10rpx 28rpx;
-  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
-.pill:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.add-btn { margin-top: 20rpx; background: #ffffff; color: #60a5fa; font-size: 26rpx; font-weight: 600;
-  border-radius: 16rpx; border: none;
-  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
-.add-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
+.matrix-panel { margin-top: 0; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16rpx; }
+.panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; }
+.counts { color: #8a94a6; font-size: 24rpx; }
+
+/* 方格矩阵（每格一颗灯珠，三态：黑空心 / 蓝实心 / 灰实心） */
+.matrix { display: flex; flex-direction: column; gap: 8rpx; }
+.matrix-row { display: flex; gap: 8rpx; margin-bottom: 6rpx; }
+.cell {
+  box-sizing: border-box; border-radius: 10rpx;
+  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff;
+}
+.cell-free { background: #ffffff; border: 2rpx solid #8a94a6; } /* 黑空心：未分配 */
+.cell-selected { background: #60a5fa; border-color: #2563eb; } /* 本组已选 */
+.cell-other { background: #b9c0cc; border-color: #94a3b8; opacity: 0.95; } /* 他组占用 */
+.in-box { box-shadow: inset 0 0 0 4rpx #2563eb; }
+
+.empty { color: #8a94a6; font-size: 26rpx; padding: 40rpx 0; text-align: center; }
+.hint { color: #b4b8c0; font-size: 22rpx; margin-top: 10rpx; text-align: center; }
+
+/* 长按编辑菜单（底部弹出） */
+.sheet-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 50;
+  display: flex; align-items: flex-end; }
+.sheet { width: 100%; background: #e0e5ec; border-radius: 28rpx 28rpx 0 0;
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom)); }
+.sheet-item { text-align: center; color: #4a5568; font-size: 30rpx; padding: 30rpx 0; border-bottom: 1rpx solid #cfd6e0; }
+.sheet-item.danger { color: #d66a6a; }
+.sheet-cancel { text-align: center; color: #8a94a6; font-size: 28rpx; padding: 24rpx 0; }
+
+/* 重命名弹层 */
+.rename-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 60;
+  display: flex; align-items: center; justify-content: center; }
+.rename-panel { width: 600rpx; background: #ffffff; border-radius: 24rpx; padding: 32rpx;
+  box-shadow: 8rpx 8rpx 16rpx #b9c4d4, -8rpx -8rpx 16rpx #ffffff; }
+.rename-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 20rpx; }
+.rename-input { background: #e0e5ec; border-radius: 16rpx; padding: 20rpx; font-size: 28rpx; color: #4a5568; }
+.rename-actions { display: flex; gap: 20rpx; margin-top: 28rpx; }
+.btn-ghost, .btn-primary { flex: 1; height: 80rpx; line-height: 80rpx; border: none; border-radius: 40rpx;
+  font-size: 28rpx; font-weight: 600; }
+.btn-ghost { background: #ffffff; color: #8a94a6; box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
+.btn-primary { background: #60a5fa; color: #ffffff; }

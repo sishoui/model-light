@@ -1,48 +1,81 @@
 <view class="page">
-  <view class="panel">
-    <view class="panel-title">{{pinLabel}}（固定 0–7，不可增删）</view>
-    <view class="field">
-      <text class="k">名字（≤16 字节 UTF-8，已输 {{nameBytes}} B）</text>
-      <input class="input" value="{{name}}" maxlength="20" bindinput="onNameInput" />
-      <button class="save-btn" size="mini" bindtap="saveName">保存名字</button>
-      <text wx:if="{{nameError}}" class="error">{{nameError}}</text>
+  <!-- 顶栏：设备 + 引脚标识 + 本地待推送标记 -->
+  <view class="topbar">
+    <view class="row">
+      <text class="name">{{deviceName || '设备'}}</text>
+      <text class="badge">{{pinLabel}}</text>
     </view>
-    <view class="field">
-      <text class="k">灯珠数量（0–255）</text>
-      <input class="input" type="number" value="{{length}}" bindinput="onLengthInput" />
-      <button class="save-btn" size="mini" bindtap="saveLength">保存数量</button>
-      <text wx:if="{{lengthError}}" class="error">{{lengthError}}</text>
+    <view class="row meta">
+      <text>{{pinName || '未命名引脚'}}</text>
+      <text>{{length}} 颗 · {{groupTabs.length}}/8 灯组</text>
+    </view>
+    <text wx:if="{{pendingPush}}" class="pending">本地已改 · 待推送</text>
+  </view>
+
+  <!-- 灯组 tab 行：横向滚动，末尾「+」新增（达上限置灰），长按 tab → 重命名 / 删除 -->
+  <scroll-view class="tab-bar" scroll-x>
+    <view
+      wx:for="{{groupTabs}}"
+      wx:key="index"
+      class="tab {{item.active ? 'on' : ''}}"
+      data-group="{{item.index}}"
+      bindtap="onSelectGroup"
+      bindlongpress="onLongPressGroup"
+    >{{item.name}}</view>
+    <view class="tab tab-add {{canAddGroup ? '' : 'off'}}" bindtap="onAddGroup">＋</view>
+  </scroll-view>
+
+  <!-- 内容区：当前灯组的 2D 方格矩阵（每格一颗灯珠） -->
+  <view class="panel matrix-panel">
+    <view class="panel-head">
+      <text class="panel-title">{{currentGroupLabel || '灯珠划分'}}</text>
+      <text class="counts">本组 {{selectedCount}} · 空闲 {{freeCount}} · 他组 {{otherCount}}</text>
+    </view>
+
+    <view wx:if="{{empty}}" class="empty">还没有灯组，点右上角「＋」新建</view>
+    <view wx:elif="{{cellCount === 0}}" class="empty">该引脚灯珠数为 0</view>
+    <view wx:else class="matrix" bindtouchstart="onGridTouchStart" bindtouchmove="onGridTouchMove" bindtouchend="onGridTouchEnd">
+      <view wx:for="{{rows}}" wx:for-item="row" wx:key="key" class="matrix-row">
+        <view
+          wx:for="{{row.cells}}"
+          wx:key="index"
+          class="cell cell-{{item.state}} {{item.box ? 'in-box' : ''}}"
+          style="width:{{cellSizeRpx}}rpx;height:{{cellSizeRpx}}rpx"
+          data-index="{{item.index}}"
+          bindtap="onCellTap"
+          bindlongpress="onCellLongPress"
+        ></view>
+      </view>
+    </view>
+
+    <text wx:if="{{truncated}}" class="hint">单引脚最多 100 颗，矩阵只画前 100 格</text>
+    <text class="hint">单击切换归属；长按拖动框选一片</text>
+  </view>
+
+  <!-- #131 内容槽：阶段列表 + 循环模式 + 双层灯效 + 色环 -->
+  <view id="stage-slot" class="panel">
+    <view class="panel-title">阶段与灯效</view>
+    <view class="empty">（#131 待补）</view>
+  </view>
+
+  <!-- 长按 tab 的编辑菜单（底部弹出） -->
+  <view wx:if="{{menuOpen}}" class="sheet-mask" bindtap="onMenuClose">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-item" data-action="rename" catchtap="onMenuAction">重命名</view>
+      <view class="sheet-item danger" data-action="delete" catchtap="onMenuAction">删除</view>
+      <view class="sheet-cancel" catchtap="onMenuClose">取消</view>
     </view>
   </view>
 
-  <view class="panel">
-    <view class="panel-title">3D 布局</view>
-    <view class="field">
-      <text class="k">行宽</text>
-      <view class="chips">
-        <button wx:for="{{rowWidths}}" wx:key="*this"
-          class="chip {{rowWidth === item ? 'on' : ''}}"
-          data-w="{{item}}" bindtap="onRowWidthChange">{{item}}</button>
+  <!-- 重命名灯组 -->
+  <view wx:if="{{renameOpen}}" class="rename-mask" bindtap="onRenameCancel">
+    <view class="rename-panel" catchtap="noop">
+      <view class="rename-title">重命名灯组</view>
+      <input class="rename-input" value="{{renameDraft}}" bindinput="onRenameInput" focus />
+      <view class="rename-actions">
+        <button class="btn-ghost" bindtap="onRenameCancel">取消</button>
+        <button class="btn-primary" bindtap="onRenameConfirm">确认</button>
       </view>
     </view>
-    <view class="field">
-      <text class="k">排列</text>
-      <button class="pill" bindtap="onToggleLayout">
-        {{layout === 'row-major-snake' ? '蛇形' : '从左到右'}}
-      </button>
-    </view>
-  </view>
-
-  <view class="panel">
-    <view class="panel-title">灯组（{{groups.length}}）</view>
-    <view wx:for="{{groups}}" wx:key="index" class="group-row" data-group="{{item.index}}" bindtap="openGroup">
-      <view class="group-info">
-        <text class="group-name">灯组 {{item.index + 1}}</text>
-        <text class="group-meta">{{item.rangeLabel}} · {{item.durationLabel}}</text>
-      </view>
-      <button class="del-btn" size="mini" catchtap="removeGroup" data-group="{{item.index}}">删除</button>
-    </view>
-    <view wx:if="{{groups.length === 0}}" class="empty">还没有灯组，点下面新建</view>
-    <button class="add-btn" bindtap="createGroup">新建灯组</button>
   </view>
 </view>
