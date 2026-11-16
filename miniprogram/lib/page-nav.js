@@ -1,25 +1,21 @@
 // 页面导航骨架 — v2 收敛（#127）：去掉 me tabBar 与已删页面（scene / preview / part / device-info）。
 // 纯函数，无 wx 依赖，Node/vitest 可单测。
 
-// v2 保留的六页：设备列表首页 / 设备 / 引脚 / 灯组 / 阶段 / OTA
+// v2 保留的四页：设备列表首页 / 设备 / 引脚 / OTA（灯组与阶段已内联进引脚页）
 const PAGES = {
   discover: { id: 'discover', title: '发现设备', path: '/pages/discover/discover' },
   device: { id: 'device', title: '设备', path: '/pages/device/device' },
   pin: { id: 'pin', title: '引脚', path: '/pages/pin/pin' },
-  group: { id: 'group', title: '灯组', path: '/pages/group/group' },
-  stage: { id: 'stage', title: '阶段', path: '/pages/stage/stage' },
   ota: { id: 'ota', title: '固件升级', path: '/pages/ota/ota' },
 };
 
-// 交互骨架：设备列表 → 设备 → 8 引脚（可命名） → 灯组 → 阶段 → OTA
+// 交互骨架：设备列表 → 设备 → 8 引脚（灯组 / 阶段在引脚页内联） → OTA 子页
 const PIN_COUNT = 8;
 
 const INTERACTION_SKELETON = [
   { id: 'devices', title: '设备列表', path: '/pages/discover/discover' },
   { id: 'device', title: '设备', path: '/pages/device/device' },
   { id: 'pins', title: '8 引脚（可命名）', path: '/pages/pin/pin' },
-  { id: 'light-groups', title: '灯组', path: '/pages/group/group' },
-  { id: 'stages', title: '阶段', path: '/pages/stage/stage' },
   { id: 'ota', title: '固件升级', path: '/pages/ota/ota' },
 ];
 
