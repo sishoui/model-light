@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE — throwaway, not production. wayfinder ticket #106 (map #48).
+  Question: 小程序视觉风格收口 — light neumorphism vs dark light-lab.
+  Two variants of the same 设备详情页 (pages/device/device), switchable via
+  ?variant=A|B and a floating bottom bar (← → arrow keys work too).
+  Assets: 灯效语境 LED strip on both variants; token slab (色彩/字号/控件) per variant.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>model-light 视觉风格 prototype（#106）</title>
+<style>
+  :root {
+    /* Variant A tokens — 新拟物浅色（现状规范化） */
+    --a-bg: #e0e5ec;
+    --a-card: #ffffff;
+    --a-ink: #4a5568;
+    --a-muted: #8a94a6;
+    --a-accent: #60a5fa;
+    --a-accent-ink: #3b82f6;
+    --a-shadow: 5px 5px 10px #cfd6e0, -5px -5px 10px #ffffff;
+    --a-inset: inset 3px 3px 6px #cfd6e0, inset -3px -3px 6px #ffffff;
+    --a-ok-bg: #e6f0fd; --a-ok-ink: #3b82f6;
+    --a-warn-bg: #fdf3e3; --a-warn-ink: #b45309;
+    --a-bad-bg: #fdeaea; --a-bad-ink: #d66a6a;
+    --a-track: #cfd6e0;
+
+    /* Variant B tokens — 暗色灯效实验室（与 preview 的 #0b0b10 画布同源） */
+    --b-bg: #14161c;
+    --b-card: #1c1f27;
+    --b-ink: #e5e9f0;
+    --b-muted: #8a94a6;
+    --b-accent: #60a5fa;
+    --b-accent-glow: 0 0 10px rgba(96, 165, 250, .55);
+    --b-border: #2a2e3a;
+    --b-ok-bg: rgba(59, 130, 246, .15); --b-ok-ink: #93c5fd;
+    --b-warn-bg: rgba(180, 83, 9, .18); --b-warn-ink: #fbbf24;
+    --b-bad-bg: rgba(214, 106, 106, .15); --b-bad-ink: #f0a0a0;
+    --b-track: #2a2e3a;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 18px 10px 90px;
+  }
+
+  .stage { position: relative; }
+
+  /* ---------- 手机框 ---------- */
+  .phone {
+    width: 375px; border-radius: 44px; padding: 12px;
+    background: #0d0e12; box-shadow: 0 24px 60px rgba(0,0,0,.35);
+  }
+  .screen {
+    border-radius: 34px; overflow: hidden; height: 720px;
+    overflow-y: auto; position: relative;
+  }
+  .screen::-webkit-scrollbar { width: 0; }
+  .navbar {
+    display: flex; align-items: center; justify-content: center;
+    height: 52px; font-size: 16px; font-weight: 600; position: relative;
+  }
+  .navbar .badge { position: absolute; right: 14px; }
+
+  /* ---------- Variant A: 新拟物浅色 ---------- */
+  .vA .screen { background: var(--a-bg); color: var(--a-ink); }
+  .vA .navbar { color: var(--a-ink); }
+  .vA .card {
+    background: var(--a-card); border-radius: 20px; padding: 16px;
+    margin: 0 14px 14px; box-shadow: var(--a-shadow);
+  }
+  .vA .badge {
+    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: var(--a-ok-bg); color: var(--a-ok-ink);
+  }
+  .vA .meta { color: var(--a-muted); font-size: 12px; display: flex; gap: 12px; margin-top: 6px; }
+  .vA .card-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+  .vA .ctrl-row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; }
+  .vA .ctrl-label { font-size: 14px; width: 56px; }
+  .vA .switch {
+    width: 44px; height: 24px; border-radius: 999px; background: var(--a-accent);
+    position: relative; box-shadow: var(--a-inset);
+  }
+  .vA .switch::after {
+    content: ""; position: absolute; top: 3px; right: 3px; width: 18px; height: 18px;
+    border-radius: 50%; background: #fff; box-shadow: 2px 2px 4px #cfd6e0;
+  }
+  .vA .slider {
+    flex: 1; height: 8px; border-radius: 999px; margin-left: 8px;
+    background: linear-gradient(90deg, var(--a-accent) 62%, var(--a-track) 62%);
+    box-shadow: var(--a-inset);
+  }
+  .vA .slider::after {
+    content: ""; display: block; position: relative; top: -5px; left: 60%;
+    width: 18px; height: 18px; border-radius: 50%; background: var(--a-card);
+    box-shadow: 3px 3px 6px #cfd6e0, -3px -3px 6px #fff;
+  }
+  .vA .btn {
+    display: block; width: 100%; height: 40px; margin-top: 12px; border: 0; cursor: pointer;
+    border-radius: 14px; background: var(--a-card); color: var(--a-accent-ink);
+    font-size: 14px; font-weight: 600; box-shadow: var(--a-shadow);
+  }
+  .vA .btn:active { box-shadow: var(--a-inset); }
+  .vA .stat-row { display: flex; gap: 10px; }
+  .vA .stat {
+    flex: 1; background: var(--a-bg); border-radius: 14px; padding: 12px;
+    box-shadow: var(--a-inset); text-align: center;
+  }
+  .vA .stat .k { display: block; font-size: 11px; color: var(--a-muted); }
+  .vA .stat .v { display: block; font-size: 16px; font-weight: 600; margin-top: 4px; }
+  .vA .pin-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid rgba(74, 85, 104, .08); font-size: 13px;
+  }
+  .vA .pin-row:last-child { border-bottom: 0; }
+  .vA .pin-label { color: var(--a-muted); width: 46px; }
+  .vA .pin-name { flex: 1; font-weight: 600; }
+  .vA .pin-meta { color: var(--a-muted); font-size: 11px; }
+  .vA .pin-count {
+    border: 0; background: var(--a-card); color: var(--a-accent-ink); font-size: 12px;
+    padding: 5px 10px; border-radius: 10px; box-shadow: var(--a-shadow); cursor: pointer;
+  }
+
+  /* ---------- Variant B: 暗色灯效实验室 ---------- */
+  .vB .screen { background: var(--b-bg); color: var(--b-ink); }
+  .vB .navbar { color: var(--b-ink); }
+  .vB .card {
+    background: var(--b-card); border: 1px solid var(--b-border); border-radius: 20px;
+    padding: 16px; margin: 0 14px 14px;
+  }
+  .vB .badge {
+    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: var(--b-ok-bg); color: var(--b-ok-ink);
+  }
+  .vB .meta { color: var(--b-muted); font-size: 12px; display: flex; gap: 12px; margin-top: 6px; }
+  .vB .card-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+  .vB .ctrl-row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; }
+  .vB .ctrl-label { font-size: 14px; width: 56px; color: var(--b-muted); }
+  .vB .switch {
+    width: 44px; height: 24px; border-radius: 999px; background: rgba(96,165,250,.25);
+    border: 1px solid rgba(96,165,250,.4); position: relative;
+  }
+  .vB .switch::after {
+    content: ""; position: absolute; top: 3px; right: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--b-accent); box-shadow: var(--b-accent-glow);
+  }
+  .vB .slider {
+    flex: 1; height: 6px; border-radius: 999px; margin-left: 8px;
+    background: linear-gradient(90deg, var(--b-accent) 62%, var(--b-track) 62%);
+  }
+  .vB .slider::after {
+    content: ""; display: block; position: relative; top: -6px; left: 60%;
+    width: 16px; height: 16px; border-radius: 50%; background: #0d0e12;
+    border: 2px solid var(--b-accent); box-shadow: var(--b-accent-glow);
+  }
+  .vB .btn {
+    display: block; width: 100%; height: 40px; margin-top: 12px; cursor: pointer;
+    border-radius: 14px; font-size: 14px; font-weight: 600;
+    background: rgba(96,165,250,.12); color: var(--b-accent);
+    border: 1px solid rgba(96,165,250,.45);
+  }
+  .vB .btn.primary { background: var(--b-accent); color: #0d0e12; box-shadow: var(--b-accent-glow); }
+  .vB .stat-row { display: flex; gap: 10px; }
+  .vB .stat {
+    flex: 1; background: #14161c; border: 1px solid var(--b-border); border-radius: 14px;
+    padding: 12px; text-align: center;
+  }
+  .vB .stat .k { display: block; font-size: 11px; color: var(--b-muted); }
+  .vB .stat .v { display: block; font-size: 16px; font-weight: 600; margin-top: 4px; }
+  .vB .pin-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid var(--b-border); font-size: 13px;
+  }
+  .vB .pin-row:last-child { border-bottom: 0; }
+  .vB .pin-label { color: var(--b-muted); width: 46px; }
+  .vB .pin-name { flex: 1; font-weight: 600; }
+  .vB .pin-meta { color: var(--b-muted); font-size: 11px; }
+  .vB .pin-count {
+    border: 1px solid var(--b-border); background: transparent; color: var(--b-muted);
+    font-size: 12px; padding: 5px 10px; border-radius: 10px; cursor: pointer;
+  }
+
+  /* ---------- 灯效语境 LED strip（两 variant 共用结构） ---------- */
+  .led-strip { display: flex; gap: 4px; margin-top: 14px; padding: 10px; border-radius: 12px; }
+  .vA .led-strip { background: #0b0b10; }
+  .vB .led-strip { background: #0b0b10; border: 1px solid var(--b-border); }
+  .led {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--c); opacity: var(--o, 1);
+  }
+  .vA .led { box-shadow: 0 0 6px 1px var(--c); }
+  .vB .led { box-shadow: 0 0 10px 2px var(--c); }
+
+  /* ---------- Token 展示 ---------- */
+  .tokens { margin-top: 8px; }
+  .tokens .card-title { margin-bottom: 10px; }
+  .swatches { display: flex; gap: 8px; margin-bottom: 14px; }
+  .swatch { text-align: center; font-size: 10px; flex: 1; }
+  .swatch i {
+    display: block; height: 34px; border-radius: 10px; margin-bottom: 4px;
+    border: 1px solid rgba(128,128,128,.25);
+  }
+  .vA .swatch i { box-shadow: var(--a-shadow); }
+  .type-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  .type-row .tag { font-size: 11px; width: 84px; flex-shrink: 0; }
+  .vA .type-row .tag { color: var(--a-muted); }
+  .vB .type-row .tag { color: var(--b-muted); }
+  .chip-demo { display: flex; gap: 8px; margin-top: 12px; }
+  .chip-demo .chip {
+    font-size: 12px; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .vA .chip { background: var(--a-card); color: var(--a-accent-ink); box-shadow: var(--a-shadow); }
+  .vA .chip.on { box-shadow: var(--a-inset); color: var(--a-ink); }
+  .vB .chip { border: 1px solid var(--b-border); color: var(--b-muted); background: transparent; }
+  .vB .chip.on { border-color: var(--b-accent); color: var(--b-accent); background: rgba(96,165,250,.1); }
+
+  /* ---------- 浮动 variant 切换条 ---------- */
+  .switchbar {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 6px; z-index: 99;
+    background: #262a33; color: #fff; border-radius: 999px; padding: 6px 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.4); user-select: none;
+  }
+  .switchbar button {
+    border: 0; background: transparent; color: #9fb4d8; font-size: 18px; width: 34px; height: 34px;
+    border-radius: 50%; cursor: pointer;
+  }
+  .switchbar button:hover { background: rgba(255,255,255,.1); color: #fff; }
+  .switchbar .label { font-size: 13px; font-weight: 600; padding: 0 8px; min-width: 150px; text-align: center; }
+  .switchbar .pick {
+    background: #60a5fa; color: #0d0e12; font-size: 13px; font-weight: 700;
+    width: auto; padding: 0 14px; border-radius: 999px; margin-left: 4px;
+  }
+  .prototype-ribbon {
+    margin-bottom: 10px; font-size: 12px; color: #b45309;
+    background: #fdf3e3; border-radius: 999px; padding: 4px 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <div class="prototype-ribbon">PROTOTYPE · wayfinder #106 · 丢弃式 mockup，不进生产代码</div>
+
+  <!-- ================= Variant A ================= -->
+  <div class="phone vA" id="phoneA">
+    <div class="screen">
+      <div class="navbar">书桌氛围灯 <span class="badge">已连接</span></div>
+
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>固件 v1.4.2 · mode: 2 · 持有控制权</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">设备控制</div>
+        <div class="ctrl-row"><span class="ctrl-label">电源</span><span class="switch"></span></div>
+        <div class="ctrl-row"><span class="ctrl-label">亮度</span><span class="slider"></span></div>
+        <!-- 灯效语境 -->
+        <div class="led-strip">
+          <span class="led" style="--c:#60a5fa;--o:.5"></span>
+          <span class="led" style="--c:#60a5fa;--o:.7"></span>
+          <span class="led" style="--c:#a78bfa"></span>
+          <span class="led" style="--c:#f0abfc"></span>
+          <span class="led" style="--c:#f9a8d4"></span>
+          <span class="led" style="--c:#fda4af"></span>
+          <span class="led" style="--c:#fcd34d"></span>
+          <span class="led" style="--c:#fcd34d;--o:.6"></span>
+          <span class="led" style="--c:#fcd34d;--o:.3"></span>
+        </div>
+        <button class="btn">场景…</button>
+      </div>
+
+      <div class="card stat-row">
+        <div class="stat"><span class="k">限亮</span><span class="v">80%</span></div>
+        <div class="stat"><span class="k">温度</span><span class="v">41 °C</span></div>
+        <div class="stat"><span class="k">状态帧</span><span class="v">128 帧</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">引脚（0–7 固定）</div>
+        <div class="pin-row"><span class="pin-label">PIN 0</span><span class="pin-name">主灯带</span><span class="pin-meta">60 珠 · 3 组</span><span class="pin-count">灯数</span></div>
+        <div class="pin-row"><span class="pin-label">PIN 1</span><span class="pin-name">副灯带</span><span class="pin-meta">30 珠 · 1 组</span><span class="pin-count">灯数</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">推送编排到设备</div>
+        <button class="btn primary" style="color:#fff;background:var(--a-accent);box-shadow:0 4px 14px rgba(96,165,250,.4);">推送（v3 本机编排）</button>
+        <button class="btn">从云端恢复</button>
+      </div>
+
+      <!-- Token slab -->
+      <div class="card tokens">
+        <div class="card-title">Style tokens（拟为全局约定）</div>
+        <div class="swatches">
+          <div class="swatch"><i style="background:#e0e5ec"></i>底 e0e5ec</div>
+          <div class="swatch"><i style="background:#ffffff"></i>卡 ffffff</div>
+          <div class="swatch"><i style="background:#60a5fa"></i>强调 60a5fa</div>
+          <div class="swatch"><i style="background:#4a5568"></i>正文 4a5568</div>
+          <div class="swatch"><i style="background:#8a94a6"></i>弱 8a94a6</div>
+        </div>
+        <div class="type-row"><span class="tag">标题 40rpx/700</span><span style="font-size:20px;font-weight:700;">书桌氛围灯</span></div>
+        <div class="type-row"><span class="tag">正文 28rpx</span><span style="font-size:14px;">控制命令需设备授予控制令牌</span></div>
+        <div class="type-row"><span class="tag">弱文 24rpx</span><span style="font-size:12px;color:#8a94a6;">恢复是手动操作</span></div>
+        <div class="chip-demo"><span class="chip on">当前灯组</span><span class="chip">整条引脚</span><span class="chip">30</span><span class="chip">60</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= Variant B ================= -->
+  <div class="phone vB" id="phoneB" style="display:none;">
+    <div class="screen">
+      <div class="navbar">书桌氛围灯 <span class="badge">已连接</span></div>
+
+      <div class="card">
+        <div style="font-size:12px;color:var(--b-muted);">固件 v1.4.2 · mode: 2 · 持有控制权</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">设备控制</div>
+        <div class="ctrl-row"><span class="ctrl-label">电源</span><span class="switch"></span></div>
+        <div class="ctrl-row"><span class="ctrl-label">亮度</span><span class="slider"></span></div>
+        <!-- 灯效语境：暗底下灯效更突出，与 preview 页 #0b0b10 画布同源 -->
+        <div class="led-strip">
+          <span class="led" style="--c:#60a5fa;--o:.5"></span>
+          <span class="led" style="--c:#60a5fa;--o:.7"></span>
+          <span class="led" style="--c:#a78bfa"></span>
+          <span class="led" style="--c:#f0abfc"></span>
+          <span class="led" style="--c:#f9a8d4"></span>
+          <span class="led" style="--c:#fda4af"></span>
+          <span class="led" style="--c:#fcd34d"></span>
+          <span class="led" style="--c:#fcd34d;--o:.6"></span>
+          <span class="led" style="--c:#fcd34d;--o:.3"></span>
+        </div>
+        <button class="btn">场景…</button>
+      </div>
+
+      <div class="card stat-row">
+        <div class="stat"><span class="k">限亮</span><span class="v">80%</span></div>
+        <div class="stat"><span class="k">温度</span><span class="v">41 °C</span></div>
+        <div class="stat"><span class="k">状态帧</span><span class="v">128 帧</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">引脚（0–7 固定）</div>
+        <div class="pin-row"><span class="pin-label">PIN 0</span><span class="pin-name">主灯带</span><span class="pin-meta">60 珠 · 3 组</span><span class="pin-count">灯数</span></div>
+        <div class="pin-row"><span class="pin-label">PIN 1</span><span class="pin-name">副灯带</span><span class="pin-meta">30 珠 · 1 组</span><span class="pin-count">灯数</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">推送编排到设备</div>
+        <button class="btn primary">推送（v3 本机编排）</button>
+        <button class="btn">从云端恢复</button>
+      </div>
+
+      <!-- Token slab -->
+      <div class="card tokens">
+        <div class="card-title">Style tokens（拟为全局约定）</div>
+        <div class="swatches">
+          <div class="swatch"><i style="background:#14161c"></i>底 14161c</div>
+          <div class="swatch"><i style="background:#1c1f27"></i>卡 1c1f27</div>
+          <div class="swatch"><i style="background:#60a5fa"></i>强调 60a5fa</div>
+          <div class="swatch"><i style="background:#e5e9f0"></i>正文 e5e9f0</div>
+          <div class="swatch"><i style="background:#8a94a6"></i>弱 8a94a6</div>
+        </div>
+        <div class="type-row"><span class="tag">标题 40rpx/700</span><span style="font-size:20px;font-weight:700;">书桌氛围灯</span></div>
+        <div class="type-row"><span class="tag">正文 28rpx</span><span style="font-size:14px;">控制命令需设备授予控制令牌</span></div>
+        <div class="type-row"><span class="tag">弱文 24rpx</span><span style="font-size:12px;color:#8a94a6;">恢复是手动操作</span></div>
+        <div class="chip-demo"><span class="chip on">当前灯组</span><span class="chip">整条引脚</span><span class="chip">30</span><span class="chip">60</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="switchbar">
+  <button id="prev" title="上一个 (←)">←</button>
+  <span class="label" id="vlabel">A（新拟物浅色）</span>
+  <button id="next" title="下一个 (→)">→</button>
+  <button class="pick" id="pickBtn">选定此版</button>
+</div>
+
+<script>
+  var VARIANTS = {
+    A: { el: "phoneA", label: "A（新拟物浅色）" },
+    B: { el: "phoneB", label: "B（暗色灯效实验室）" }
+  };
+  var KEYS = Object.keys(VARIANTS);
+  var current = "A";
+
+  function apply(key, push) {
+    current = key;
+    KEYS.forEach(function (k) {
+      document.getElementById(VARIANTS[k].el).style.display = (k === key) ? "" : "none";
+    });
+    document.getElementById("vlabel").textContent = VARIANTS[key].label;
+    if (push !== false) {
+      try { history.replaceState(null, "", "?variant=" + key); } catch (e) {}
+    }
+    if (window.openchamber && openchamber.answer && openchamber.answer.variant) {
+      openchamber.answer.variant = key;
+    }
+  }
+
+  function cycle(step) {
+    var i = KEYS.indexOf(current);
+    apply(KEYS[(i + step + KEYS.length) % KEYS.length]);
+  }
+
+  document.getElementById("prev").onclick = function () { cycle(-1); };
+  document.getElementById("next").onclick = function () { cycle(1); };
+  document.addEventListener("keydown", function (e) {
+    if (/INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    if (e.key === "ArrowLeft") cycle(-1);
+    if (e.key === "ArrowRight") cycle(1);
+  });
+
+  // Chat 内提交选择：把当前 variant 发回会话
+  document.getElementById("pickBtn").onclick = function () {
+    var btn = this;
+    btn.disabled = true;
+    var label = VARIANTS[current].label;
+    Promise.resolve(openchamber.submit({ variant: current }, "选定 " + label)).catch(function () {});
+  };
+
+  var m = /[?&]variant=([AB])/.exec(location.search);
+  apply(m ? m[1] : (openchamber.answer && openchamber.answer.variant) || "A", false);
+</script>
+</body>
+</html>
