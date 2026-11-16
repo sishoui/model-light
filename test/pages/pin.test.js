@@ -3,6 +3,11 @@
 // 不断言私有方法、内部字段、wxml/wxss 文本。
 import { describe, it, expect, afterEach } from 'vitest';
 import { createPageHarness } from './page-harness';
+import {
+  createGroup, createStage, createLayer,
+} from '../../miniprogram/lib/arrangement';
+
+const { encodeParams } = require('../../miniprogram/lib/effect-schema');
 
 const PAGE = 'miniprogram/pages/pin/pin.js';
 const DEVICE = 'ML-8DCC';
@@ -38,6 +43,27 @@ function seedPin(wx, { length = 10, groups = [] } = {}) {
   groups.forEach((g, i) => { if (g.name) pin.groups[i].name = g.name; });
   s.save(DEVICE, arr);
   return s;
+}
+
+// 种一个单灯组编排（阶段/图层/参数字节由用例指定），#131 场景专用
+function seedStage(wx, { stages = [], length = 10 } = {}) {
+  const store = require('../../miniprogram/lib/arrangement-store').createArrangementStore(wx);
+  const arr = store.loadOrCreate(DEVICE);
+  const pin = arr.pins[PIN];
+  pin.length = length;
+  pin.name = '头部';
+  pin.groups = [createGroup({
+    ranges: [{ start: 0, end: Math.min(4, length) }],
+    stages: stages.map((s) => createStage({
+      durationMs: s.durationMs ?? 500,
+      fadeInMs: s.fadeInMs ?? 0,
+      layers: (s.layers || []).map((l) => createLayer({
+        role: l.role, effectId: l.effectId, params: l.params ?? [],
+      })),
+    })),
+  })];
+  store.save(DEVICE, arr);
+  return store;
 }
 
 function saved(wx) {
@@ -291,5 +317,222 @@ describe('引脚页 pin（灯组 tab / 方格矩阵）', () => {
     expect(h.getData().cellCount).toBe(5);
     expect(states()).toEqual(['free', 'free', 'free', 'free', 'free']);
     expect(saved(h.wx).pins[PIN].groups).toHaveLength(1);
+  });
+});
+
+// #131：阶段列表 / 双层灯效 / 色环 / 叠加预览（就地编辑在 pin 页内完成）
+describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
+  it('给定一个阶段，当加阶段 / 下移 / 删阶段（取消与确认），则列表与缓存同步且新时长默认 2000 ms', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      durationMs: 500,
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 0, 0] }) }],
+    }] });
+    h.page.onShow();
+
+    expect(h.getData().stages).toHaveLength(1);
+    expect(h.getData().totalLabel).toBe('500 ms');
+    expect(h.getData().stages[0].thumbs[0].label).toBe('背·bg.solid');
+
+    // 加阶段：spec §3.3 默认 2000 ms
+    await h.tap('onAddStage');
+    let data = h.getData();
+    expect(data.stages).toHaveLength(2);
+    expect(data.stages[1].durationMs).toBe(2000);
+    expect(data.totalLabel).toBe('2500 ms');
+
+    // 下移阶段 0
+    await h.tap('onMoveStageDown', { currentTarget: { dataset: { stage: 0 } } });
+    data = h.getData();
+    expect(data.stages.map((s) => s.durationMs)).toEqual([2000, 500]);
+
+    // 删除（取消）：不动
+    h.wx._modalResponse = { confirm: false, cancel: true };
+    await h.tap('onDeleteStage', { currentTarget: { dataset: { stage: 0 } } });
+    expect(h.getModals()).toHaveLength(1);
+    expect(h.getData().stages).toHaveLength(2);
+
+    // 删除（确认）
+    h.wx._modalResponse = { confirm: true, cancel: false };
+    await h.tap('onDeleteStage', { currentTarget: { dataset: { stage: 0 } } });
+    data = h.getData();
+    expect(data.stages).toHaveLength(1);
+    expect(data.stages[0].durationMs).toBe(500);
+
+    expect(saved(h.wx).pins[PIN].groups[0].stages).toHaveLength(1);
+    expect(h.getData().pendingPush).toBe(true);
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定没有任何阶段的灯组，当进入页面再点加阶段，则列表从空补到 1 个 2000 ms 阶段', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [] });
+    h.page.onShow();
+
+    expect(h.getData().stages).toHaveLength(0);
+    expect(h.getData().previewLabel).toBe('无阶段');
+    expect(h.getData().canAddStage).toBe(true);
+
+    await h.tap('onAddStage');
+
+    const data = h.getData();
+    expect(data.stages).toHaveLength(1);
+    expect(data.stages[0].durationMs).toBe(2000);
+    expect(saved(h.wx).pins[PIN].groups[0].stages[0].durationMs).toBe(2000);
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定一个阶段，当点卡片展开就地编辑并改时长/淡入，则编辑态显示且落缓存、标记待推送', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      durationMs: 500,
+      fadeInMs: 0,
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [0, 0, 255] }) }],
+    }] });
+    h.page.onShow();
+
+    await h.tap('onOpenStage', { currentTarget: { dataset: { stage: 0 } } });
+    const data = h.getData();
+    expect(data.editStageIndex).toBe(0);
+    expect(data.editStage.durationMs).toBe(500);
+    expect(data.editStage.fadeInMs).toBe(0);
+    expect(data.previewLabel).toBe('阶段 1 · 0 ms');
+
+    await h.tap('onDurationInput', { detail: { value: '2500' } });
+    await h.tap('onDurationBlur');
+    await h.tap('onFadeInInput', { detail: { value: '120' } });
+    await h.tap('onFadeInBlur');
+
+    const arr = saved(h.wx);
+    const st = arr.pins[PIN].groups[0].stages[0];
+    expect(st.durationMs).toBe(2500);
+    expect(st.fadeInMs).toBe(120);
+    expect(arr.pendingPush).toBe(true);
+    expect(h.getData().stages[0].fadeLabel).toBe('淡入 120 ms');
+    expect(h.getData().editStage.durationMs).toBe(2500);
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定只有背景层的阶段，当加动态层/换背景灯效，则清单按 role 过滤且参数面板由 schema 生成', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 0, 0] }) }],
+    }] });
+    h.page.onShow();
+    await h.tap('onOpenStage', { currentTarget: { dataset: { stage: 0 } } });
+
+    // 换背景灯效：清单只列 role 0（ids 0–4）
+    await h.tap('onReplaceEffect', { currentTarget: { dataset: { layer: 0 } } });
+    let picker = h.getData().effectPicker;
+    expect(picker.open).toBe(true);
+    expect(picker.roleLabel).toBe('背景层');
+    expect(picker.choices).toHaveLength(5);
+    expect(picker.choices.every((c) => c.index >= 0 && c.index <= 4)).toBe(true);
+    await h.tap('onCloseEffectPicker');
+
+    // 加动态层：清单只列 role 1（ids 5–11）
+    await h.tap('onAddDyLayer');
+    picker = h.getData().effectPicker;
+    expect(picker.roleLabel).toBe('动态层');
+    expect(picker.choices).toHaveLength(7);
+    expect(picker.choices.every((c) => c.index >= 5 && c.index <= 11)).toBe(true);
+
+    // 选 dy.comet（index 5）
+    await h.tap('onPickEffect', { currentTarget: { dataset: { effect: 5 } } });
+    const edit = h.getData().editStage;
+    expect(edit.layers).toHaveLength(2);
+    const dy = edit.layers.find((l) => l.role === 1);
+    expect(dy.effectLabel).toBe('dy.comet');
+    expect(dy.panel.map((p) => p.name)).toEqual(['color', 'tailLen', 'speedMs', 'reverse']);
+    expect(dy.panel.map((p) => p.view)).toEqual(['color', 'range', 'range', 'bool']);
+
+    // 背景层换 bg.gradient：参数面板 colorA/colorB/reverse
+    await h.tap('onReplaceEffect', { currentTarget: { dataset: { layer: 0 } } });
+    await h.tap('onPickEffect', { currentTarget: { dataset: { effect: 1 } } });
+    const bg = h.getData().editStage.layers.find((l) => l.role === 0);
+    expect(bg.effectLabel).toBe('bg.gradient');
+    expect(bg.panel.map((p) => p.name)).toEqual(['colorA', 'colorB', 'reverse']);
+
+    // 缓存：背景在前、动态在后
+    const layers = saved(h.wx).pins[PIN].groups[0].stages[0].layers;
+    expect(layers.map((l) => l.effectId)).toEqual([1, 5]);
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定 bg.solid 的颜色参数，当用色环改色（hex/RGB 输入），则 hex 往返写入 layer.params', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 128, 0] }) }],
+    }] });
+    h.page.onShow();
+    await h.tap('onOpenStage', { currentTarget: { dataset: { stage: 0 } } });
+
+    const field = h.getData().editStage.layers[0].panel[0];
+    expect(field.name).toBe('color');
+    expect(field.view).toBe('color');
+    expect(field.hex).toBe('#ff8000');
+
+    // 打开色环：初值来自当前参数
+    await h.tap('onOpenWheel', { currentTarget: { dataset: { layer: 0, param: 'color' } } });
+    expect(h.getData().wheel.hex).toBe('#ff8000');
+
+    // hex 输入往返
+    await h.tap('onWheelHexInput', { detail: { value: '#00ff80' } });
+    await h.tap('onWheelHexBlur');
+    expect(h.getData().wheel.hex).toBe('#00ff80');
+    let params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
+    expect(Array.from(params)).toEqual([0, 255, 128]);
+
+    // RGB 输入往返（每格 blur 独立提交，其余沿用当前值）
+    await h.tap('onWheelRgbInput', { currentTarget: { dataset: { part: 'r' } }, detail: { value: '18' } });
+    await h.tap('onWheelRgbBlur', { currentTarget: { dataset: { part: 'r' } } });
+    await h.tap('onWheelRgbInput', { currentTarget: { dataset: { part: 'g' } }, detail: { value: '52' } });
+    await h.tap('onWheelRgbBlur', { currentTarget: { dataset: { part: 'g' } } });
+    await h.tap('onWheelRgbInput', { currentTarget: { dataset: { part: 'b' } }, detail: { value: '86' } });
+    await h.tap('onWheelRgbBlur', { currentTarget: { dataset: { part: 'b' } } });
+    expect(h.getData().wheel.hex).toBe('#123456');
+    params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
+    expect(Array.from(params)).toEqual([18, 52, 86]);
+
+    // 非法 hex：提示且不改缓存
+    await h.tap('onWheelHexInput', { detail: { value: '#zzzzzz' } });
+    await h.tap('onWheelHexBlur');
+    expect(h.getToasts().map((t) => t.title).join('|')).toContain('色值无效');
+    params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
+    expect(Array.from(params)).toEqual([18, 52, 86]);
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定背景层 + 动态扫描线，当渲染叠加预览，则有亮度的灯珠显动态色、熄灭的透出背景色', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [
+        { role: 0, effectId: 0, params: encodeParams(0, { color: [255, 0, 0] }) },
+        { role: 1, effectId: 6, params: encodeParams(6, { color: [0, 255, 0], width: 1, speedMs: 200, direction: 0 }) },
+      ],
+    }] });
+    h.page.onShow();
+
+    const px = h.getData().previewPixels;
+    expect(px).toHaveLength(4); // 组占 [0,4)
+    // t=0：扫描头在 0，width=1 → 灯珠 0、1 亮（动态绿）；2、3 熄灭（透背景红）
+    expect(px[0]).toBe('rgb(0,255,0)');
+    expect(px[1]).toBe('rgb(0,255,0)');
+    expect(px[2]).toBe('rgb(255,0,0)');
+    expect(px[3]).toBe('rgb(255,0,0)');
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定只有背景层的阶段，当渲染叠加预览，则直接展示该层颜色', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [0, 0, 255] }) }],
+    }] });
+    h.page.onShow();
+
+    const px = h.getData().previewPixels;
+    expect(px).toHaveLength(4);
+    expect(px.every((c) => c === 'rgb(0,0,255)')).toBe(true);
+    expect(h.getBleWrites()).toEqual([]);
   });
 });
