@@ -9,6 +9,7 @@ const {
   totalDurationMs, PAYLOAD_VERSION,
 } = require('../miniprogram/lib/arrangement');
 const { crc32 } = require('../miniprogram/lib/crc32');
+const { LOOP_NONE, LOOP_LAST, LOOP_ALL } = require('../miniprogram/lib/arrangement');
 
 function textBytes(s) {
   return Array.from(new TextEncoder().encode(s));
@@ -46,10 +47,11 @@ function sampleArrangement() {
   return arr;
 }
 
-test('payloadVersion = 1，version 按原样写入头部', () => {
+test('payloadVersion = 2，version 按原样写入头部', () => {
   const bytes = encode(sampleArrangement());
   assert.strictEqual(bytes[0] | (bytes[1] << 8), 7);          // version
   assert.strictEqual(bytes[2] | (bytes[3] << 8), PAYLOAD_VERSION);
+  assert.strictEqual(PAYLOAD_VERSION, 2);
   assert.strictEqual(bytes[4], 8);                            // pinCount 固定 8
 });
 
@@ -160,4 +162,91 @@ test('textBytes 辅助与名称填充：不足 16B 补零，往返一致', () =>
   assert.deepStrictEqual(bytes.slice(6, 6 + 16), [...textBytes('ab'), ...new Array(14).fill(0)]);
   const back = decode(bytes);
   assert.strictEqual(back.pins[0].name, 'ab');
+});
+
+// ---- #132 loopMode ----
+
+test('v2 往返 loopMode 保真（0/1/2 混合）', () => {
+  const arr = createArrangement({ version: 5 });
+  const pin = createPin({ length: 6, name: 'x' });
+  const mk = (loopMode, start) => createGroup({
+    ranges: [createRange({ start, end: start + 2 })],
+    stages: [createStage({
+      durationMs: 500,
+      layers: [createLayer({ role: 0, effectId: 0, params: [255, 0, 0] })],
+    })],
+    loopMode,
+  });
+  pin.groups = [mk(LOOP_NONE, 0), mk(LOOP_LAST, 2), mk(LOOP_ALL, 4)];
+  arr.pins[0] = pin;
+  const bytes = encode(arr);
+  const back = decode(bytes);
+  assert.strictEqual(back.payloadVersion, 2);
+  assert.deepStrictEqual(
+    back.pins[0].groups.map((g) => g.loopMode),
+    [LOOP_NONE, LOOP_LAST, LOOP_ALL],
+  );
+  // 重编码字节级一致
+  assert.deepStrictEqual(encode(back), Array.from(bytes));
+});
+
+test('v1 编排（无 loopMode）解码后缺省 LOOP_ALL', () => {
+  const arr = createArrangement({ version: 5 });
+  arr.payloadVersion = 1; // 强制 v1 布局
+  const pin = createPin({ length: 10, name: 'x' });
+  pin.groups = [createGroup({
+    ranges: [createRange({ start: 0, end: 5 })],
+    stages: [createStage({
+      durationMs: 500,
+      layers: [createLayer({ role: 0, effectId: 0, params: [255, 0, 0] })],
+    })],
+  })];
+  arr.pins[0] = pin;
+  const bytes = encode(arr);
+  // v1 编码不含 loopMode 字节：每个 Group 的 stage 末尾即下一元素
+  const back = decode(bytes);
+  assert.strictEqual(back.payloadVersion, 1);
+  assert.strictEqual(back.pins[0].groups[0].loopMode, LOOP_ALL);
+});
+
+test('坏 loopMode（3）编码报错', () => {
+  const arr = createArrangement({ version: 5 });
+  const pin = createPin({ length: 10, name: 'x' });
+  const g = createGroup({
+    ranges: [createRange({ start: 0, end: 5 })],
+    stages: [createStage({
+      durationMs: 500,
+      layers: [createLayer({ role: 0, effectId: 0, params: [255, 0, 0] })],
+    })],
+  });
+  g.loopMode = 3; // 越过校验
+  pin.groups = [g];
+  arr.pins[0] = pin;
+  assert.throws(() => encode(arr), /loopMode/i);
+});
+
+test('坏 loopMode（3）在 v2 字节流里 decode 报错', () => {
+  const mkArr = (loopMode) => {
+    const arr = createArrangement({ version: 5 });
+    const pin = createPin({ length: 10, name: 'x' });
+    pin.groups = [createGroup({
+      ranges: [createRange({ start: 0, end: 5 })],
+      stages: [createStage({
+        durationMs: 500,
+        layers: [createLayer({ role: 0, effectId: 0, params: [255, 0, 0] })],
+      })],
+      loopMode,
+    })];
+    arr.pins[0] = pin;
+    return arr;
+  };
+  // 两次编码仅 loopMode 字节不同 → 差异位置即 loopMode 字节
+  const a = encode(mkArr(LOOP_NONE));
+  const b = encode(mkArr(LOOP_ALL));
+  const diff = [];
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff.push(i);
+  assert.strictEqual(diff.length, 1, '两次编码应仅 loopMode 字节不同');
+  const bad = Array.from(a);
+  bad[diff[0]] = 3; // 越界 loopMode
+  assert.throws(() => decode(bad), /loopMode/i);
 });

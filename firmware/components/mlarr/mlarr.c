@@ -41,6 +41,7 @@ uint32_t mlarr_crc32(const uint8_t *data, size_t len)
  * Arrangement := version(u16) payloadVersion(u16) pinCount(u8) Pin[pinCount]
  * Pin         := length(u8) name(16B) groupCount(u8) Group[groupCount]
  * Group       := rangeCount(u8) stageCount(u8) Range[...] Stage[...]
+ *                [loopMode(u8)]  // payloadVersion >= 2 only; v1 缺省 ALL
  * Range       := start(u8) end(u8) reverse(u8)
  * Stage       := durationMs(u16) fadeInMs(u8) layerCount(u8) Layer[...]
  * Layer       := role(u8) effectId(u16) paramLen(u8) paramBytes[...]
@@ -107,7 +108,9 @@ int mlarr_validate(const uint8_t *buf, size_t len)
         rd_u16(buf, len, &o, &pver) ||
         rd_u8(buf, len, &o, &pin_count))
         return MLARR_ERR_TRUNCATED;
-    if (pver != MLARR_PAYLOAD_VERSION) return MLARR_ERR_VERSION;
+    if (pver != MLARR_PAYLOAD_VERSION_V1 && pver != MLARR_PAYLOAD_VERSION)
+        return MLARR_ERR_VERSION;
+    int has_loop = pver >= MLARR_PAYLOAD_VERSION;
     if (pin_count > MLARR_PIN_COUNT) return MLARR_ERR_LIMITS;
     (void)version;
     for (uint8_t p = 0; p < pin_count; p++) {
@@ -166,6 +169,12 @@ int mlarr_validate(const uint8_t *buf, size_t len)
                         return MLARR_ERR_TRUNCATED;
                 }
             }
+            if (has_loop) {
+                uint8_t loop_mode;
+                if (rd_u8(buf, len, &o, &loop_mode))
+                    return MLARR_ERR_TRUNCATED;
+                if (loop_mode > MLARR_LOOP_ALL) return MLARR_ERR_LIMITS;
+            }
         }
     }
     if (o != len) return MLARR_ERR_TRAILING;
@@ -222,6 +231,11 @@ int mlarr_parse(const uint8_t *buf, size_t len, ml_arrangement_t *out)
                     rd_u8(buf, len, &o, &l->param_len);
                     rd_bytes(buf, len, &o, l->param_len, l->param);
                 }
+            }
+            if (out->payload_version >= MLARR_PAYLOAD_VERSION) {
+                rd_u8(buf, len, &o, &g->loop_mode);
+            } else {
+                g->loop_mode = MLARR_LOOP_ALL; /* v1：缺省全部循环 */
             }
         }
     }
@@ -519,16 +533,58 @@ int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
         const ml_group_t *g = &p->groups[gi];
         if (g->stage_count == 0) continue;
 
-        /* clockMs % groupTotalMs positions stage and offset (spec §2.10). */
+        /* Position stage + in-stage offset per loop mode (§2.10, loopMode is
+         * a payloadVersion >= 2 field; v1 parses as MLARR_LOOP_ALL):
+         *   ALL  (2, default): t = clock_ms % total, walk stages, wrap.
+         *   LAST (1): stages 0..n-2 play once, then loop inside the last one
+         *             (n == 1 reduces to ALL).
+         *   NONE (0): play once, then freeze on the last stage's final
+         *             millisecond (timeline stops, not black). */
         uint32_t total = 0;
         for (uint8_t si = 0; si < g->stage_count; si++)
             total += g->stages[si].duration_ms;
-        uint32_t t = total ? clock_ms % total : 0;
 
+        uint32_t t = 0;
         uint8_t si = 0;
-        while (si + 1 < g->stage_count && t >= g->stages[si].duration_ms) {
-            t -= g->stages[si].duration_ms;
-            si++;
+        switch (g->loop_mode) {
+        case MLARR_LOOP_LAST: {
+            uint32_t before_last = total -
+                g->stages[g->stage_count - 1].duration_ms;
+            if (clock_ms < before_last) {
+                t = clock_ms;
+                while (si + 1 < g->stage_count - 1 &&
+                       t >= g->stages[si].duration_ms) {
+                    t -= g->stages[si].duration_ms;
+                    si++;
+                }
+            } else {
+                si = g->stage_count - 1;
+                uint32_t last = g->stages[si].duration_ms;
+                t = last ? (clock_ms - before_last) % last : 0;
+            }
+            break;
+        }
+        case MLARR_LOOP_NONE:
+            if (clock_ms < total) {
+                t = clock_ms;
+                while (si + 1 < g->stage_count &&
+                       t >= g->stages[si].duration_ms) {
+                    t -= g->stages[si].duration_ms;
+                    si++;
+                }
+            } else {
+                si = g->stage_count - 1;
+                uint32_t last = g->stages[si].duration_ms;
+                t = last ? last - 1 : 0;
+            }
+            break;
+        default: /* MLARR_LOOP_ALL */
+            t = total ? clock_ms % total : 0;
+            while (si + 1 < g->stage_count && t >= g->stages[si].duration_ms) {
+                t -= g->stages[si].duration_ms;
+                si++;
+            }
+            break;
         }
         const ml_stage_t *st = &g->stages[si];
 

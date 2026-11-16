@@ -59,6 +59,20 @@
       <text class="counts">{{stages.length}}/8 阶段 · 合计 {{totalLabel}}</text>
     </view>
 
+    <!-- #132 循环模式三选一（绑定当前灯组 loopMode） -->
+    <view class="loop-row">
+      <text class="k">循环模式</text>
+      <view class="segmented">
+        <view
+          wx:for="{{loopOptions}}"
+          wx:key="value"
+          class="seg {{loopMode === item.value ? 'on' : ''}}"
+          data-loop="{{item.value}}"
+          bindtap="onSelectLoopMode"
+        >{{item.label}}</view>
+      </view>
+    </view>
+
     <view wx:if="{{stages.length === 0}}" class="empty">还没有阶段，点下方「加阶段」新建</view>
 
     <!-- 阶段卡片列表 -->

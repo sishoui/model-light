@@ -8,9 +8,10 @@
 extern "C" {
 #endif
 
-/* Protocol version v1.0 (spec §2.8). */
+/* Protocol version v1.1 (spec §2.8): MINOR bumps to signal payloadVersion 2
+ * (loopMode). MINOR-only → same capability bitmap, no new cap bit. */
 #define MLPROTO_MAJOR 1
-#define MLPROTO_MINOR 0
+#define MLPROTO_MINOR 1
 
 /* Capability bitmap (spec §2.8): bit0-11 effects (§2.11 table order =
  * mlarr effect ids 0-11), bit12 OTA, bit13 guest mode.

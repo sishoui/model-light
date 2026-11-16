@@ -20,7 +20,7 @@ const { PIN_COUNT } = require('../../lib/arrangement');
 const { setPinName } = require('../../lib/pin-editor');
 
 const PROTO_MAJOR = 1;
-const PROTO_MINOR = 0;
+const PROTO_MINOR = 1;
 
 // 引脚卡片状态（关闭 / 点亮 / 闪烁）的人话标签
 const STATE_LABELS = { off: '关闭', on: '点亮', blink: '闪烁' };

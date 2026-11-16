@@ -139,6 +139,15 @@
 .preview-px { width: 40rpx; height: 40rpx; border-radius: 8rpx;
   box-shadow: inset 1rpx 1rpx 2rpx rgba(0, 0, 0, 0.15); }
 .empty.slim { padding: 20rpx 0; }
+
+/* #132 循环模式三选一（segmented） */
+.loop-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-bottom: 16rpx; }
+.segmented { display: flex; gap: 8rpx; }
+.seg { padding: 0 20rpx; height: 56rpx; line-height: 56rpx; border-radius: 28rpx; font-size: 24rpx;
+  color: #8a94a6; background: #ffffff;
+  box-shadow: 2rpx 2rpx 4rpx #cfd6e0, -2rpx -2rpx 4rpx #ffffff; }
+.seg.on { color: #ffffff; background: #60a5fa; font-weight: 600;
+  box-shadow: inset 2rpx 2rpx 4rpx #2563eb, inset -2rpx -2rpx 4rpx #7bb8ff; }
 .sheet-title { text-align: center; color: #4a5568; font-size: 28rpx; font-weight: 600; padding: 16rpx 0 8rpx; }
 .sheet-item.off { color: #b4b8c0; }
 .choice-warn { display: block; color: #b45309; font-size: 22rpx; }

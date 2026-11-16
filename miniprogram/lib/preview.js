@@ -50,18 +50,55 @@ function boardLayout(ledCount, rowWidth = 10, layout = LAYOUT_LR) {
 // ---- 阶段定位 ----
 
 /**
- * t = (now - t0) mod groupTotalMs → 定位阶段。
+ * 按灯组循环模式定位阶段与阶段内时刻（spec §2.10 loopMode，payloadVersion >= 2）。
+ *   LOOP_ALL (2，缺省)：t = clock % total，整体回环。
+ *   LOOP_LAST (1)：前 n-1 阶段播一次后停在末阶段循环（n==1 等价于 ALL）。
+ *   LOOP_NONE (0)：播完一次后冻结在末阶段最后一毫秒（时间轴停住，非全黑）。
  * @returns {{ stageIndex: number, tInStage: number }}
  */
 function resolveStage(group, t) {
-  const total = group.stages.reduce((s, st) => s + st.durationMs, 0);
-  let tt = t % total;
-  for (let i = 0; i < group.stages.length; i++) {
-    const st = group.stages[i];
-    if (tt < st.durationMs) return { stageIndex: i, tInStage: tt };
-    tt -= st.durationMs;
+  const stages = group.stages;
+  const n = stages.length;
+  if (n === 0) return { stageIndex: -1, tInStage: 0 };
+  const total = stages.reduce((s, st) => s + st.durationMs, 0);
+  const loopMode = group.loopMode ?? 2; // LOOP_ALL
+  const clock = Math.max(0, Math.floor(t));
+
+  const walk = (from, until, tt) => {
+    for (let i = from; i < until; i++) {
+      if (tt < stages[i].durationMs) return { stageIndex: i, tInStage: tt };
+      tt -= stages[i].durationMs;
+    }
+    return null;
+  };
+
+  if (loopMode === 1 /* LOOP_LAST */) {
+    const beforeLast = total - stages[n - 1].durationMs;
+    if (clock < beforeLast) {
+      const hit = walk(0, n - 1, clock);
+      if (hit) return hit;
+      return { stageIndex: n - 2, tInStage: Math.max(0, stages[n - 2].durationMs - 1) };
+    }
+    const last = stages[n - 1].durationMs;
+    return { stageIndex: n - 1, tInStage: last ? (clock - beforeLast) % last : 0 };
   }
-  return { stageIndex: group.stages.length - 1, tInStage: 0 };
+
+  if (loopMode === 0 /* LOOP_NONE */) {
+    if (clock < total) {
+      const hit = walk(0, n, clock);
+      if (hit) return hit;
+      const last = stages[n - 1].durationMs;
+      return { stageIndex: n - 1, tInStage: last ? last - 1 : 0 };
+    }
+    const last = stages[n - 1].durationMs;
+    return { stageIndex: n - 1, tInStage: last ? last - 1 : 0 };
+  }
+
+  // LOOP_ALL (2，缺省)
+  const tt = total ? clock % total : 0;
+  const hit = walk(0, n, tt);
+  if (hit) return hit;
+  return { stageIndex: n - 1, tInStage: 0 };
 }
 
 // ---- 灯效推演 ----

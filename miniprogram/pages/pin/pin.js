@@ -31,12 +31,20 @@ const {
 const { EFFECTS } = require('../../lib/effect-schema');
 const { stageColorAt } = require('../../lib/preview');
 const { createArrangementStore } = require('../../lib/arrangement-store');
+const { LOOP_NONE, LOOP_LAST, LOOP_ALL } = require('../../lib/arrangement');
 const cw = require('../../lib/color-wheel');
 
 const ROLE_BG = 0;
 const ROLE_DY = 1;
 const PREVIEW_MAX_PX = 32;        // 叠加预览条最多画 32 颗
 const WHEEL_SV_SIZE = 160;        // SV 面板边长（rpx）
+
+// 循环模式三选一（#132）：值 = 协议 loopMode（0/1/2）
+const LOOP_OPTIONS = [
+  { value: LOOP_NONE, label: '不循环' },
+  { value: LOOP_LAST, label: '末步循环' },
+  { value: LOOP_ALL, label: '全部循环' },
+];
 
 const DEFAULT_ROW_WIDTH = 10;   // 行宽（rpx 由方格边长算出），spec §4.3 默认 10
 const MAX_CELLS = 100;          // 单引脚最多 100 格（10 × 10）
@@ -90,6 +98,8 @@ Page({
     groupTabs: [],          // { index, name, active }
     canAddGroup: true,
     currentGroupLabel: '',
+    loopMode: LOOP_ALL,     // #132 当前灯组循环模式
+    loopOptions: LOOP_OPTIONS,
     rows: [],               // [{ key, cells: [{ index, state, box }] }]
     selectedCount: 0,
     freeCount: 0,
@@ -165,6 +175,8 @@ Page({
       name: (g && g.name) ? g.name : `灯组 ${i + 1}`,
       active: i === groupIndex,
     }));
+    const curGroup = groups[groupIndex];
+    const loopMode = (curGroup && curGroup.loopMode != null) ? curGroup.loopMode : LOOP_ALL;
     this.setData({
       length,
       cellCount: count,
@@ -174,6 +186,7 @@ Page({
       groupTabs: tabs,
       canAddGroup: groups.length < MAX_GROUPS,
       currentGroupLabel: tabs[groupIndex] ? tabs[groupIndex].name : '',
+      loopMode,
       empty: groups.length === 0,
       pendingPush: !!arr.pendingPush,
     });
@@ -347,6 +360,19 @@ Page({
   },
 
   // ---- 灯组 tab ----
+
+  /** #132：切换当前灯组循环模式（三选一），落缓存并置待推送。 */
+  onSelectLoopMode(e) {
+    const value = Number(e.currentTarget.dataset.loop);
+    if (!Number.isInteger(value) || value < LOOP_NONE || value > LOOP_ALL) return;
+    if (value === this.data.loopMode) return;
+    const arr = store.loadOrCreate(this._deviceName);
+    const pin = arr.pins[this.data.pinIndex];
+    const g = pin && pin.groups[this.data.groupIndex];
+    if (!g) return;
+    g.loopMode = value;
+    this._commit(arr);
+  },
 
   onSelectGroup(e) {
     const gi = Number(e.currentTarget.dataset.group);

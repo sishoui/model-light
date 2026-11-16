@@ -535,4 +535,26 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(px.every((c) => c === 'rgb(0,0,255)')).toBe(true);
     expect(h.getBleWrites()).toEqual([]);
   });
+
+  // #132 循环模式
+  it('给定当前灯组，当依次切换循环模式（不循环/末步循环/全部循环），则每次落缓存并标记待推送', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 0, 0] }) }],
+    }] });
+    h.page.onShow();
+
+    // 缺省全部循环，三选一控件就绪
+    expect(h.getData().loopMode).toBe(2);
+    expect(h.getData().loopOptions.map((o) => o.label)).toEqual(['不循环', '末步循环', '全部循环']);
+
+    for (const expected of [0, 1, 2]) {
+      await h.tap('onSelectLoopMode', { currentTarget: { dataset: { loop: expected } } });
+      expect(h.getData().loopMode).toBe(expected);
+      expect(saved(h.wx).pins[PIN].groups[0].loopMode).toBe(expected);
+      expect(h.getData().pendingPush).toBe(true);
+      expect(saved(h.wx).pendingPush).toBe(true);
+    }
+    expect(h.getBleWrites()).toEqual([]);
+  });
 });
