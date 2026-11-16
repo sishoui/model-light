@@ -12,6 +12,12 @@
 .badge.ok { background: #e6f0fd; color: #3b82f6; }
 .badge.warn { background: #fdf3e3; color: #b45309; }
 .badge.bad { background: #fdeaea; color: #d66a6a; }
+/* 「固件升级」轻量入口（#133）：顶栏内一条次行动，不占主导航 */
+.ota-entry { display: flex; align-items: center; gap: 16rpx; margin-top: 20rpx; padding-top: 20rpx;
+  border-top: 1rpx solid #eceff3; }
+.ota-entry-title { font-size: 28rpx; color: #60a5fa; font-weight: 600; }
+.ota-entry-version { font-size: 24rpx; color: #8a94a6; }
+.ota-entry-arrow { margin-left: auto; font-size: 32rpx; color: #8a94a6; }
 .error-bar { margin-top: 16rpx; background: #fdeaea; color: #d66a6a; padding: 16rpx 24rpx; border-radius: 16rpx;
   box-shadow: inset 2rpx 2rpx 4rpx #f0d5d5, inset -2rpx -2rpx 4rpx #ffffff; }
 

@@ -12,6 +12,11 @@
       <text wx:if="{{tokenLabel}}">{{tokenLabel}}</text>
       <text wx:if="{{arrangementVersion !== null}}">编排 v{{arrangementVersion}}</text>
     </view>
+    <view class="ota-entry" bindtap="onTapOta">
+      <text class="ota-entry-title">固件升级</text>
+      <text class="ota-entry-version" wx:if="{{firmwareLabel !== '—'}}">当前 {{firmwareLabel}}</text>
+      <text class="ota-entry-arrow">›</text>
+    </view>
   </view>
 
   <view wx:if="{{errorMessage}}" class="error-bar">{{errorMessage}}</view>

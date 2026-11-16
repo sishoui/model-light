@@ -227,6 +227,29 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     );
   });
 
+  it('给定已连接设备，当点「固件升级」入口，则 navigateTo OTA 子页并带 deviceId + name（非 switchTab）', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+    await flush();
+
+    await h.tap('onTapOta');
+
+    const nav = h.getLastNavigation();
+    expect(nav.type).toBe('navigateTo');
+    expect(nav.url).toBe(
+      `/pages/ota/ota?deviceId=${encodeURIComponent(FAKE_DEVICE_ID)}&name=${encodeURIComponent(NAME)}`,
+    );
+  });
+
+  it('给定 query 无 deviceId（跨会话），当点「固件升级」入口，则提示缺失不跳转', async () => {
+    h = createPageHarness(PAGE, { query: { name: NAME } });
+    await flush();
+
+    await h.tap('onTapOta');
+
+    expect(h.getNavigations()).toHaveLength(0);
+    expect(h.getToasts().some((t) => String(t.title).includes('无法升级'))).toBe(true);
+  });
+
   it('给定长按引脚卡片，当弹菜单选重命名并确认，则名字落 arrangement-store 且卡片重渲染', async () => {
     h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
     const store = seedArrangement(h.wx);

@@ -1,4 +1,4 @@
-// OTA 升级页（ota）页面用例 — #118 续传 / 进度回退 / 返回确认。
+// OTA 升级页（ota）页面用例 — #118 续传 / 进度回退 / 返回确认；#133 v2 子页化后以 query 进页。
 // 约定（见 #108）：只断言外部可观察行为（setData 输出、BLE 写、modal），
 // 不断言私有方法 / 内部字段 / wxml 文本。
 import { describe, it, expect, afterEach } from 'vitest';
@@ -93,5 +93,17 @@ describe('OTA 升级页（续传 / 进度 / 返回）', () => {
     const allWrites = h ? h.getBleWrites() : [];
     expect(allWrites.every((w) => !w.data.startsWith('24'))).toBe(true);
     h = undefined;
+  });
+
+  it('给定未升级（idle），当点返回，则直接 navigateBack 无确认弹窗（子页默认返回）', async () => {
+    h = createPageHarness(PAGE, { query: QUERY });
+    await flush();
+
+    await h.tap('onTapBack');
+
+    const nav = h.getLastNavigation();
+    expect(nav.type).toBe('navigateBack');
+    expect(nav.delta).toBe(1);
+    expect(h.getModals()).toHaveLength(0);
   });
 });

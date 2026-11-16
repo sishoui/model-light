@@ -6,6 +6,8 @@
 // 连接：onHide 让出（断连 + 停令牌心跳），onShow 用 query 的 deviceId 直连重连（#111）；
 // 意外断连按 1/2/4/8 s 退避重连（§2.5）。deviceId 跨会话可能为空 → 不连接，只渲染本地卡片。
 // 卡片数据来自 arrangement-store（arrangement:<name>）的 8 引脚；长按菜单改名的落点也是它。
+// 「固件升级」轻量入口（#133 / spec §2）：顶栏点按 navigateTo OTA 子页（不占主导航），
+// 已知固件版本时入口显示版本号（来自设备信息特征 ...0005，与顶栏同一读数）。
 
 const { createBleClient } = require('../../lib/ble');
 const { nextBackoffMs, resetBackoff } = require('../../lib/backoff');
@@ -300,6 +302,18 @@ Page({
     if (!Number.isInteger(pin) || pin < 0 || pin >= PIN_COUNT) return;
     wx.navigateTo({
       url: `/pages/pin/pin?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&pin=${pin}`,
+    });
+  },
+
+  // 「固件升级」轻量入口（#133）：OTA 子页 navigateTo（非 tabBar 页），带设备标识 + 名称；
+  // 无 deviceId（跨会话）时无法连接升级，提示而不跳转。
+  onTapOta() {
+    if (!this.deviceId) {
+      wx.showToast({ title: '设备信息缺失，无法升级', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({
+      url: `/pages/ota/ota?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}`,
     });
   },
 
