@@ -5,6 +5,7 @@ const { defineConfig } = require('vitest/config');
 module.exports = defineConfig({
   test: {
     globals: true,
-    include: ['miniprogram/lib/**/*.test.js'],
+    // lib 纯模块用例 + 页面级「模拟人为点击」用例（test/pages，见 #108）
+    include: ['miniprogram/lib/**/*.test.js', 'test/pages/**/*.test.js'],
   },
 });

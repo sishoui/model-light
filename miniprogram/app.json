@@ -1,17 +1,15 @@
 {
   "pages": [
     "pages/discover/discover",
-    "pages/device-info/device-info",
-    "pages/part/part",
     "pages/me/me",
-    "pages/devices/devices",
     "pages/device/device",
+    "pages/part/part",
     "pages/pin/pin",
     "pages/group/group",
     "pages/stage/stage",
     "pages/preview/preview",
-    "pages/ota/ota",
-    "pages/scene/scene"
+    "pages/scene/scene",
+    "pages/ota/ota"
   ],
   "tabBar": {
     "custom": true,

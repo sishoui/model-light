@@ -42,7 +42,7 @@ function createBleClient(wxApi) {
   }
 
   /** 扫描并按广播名 ML-XXXX 过滤（§2.7：微信只能按服务 UUID 过滤，其余在此做） */
-  async function scan(onDeviceFound, { timeoutMs = 10000 } = {}) {
+  async function scan(onDeviceFound, { timeoutMs = 10000, serviceFilter = true } = {}) {
     await openAdapter();
     const found = new Map(); // name -> ad，同一次扫描内去重
     const handler = (res) => {
@@ -55,8 +55,9 @@ function createBleClient(wxApi) {
       }
     };
     wxApi.onBluetoothDeviceFound(handler);
+    // §2.7：默认按服务 UUID 过滤；serviceFilter=false 时全量扫描，由 JS 层按广播名过滤（#109）
     await call(wxApi, 'startBluetoothDevicesDiscovery', {
-      services: [SERVICE_UUID], // §2.7：按服务 UUID 过滤
+      ...(serviceFilter ? { services: [SERVICE_UUID] } : {}),
       allowDuplicatesKey: false,
     });
     return {

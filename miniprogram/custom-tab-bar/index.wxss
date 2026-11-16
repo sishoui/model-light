@@ -1,0 +1,26 @@
+.tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 110rpx;
+  display: flex;
+  background: #e0e5ec;
+  box-shadow: 0 -4rpx 12rpx #cfd6e0;
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 100;
+}
+.tab-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tab-title {
+  font-size: 28rpx;
+  color: #8a94a6;
+}
+.tab-item.active .tab-title {
+  color: #60a5fa;
+  font-weight: 600;
+}

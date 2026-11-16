@@ -1,21 +1,26 @@
-// 页面级集成测试框架 — 模拟用户点击 → 触发 BLE 帧发送 → 验证帧内容
+// 页面级集成测试框架 — 模拟用户点击 → 触发 BLE 帧发送 / 页面跳转 → 验证外部可观察行为
 //
 // 用法：
 //   const { createPageHarness } = require('./page-harness');
 //   const h = createPageHarness('miniprogram/pages/discover/discover.js');
 //   await h.tap('onTapScan');           // 模拟用户点击"扫描"
+//   h.advanceTime(300);                 // 推进到伪造设备被发现的时刻
 //   const writes = h.getBleWrites();    // 获取所有 BLE 写操作
 //   expect(writes[0].characteristic).toContain('7c9f0001'); // 验证写到了命令通道
+//   const nav = h.getLastNavigation();  // 捕获的页面跳转（url + 参数）
 //
 // 框架提供：
 //   - fake wx 对象（覆盖页面用到的所有 wx.* API）
 //   - 加载页面 JS 模块（mock Page() 全局函数）
-//   - 创建页面实例（带 data / setData / 生命周期）
+//   - 加载自定义组件（mock Component() 全局函数）
+//   - 创建页面 / 组件实例（带 data / setData / 生命周期）
 //   - tap(method, args) 模拟用户点击
 //   - getBleWrites() 获取 BLE 写记录
-//   - injectBleFrame(charId, bytes) 模拟设备下行帧
+//   - injectBleFrame(charId, bytes) / injectStatusFrame(bytes) 模拟设备下行帧
+//   - getNavigations() / getToasts() / getModals() 捕获跳转、toast、modal
+//   - getScanOptions() 捕获 startBluetoothDevicesDiscovery 的入参（断言全量扫描）
 //   - disconnect() 模拟断连
-//   - advanceTime(ms) 推进定时器
+//   - advanceTime(ms) 推进 fake wx 定时器
 
 const path = require('path');
 
@@ -69,6 +74,19 @@ function fromHex(hex) {
   return out;
 }
 
+// setData 语义（支持 'a.b.c' 路径），页面与组件实例共用
+function applySetData(instance, obj) {
+  for (const key of Object.keys(obj)) {
+    const parts = key.split('.');
+    let target = instance.data;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (target[parts[i]] == null) target[parts[i]] = {};
+      target = target[parts[i]];
+    }
+    target[parts[parts.length - 1]] = obj[key];
+  }
+}
+
 // ---- fake wx 对象 ----
 
 function createFakeWx() {
@@ -88,6 +106,17 @@ function createFakeWx() {
     valueChangeHandlers: new Set(),
     statusFrameValue: null, // 可被测试注入的状态帧
   };
+
+  // UI / 扫描捕获（供页面用例断言外部可观察行为）
+  const captured = {
+    nav: [],          // { type, url, delta }
+    toasts: [],       // showToast 入参
+    modals: [],       // showModal 入参
+    scanOptions: [],  // startBluetoothDevicesDiscovery 入参
+  };
+
+  // 扫描行为可配置：autoFound=false 模拟"未发现设备"
+  const scanBehavior = { autoFound: true, delayMs: 300 };
 
   function succeed(opts, res) {
     if (typeof opts.success === 'function') opts.success(res || {});
@@ -137,9 +166,11 @@ function createFakeWx() {
     // ---- 扫描 ----
     startBluetoothDevicesDiscovery(opts = {}) {
       succeed(opts);
-      // 约 300 ms 后派发伪造设备（模拟真实扫描时延）
+      captured.scanOptions.push({ ...opts });
+      if (scanBehavior.autoFound === false) return;
+      // 约 delayMs 后派发伪造设备（模拟真实扫描时延）
       const id = nextTimerId++;
-      timers.push({ id, fn: fireDeviceFound, ms: 300, at: nowMs, fired: false });
+      timers.push({ id, fn: fireDeviceFound, ms: scanBehavior.delayMs, at: nowMs, fired: false });
     },
 
     stopBluetoothDevicesDiscovery(opts = {}) {
@@ -258,15 +289,47 @@ function createFakeWx() {
     // ---- 系统信息 ----
     getSystemInfoSync() { return { platform: 'android' }; },
 
+    // ---- 登录 / 会话（cloud-auth 用）----
+    login(opts = {}) {
+      if (typeof opts.success === 'function') opts.success({ code: 'fake-login-code' });
+    },
+    checkSession(opts = {}) { succeed(opts); },
+
+    // ---- 选择器（xr-frame 等页面在 onLoad 建场景时用；测试里做安全 no-op）----
+    createSelectorQuery() {
+      const q = {
+        select() { return q; },
+        selectAll() { return q; },
+        selectViewport() { return q; },
+        in() { return q; },
+        fields() { return q; },
+        boundingClientRect() { return q; },
+        scrollOffset() { return q; },
+        node() { return q; },
+        exec(cb) { if (typeof cb === 'function') cb([]); return q; },
+      };
+      return q;
+    },
+
     // ---- 存储 ----
     getStorageSync(key) { return storage.has(key) ? storage.get(key) : ''; },
     setStorageSync(key, value) { storage.set(key, value); },
     removeStorageSync(key) { storage.delete(key); },
 
-    // ---- UI ----
-    showToast(_opts) { /* noop */ },
-    showModal(_opts) { /* noop */ },
-    navigateTo(_opts) { /* noop */ },
+    // ---- 页面跳转 / 提示（记录以便断言）----
+    navigateTo(opts = {}) { captured.nav.push({ type: 'navigateTo', url: opts.url }); },
+    redirectTo(opts = {}) { captured.nav.push({ type: 'redirectTo', url: opts.url }); },
+    switchTab(opts = {}) { captured.nav.push({ type: 'switchTab', url: opts.url }); },
+    navigateBack(opts = {}) { captured.nav.push({ type: 'navigateBack', delta: opts.delta }); },
+    reLaunch(opts = {}) { captured.nav.push({ type: 'reLaunch', url: opts.url }); },
+
+    showToast(opts = {}) { captured.toasts.push({ ...opts }); },
+    showModal(opts = {}) {
+      captured.modals.push({ ...opts });
+      // 默认"用户确认"；用例可先设 wx._modalResponse = { confirm: false } 模拟取消
+      const resp = wx._modalResponse || { confirm: true, cancel: false };
+      if (typeof opts.success === 'function') opts.success({ confirm: !!resp.confirm, cancel: !!resp.cancel });
+    },
 
     // ---- 文件系统（OTA 用）----
     getFileSystemManager() {
@@ -308,12 +371,14 @@ function createFakeWx() {
     _getNow() { return nowMs; },
 
     _getBleState() { return bleState; },
+    _getCaptured() { return captured; },
+    _setScanBehavior(patch) { Object.assign(scanBehavior, patch); },
   };
 
   return wx;
 }
 
-// ---- 页面加载器 ----
+// ---- 页面 / 组件加载器 ----
 
 function loadPage(pagePath) {
   const absPath = path.resolve(pagePath);
@@ -334,26 +399,61 @@ function loadPage(pagePath) {
   return pageConfig;
 }
 
+function loadComponent(componentPath) {
+  const absPath = path.resolve(componentPath);
+  delete require.cache[require.resolve(absPath)];
+
+  let compConfig = null;
+  const originalComponent = global.Component;
+  global.Component = (config) => { compConfig = config; };
+
+  try {
+    require(absPath);
+  } finally {
+    global.Component = originalComponent;
+  }
+
+  if (!compConfig) throw new Error(`组件 ${componentPath} 未调用 Component()`);
+  return compConfig;
+}
+
 function createPageInstance(config) {
   const instance = {
     data: JSON.parse(JSON.stringify(config.data || {})),
     setData(obj) {
-      // 支持 'a.b.c' 路径（与小程序 setData 语义一致）
-      for (const key of Object.keys(obj)) {
-        const parts = key.split('.');
-        let target = instance.data;
-        for (let i = 0; i < parts.length - 1; i++) {
-          if (target[parts[i]] == null) target[parts[i]] = {};
-          target = target[parts[i]];
-        }
-        target[parts[parts.length - 1]] = obj[key];
-      }
+      applySetData(instance, obj);
     },
   };
 
   // 复制所有方法（绑定到 instance）
   for (const key of Object.keys(config)) {
     if (typeof config[key] === 'function' && key !== 'data') {
+      instance[key] = config[key].bind(instance);
+    }
+  }
+
+  return instance;
+}
+
+function createComponentInstance(config, properties = {}) {
+  const instance = {
+    data: JSON.parse(JSON.stringify(config.data || {})),
+    properties: JSON.parse(JSON.stringify(properties || {})),
+    setData(obj) {
+      applySetData(instance, obj);
+    },
+  };
+
+  // Component 的方法挂在 config.methods（小程序约定）
+  const methods = config.methods || {};
+  for (const key of Object.keys(methods)) {
+    if (typeof methods[key] === 'function') {
+      instance[key] = methods[key].bind(instance);
+    }
+  }
+  // 兼容把方法直接挂在顶层定义的写法
+  for (const key of Object.keys(config)) {
+    if (typeof config[key] === 'function' && key !== 'data' && !instance[key]) {
       instance[key] = config[key].bind(instance);
     }
   }
@@ -372,6 +472,7 @@ function createPageInstance(config) {
 function createPageHarness(pagePath, options = {}) {
   const wx = createFakeWx();
   const bleState = wx._getBleState();
+  const captured = wx._getCaptured();
 
   // 设置全局 wx（页面 require 的 lib/ble.js 会用这个 wx）
   global.wx = wx;
@@ -464,6 +565,28 @@ function createPageHarness(pagePath, options = {}) {
       wx._advanceTime(ms);
     },
 
+    /** 页面跳转记录（模拟用户点条目 / 按钮后跳去哪、带什么参数） */
+    getNavigations() {
+      return captured.nav.map((n) => ({ ...n }));
+    },
+
+    getLastNavigation() {
+      return captured.nav.length > 0 ? { ...captured.nav[captured.nav.length - 1] } : null;
+    },
+
+    getToasts() {
+      return captured.toasts.map((t) => ({ ...t }));
+    },
+
+    getModals() {
+      return captured.modals.map((m) => ({ ...m }));
+    },
+
+    /** startBluetoothDevicesDiscovery 的入参（断言全量扫描 vs 按服务过滤） */
+    getScanOptions() {
+      return captured.scanOptions.map((o) => ({ ...o }));
+    },
+
     /** 获取页面 data 快照 */
     getData() {
       return JSON.parse(JSON.stringify(page.data));
@@ -471,6 +594,9 @@ function createPageHarness(pagePath, options = {}) {
 
     /** 清理 */
     dispose() {
+      try {
+        if (typeof page.onUnload === 'function') page.onUnload();
+      } catch (e) { /* ignore */ }
       delete global.wx;
       // 清除页面模块的 require 缓存
       try {
@@ -485,7 +611,9 @@ module.exports = {
   createPageHarness,
   createFakeWx,
   loadPage,
+  loadComponent,
   createPageInstance,
+  createComponentInstance,
   // 常量
   SERVICE_UUID,
   CHAR_COMMAND,
