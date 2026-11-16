@@ -1,19 +1,25 @@
-// 3D 灯板预览页（推演渲染）- spec-3d-preview.md / issue #27
-// xr-frame 场景骨架：全应用同一时刻只有一个 xr-frame 组件、一个顶层 xr-scene，
-// 不与 <view> 混写（UI 放画布下方普通区域）。
+// 3D 灯板预览页（只读）- spec-3d-preview.md / #107 预览卡 / #116 只读化
+// 职责：只读预览，固定来路引脚（页内不切换引脚、不编辑）。
+// 区块顺序：顶栏（徽标 + 提示条）在画布上方 → 画布 → 显示范围 → 帧率 → 播放/暂停/复位/画质。
 // 渲染胶水：位置/颜色/相机/降级全部调 lib/preview.js 纯逻辑；
-// 逐帧数据不走 setData，onHide/onUnload 停循环。
+// 逐帧颜色不走 setData（xr-frame 直接改材质），onHide/onUnload 停循环。
+// 顶栏徽标与版本提示来自设备页写入的状态帧缓存（lib/status-cache）。
+// 行宽/排列来自引脚页「3D 布局」区（pin 对象上的 rowWidth/layout，客户端专属字段）。
 
 const {
   boardLayout, simulatePin, syncHint, fitCamera,
-  QUALITY_LEVELS, nextQuality, frameIntervalMs,
-  PITCH, DIM_COLOR,
+  nextQuality, frameIntervalMs,
+  PITCH,
 } = require('../../lib/preview');
 const { createArrangementStore } = require('../../lib/arrangement-store');
+const { createStatusCache } = require('../../lib/status-cache');
+const { crc32 } = require('../../lib/crc32');
+const { encode } = require('../../lib/arrangement');
 const { hex } = require('./color-util');
 
 const FPS_CHOICES = [30, 60];
 const DEFAULT_ROW_WIDTH = 10;
+const DEFAULT_LAYOUT = 'row-major-left-right';
 
 Page({
   data: {
@@ -23,18 +29,23 @@ Page({
     connected: false,
     statusBadge: '未连接',
     hint: null,           // { reason, text } | null
-    // 板面参数（参数化推导，不存坐标）
+    versionMismatch: false,
+    // 板面参数（参数化推导，不存坐标；rowWidth/layout 来自引脚页，本页只读）
     ledCount: 0,
     rowWidth: DEFAULT_ROW_WIDTH,
-    layout: 'row-major-left-right', // 'row-major-left-right' | 'row-major-snake'
+    layout: DEFAULT_LAYOUT, // 'row-major-left-right' | 'row-major-snake'
     scope: 'group',                 // 'group' | 'pin'
     groupIndex: 0,
     // 控件
-    rowWidths: [1, 2, 4, 5, 8, 10, 16, 20],
     fps: 30,
     fpsChoices: FPS_CHOICES,
     playing: true,
     quality: 'full',
+    // 静态图例（未覆盖像素 = 纯黑）
+    legend: [
+      { cls: 'legend-covered', label: '灯组覆盖（推演上色）' },
+      { cls: 'legend-free', label: '未覆盖（纯黑）' },
+    ],
   },
 
   onLoad(query) {
@@ -46,6 +57,8 @@ Page({
     this._running = false;
     this._arr = null;
     this._layoutCache = null;
+    this._store = createArrangementStore(wx);
+    this._statusCache = createStatusCache(wx);
     this.setData({
       deviceName: this.deviceName,
       pinIndex: this.pinIndex,
@@ -61,6 +74,7 @@ Page({
 
   onShow() {
     this.reloadArrangement();
+    this.readStatusFromCache();
     this.startLoop();
   },
 
@@ -68,34 +82,46 @@ Page({
   onUnload() { this.stopLoop(); },
 
   reloadArrangement() {
-    this._store = this._store || createArrangementStore(wx);
     this._arr = this._store.loadOrCreate(this.deviceName);
     const pin = this._arr.pins[this.pinIndex];
     const ledCount = pin?.length ?? 0;
-    this.setData({ ledCount });
+    // 行宽/排列来自引脚页「3D 布局」区（客户端专属字段，缺省 10 / row-major-left-right）
+    const rowWidth = pin?.rowWidth ?? DEFAULT_ROW_WIDTH;
+    const layout = pin?.layout ?? DEFAULT_LAYOUT;
+    this.setData({ ledCount, rowWidth, layout });
     this._layoutCache = null;
     this.fitCameraToBoard();
   },
 
-  // ---- 设备状态（从设备页写入的缓存读；本页不连 BLE）----
+  // ---- 设备状态（从设备页写入的状态帧缓存读；本页不连 BLE）----
 
   readStatusFromCache() {
     // 设备状态帧只驱动顶栏徽标与提示条（§5），不驱动颜色
     try {
-      const frame = wx.getStorageSync(`lastStatus:${this.deviceName}`);
-      const connected = frame != null && frame !== '';
-      const arr = this._store.loadOrCreate(this.deviceName);
-      const versionMatch = connected
-        ? Number(frame.arrangementVersion) === Number(arr.version)
-        : true;
-      const hint = syncHint({ connected, versionMatch, mode: connected ? frame.mode : 0 });
+      const frame = this._statusCache.load(this.deviceName);
+      const connected = frame != null;
+      let versionMismatch = false;
+      if (connected) {
+        // 比对本地编排版本 / crc32 与状态帧；crc32 可算则优先（版本号相同内容不同也能发现）
+        let localCrc = null;
+        try { localCrc = crc32(encode(this._arr)); } catch (e) { localCrc = null; }
+        const versionMatch = Number(frame.arrangementVersion) === Number(this._arr.version);
+        const crcMatch = localCrc == null || Number(frame.arrangementCrc32) === localCrc;
+        versionMismatch = !versionMatch || !crcMatch;
+      }
+      const hint = syncHint({
+        connected,
+        versionMatch: !versionMismatch,
+        mode: connected ? (frame.mode ?? 0) : 0,
+      });
       this.setData({
         connected,
         statusBadge: connected ? `版本 ${frame.arrangementVersion} · mode ${frame.mode}` : '未连接',
         hint,
+        versionMismatch,
       });
     } catch (e) {
-      this.setData({ connected: false, statusBadge: '未连接', hint: syncHint({ connected: false, versionMatch: true, mode: 0 }) });
+      this.setData({ connected: false, statusBadge: '未连接', hint: syncHint({ connected: false, versionMatch: true, mode: 0 }), versionMismatch: false });
     }
   },
 
@@ -104,7 +130,8 @@ Page({
   initScene() { /* xr-frame 场景就绪回调由 <xr-scene ready> 触达 handleSceneReady */ },
 
   handleSceneReady(e) {
-    this._scene = e.detail.value;
+    this._scene = e.detail?.value;
+    if (!this._scene) return;
     this.fitCameraToBoard();
     this.startLoop();
   },
@@ -179,23 +206,7 @@ Page({
     this._rafId = null;
   },
 
-  // ---- 控件 ----
-
-  onToggleLayout() {
-    const next = this.data.layout === 'row-major-snake'
-      ? 'row-major-left-right' : 'row-major-snake';
-    this.setData({ layout: next });
-    this._layoutCache = null;
-    this.buildMeshes();
-    this.fitCameraToBoard();
-  },
-
-  onRowWidthChange(e) {
-    this.setData({ rowWidth: Number(e.currentTarget.dataset.w) });
-    this._layoutCache = null;
-    this.buildMeshes();
-    this.fitCameraToBoard();
-  },
+  // ---- 控件（只读页：无编辑入口，无返回编辑态按钮）----
 
   onScopeChange(e) {
     this.setData({ scope: e.currentTarget.dataset.scope });

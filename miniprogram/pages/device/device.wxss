@@ -1,5 +1,5 @@
 /* 设备详情页：新拟物化（#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa）。
-   class 结构沿用原 wxml，仅替换视觉；新增「设备控制」面板样式。 */
+   首屏区块顺序：顶栏 → 设备控制卡 → 三列状态 → 折叠卡区。 */
 .page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; }
 
 /* 顶栏卡片 */
@@ -19,11 +19,11 @@
 /* 面板：纵向堆叠的白色卡片；stat 为内凹小块 */
 .panel { margin-top: 24rpx; background: #ffffff; border-radius: 24rpx; padding: 24rpx;
   box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
-.stat { background: #e0e5ec; border-radius: 16rpx; padding: 24rpx;
+.stat-row { display: flex; gap: 16rpx; }
+.stat-col { flex: 1; background: #e0e5ec; border-radius: 16rpx; padding: 20rpx 12rpx; text-align: center;
   box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.stat + .stat { margin-top: 16rpx; }
 .k { color: #8a94a6; font-size: 24rpx; display: block; }
-.v { color: #4a5568; font-size: 32rpx; margin-top: 8rpx; display: block; }
+.v { color: #4a5568; font-size: 30rpx; margin-top: 8rpx; display: block; }
 
 /* 设备控制（电源 / 亮度 / 场景入口） */
 .ctrl-row { display: flex; align-items: center; gap: 24rpx; padding: 8rpx 0; }
@@ -36,13 +36,17 @@
   border-radius: 16rpx; border: none;
   box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
 .push-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.debug-btn { margin-top: 12rpx; height: 64rpx; background: #ffffff; color: #60a5fa; font-size: 24rpx; font-weight: 600;
-  border-radius: 14rpx; border: none;
-  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
-.debug-btn:active { box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
 .restore-btn { margin-top: 16rpx; }
 .transfer-msg { font-size: 24rpx; color: #4a5568; margin-top: 8rpx; display: block; }
 .panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
+
+/* 折叠卡区 */
+.fold-card { margin-top: 24rpx; background: #ffffff; border-radius: 24rpx; padding: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.fold-head { display: flex; align-items: center; justify-content: space-between; }
+.fold-title { color: #4a5568; font-size: 30rpx; font-weight: 600; }
+.fold-badge { margin-left: 12rpx; color: #ffffff; background: #60a5fa; font-size: 20rpx; padding: 2rpx 12rpx; border-radius: 12rpx; }
+.fold-arrow { color: #8a94a6; font-size: 28rpx; }
 
 /* 引脚行 + 行内灯珠数编辑 */
 .pin-row { padding: 14rpx 0; border-bottom: 1rpx solid #e6eaf0; }

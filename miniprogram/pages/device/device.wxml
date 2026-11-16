@@ -16,9 +16,6 @@
   <view wx:if="{{errorMessage}}" class="error-bar">{{errorMessage}}</view>
   <view wx:if="{{visitorMode}}" class="visitor-bar">来访模式：只能改编排，不能工厂重置</view>
 
-  <!-- §2.1 设备控制：命令通道 ...0001 请求/应答（ACK 0x17）。
-       ACK result=0 才更新本地状态；1=失败（无令牌/设备拒绝）、2=固件不支持。
-       控制命令需控制令牌（requestToken 走页面 _tokenClient）。 -->
   <view class="panel">
     <view class="panel-title">设备控制</view>
     <view class="ctrl-row">
@@ -36,61 +33,76 @@
     <text wx:else class="transfer-msg muted">控制命令需设备授予控制令牌；失败时提示原因</text>
   </view>
 
-  <view class="panel">
-    <view class="stat"><text class="k">限亮</text><text class="v">{{brightnessLimit === null ? '—' : brightnessLimit + '%'}}</text></view>
-    <view class="stat"><text class="k">温度</text><text class="v">{{temperature === null ? '—' : temperature + ' °C'}}</text></view>
-    <view class="stat"><text class="k">状态帧</text><text class="v">{{framesSeen}} 帧</text></view>
+  <view class="panel stat-row">
+    <view class="stat-col"><text class="k">限亮</text><text class="v">{{brightnessLimit === null ? '—' : brightnessLimit + '%'}}</text></view>
+    <view class="stat-col"><text class="k">温度</text><text class="v">{{temperature === null ? '—' : temperature + ' °C'}}</text></view>
+    <view class="stat-col"><text class="k">状态帧</text><text class="v">{{framesSeen}} 帧</text></view>
   </view>
 
-  <!-- M2 调试：推送固定编排 TLV（#15：只做传输，不做编辑界面） -->
-  <view class="panel">
-    <view class="stat"><text class="k">协议</text><text class="v">{{readOnly ? '只读（major 不符）' : (protoLabel || '—')}}</text></view>
-    <view class="stat"><text class="k">分片</text><text class="v">{{chunkSize || '—'}} B</text></view>
-    <button class="debug-btn" size="mini" bindtap="sendTestArrangement"
-      disabled="{{!connected || transferring || readOnly}}">
-      {{transferring ? '传输中 ' + progressLabel : '推送测试编排'}}
-    </button>
-  </view>
-
-  <view class="panel">
-    <view class="panel-title">引脚（0–7 固定）</view>
-    <view wx:for="{{pins}}" wx:key="index" class="pin-row">
-      <view class="pin-line" data-pin="{{item.index}}" bindtap="openPin">
-        <text class="pin-label">{{item.label}}</text>
-        <text class="pin-name">{{item.name}}</text>
-        <text class="pin-meta">{{item.length}} 珠 · {{item.groupCount}} 灯组</text>
-        <!-- 行内灯珠数编辑入口（catchtap 不触发行进 pin 编辑页） -->
-        <button class="pin-count-btn" catchtap="openLedCountEditor" data-pin="{{item.index}}"
-          disabled="{{!connected || readOnly}}">灯数</button>
-      </view>
-      <!-- SET_LED_COUNT 行内编辑：输入 + 确认，ACK OK 后更新该行 length 显示 -->
-      <view wx:if="{{editingPin === item.index}}" class="led-count-editor">
-        <text class="ctrl-label">灯珠数</text>
-        <input class="led-count-input" type="number" value="{{ledCountDraft}}"
-          bindinput="onLedCountInput" placeholder="0–255" />
-        <button class="led-count-ok" catchtap="onLedCountConfirm" data-pin="{{item.index}}"
-          disabled="{{!connected || readOnly}}">确认</button>
+  <view class="fold-card">
+    <view class="fold-head" bindtap="onToggleFold" data-key="pins">
+      <text class="fold-title">8 引脚</text>
+      <text class="fold-arrow">{{folds.pins ? '▾' : '▸'}}</text>
+    </view>
+    <view wx:if="{{folds.pins}}">
+      <view wx:for="{{pins}}" wx:key="index" class="pin-row">
+        <view class="pin-line" data-pin="{{item.index}}" bindtap="openPin">
+          <text class="pin-label">{{item.label}}</text>
+          <text class="pin-name">{{item.name}}</text>
+          <text class="pin-meta">{{item.length}} 珠 · {{item.groupCount}} 灯组</text>
+          <button class="pin-count-btn" catchtap="openLedCountEditor" data-pin="{{item.index}}"
+            disabled="{{!connected || readOnly}}">灯数</button>
+        </view>
+        <view wx:if="{{editingPin === item.index}}" class="led-count-editor">
+          <text class="ctrl-label">灯珠数</text>
+          <input class="led-count-input" type="number" value="{{ledCountDraft}}"
+            bindinput="onLedCountInput" placeholder="0–255" />
+          <button class="led-count-ok" catchtap="onLedCountConfirm" data-pin="{{item.index}}"
+            disabled="{{!connected || readOnly}}">确认</button>
+        </view>
       </view>
     </view>
   </view>
 
-  <view class="panel">
-    <view class="panel-title">推送编排到设备（本地先缓存，失败不丢编辑）</view>
-    <button class="push-btn" bindtap="pushArrangementAction"
-      disabled="{{!connected || transferring || readOnly}}">
-      {{transferring ? '推送中…' : '推送'}}
-    </button>
-    <text wx:if="{{pushVersion}}" class="transfer-msg">本机编排版本 v{{pushVersion}}</text>
-    <button class="push-btn restore-btn" bindtap="restoreFromCloud"
-      disabled="{{!connected || transferring}}">
-      从云端恢复
-    </button>
-    <text class="transfer-msg muted">恢复是手动操作：只在设备与云端不一致时写回设备</text>
+  <view class="fold-card">
+    <view class="fold-head" bindtap="onToggleFold" data-key="push">
+      <text class="fold-title">推送编排与云端恢复</text>
+      <text class="fold-arrow">{{folds.push ? '▾' : '▸'}}</text>
+    </view>
+    <view wx:if="{{folds.push}}">
+      <button class="push-btn" bindtap="pushArrangementAction"
+        disabled="{{!connected || transferring || readOnly}}">
+        {{transferring ? '推送中…' : '推送'}}
+      </button>
+      <text wx:if="{{pushVersion}}" class="transfer-msg">本机编排版本 v{{pushVersion}}</text>
+      <button class="push-btn restore-btn" bindtap="restoreFromCloud"
+        disabled="{{!connected || transferring}}">
+        从云端恢复
+      </button>
+      <text class="transfer-msg muted">恢复是手动操作：只在设备与云端不一致时写回设备</text>
+    </view>
   </view>
 
-  <view class="panel">
-    <view class="panel-title">固件升级（OTA）</view>
-    <button class="push-btn" bindtap="openOta" disabled="{{!connected}}">固件升级…</button>
-    <text class="transfer-msg muted">升级期间设备暂停编排渲染，其他连接降为只读</text>
+  <view class="fold-card">
+    <view class="fold-head" bindtap="onToggleFold" data-key="scene">
+      <text class="fold-title">场景</text>
+      <text class="fold-arrow">{{folds.scene ? '▾' : '▸'}}</text>
+    </view>
+    <view wx:if="{{folds.scene}}">
+      <button class="push-btn" bindtap="openScene" disabled="{{!connected}}">管理场景槽…</button>
+      <text class="transfer-msg muted">场景槽 0–3：查询 / 激活固件存储的编排快照</text>
+    </view>
+  </view>
+
+  <view class="fold-card">
+    <view class="fold-head" bindtap="onToggleFold" data-key="ota">
+      <text class="fold-title">固件升级（OTA）</text>
+      <text wx:if="{{otaUpgrading}}" class="fold-badge">升级中</text>
+      <text class="fold-arrow">{{folds.ota ? '▾' : '▸'}}</text>
+    </view>
+    <view wx:if="{{folds.ota}}">
+      <button class="push-btn" bindtap="openOta" disabled="{{!connected}}">固件升级…</button>
+      <text class="transfer-msg muted">升级期间设备暂停编排渲染，其他连接降为只读</text>
+    </view>
   </view>
 </view>

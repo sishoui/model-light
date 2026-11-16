@@ -1,5 +1,6 @@
-/* 3D 灯板预览页：xr-frame 画布保持深色；画布下方控件区新拟物化
-   （#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa） */
+// 3D 灯板预览页：xr-frame 画布保持深色；顶栏在画布上方，控件区在画布下方（新拟物化）。
+// #116：顶栏移到画布上方；删除行宽/排列编辑样式（本页只读，布局在引脚页改）。
+
 .page { padding: 20rpx; background: #e0e5ec; }
 .topbar { margin-bottom: 16rpx; }
 .badge { display: inline-block; padding: 6rpx 18rpx; border-radius: 999rpx; font-size: 24rpx;
@@ -7,6 +8,7 @@
   box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
 .badge-ok { color: #3b82f6; }
 .badge-off { color: #8a94a6; }
+.pin-label { margin-left: 12rpx; font-size: 24rpx; color: #8a94a6; }
 .hint { margin-top: 12rpx; padding: 12rpx 18rpx; border-radius: 14rpx; font-size: 24rpx; background: #fdf3e3; color: #b45309; }
 .hint-disconnected { background: #eef1f5; color: #8a94a6; }
 .hint-version-mismatch { background: #fdeaea; color: #d66a6a; }
@@ -27,10 +29,9 @@
   background: #ffffff; color: #60a5fa;
   box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
 .pill:active { box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
-.chips { display: flex; flex-wrap: wrap; gap: 8rpx; }
-.chip { margin: 0; padding: 6rpx 20rpx; font-size: 24rpx; border-radius: 999rpx; border: none;
-  background: #ffffff; color: #8a94a6;
-  box-shadow: 2rpx 2rpx 4rpx #cfd6e0, -2rpx -2rpx 4rpx #ffffff; }
-.chip.on { background: #60a5fa; color: #ffffff;
-  box-shadow: inset 2rpx 2rpx 4rpx #3b82f6, inset -2rpx -2rpx 4rpx #7eafff; }
 .muted { font-size: 22rpx; color: #8a94a6; }
+.legend { display: flex; flex-wrap: wrap; gap: 16rpx; }
+.legend-item { display: flex; align-items: center; gap: 8rpx; font-size: 22rpx; color: #8a94a6; }
+.dot { width: 18rpx; height: 18rpx; border-radius: 4rpx; display: inline-block; }
+.legend-covered { background: #3b82f6; }
+.legend-free { background: #000000; }

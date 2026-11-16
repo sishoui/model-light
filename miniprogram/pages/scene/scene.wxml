@@ -10,7 +10,8 @@
     </view>
   </view>
 
-  <view wx:for="{{slots}}" wx:key="index" class="panel">
+  <view wx:for="{{slots}}" wx:key="index" class="panel"
+    data-slot="{{item.index}}" bindlongpress="onLongPressSlot">
     <view class="row slot-head">
       <text class="slot-title">槽 {{item.index}}</text>
       <text class="slot-name">{{item.loading ? '查询中…' : (item.empty ? '空' : item.name)}}</text>
@@ -21,10 +22,18 @@
       <button class="slot-btn" data-slot="{{item.index}}" bindtap="activateSlot"
         disabled="{{!connected || activating || item.empty || item.loading}}">激活</button>
     </view>
+    <view class="slot-hint">长按本卡片可管理该场景槽</view>
   </view>
 
-  <!-- TODO(固件 save-scene)：固件目前没有「保存场景到槽」命令（只有
-       ACTIVATE_SCENE / SCENE_QUERY，device-control.js 无 save 方法），保存按钮
-       未接线。固件增加写入命令后，在此用 arrangement-store.loadOrCreate +
-       arrangement.encode 产出 TLV（槽 blob = len(2 LE)+version(2 LE)+TLV）写入。 -->
+  <!-- 长按槽后的管理菜单（重命名 / 另存当前编排 / 覆盖 / 清空）。
+       固件 save-scene / clear-scene 命令字未实现（地图 #48），四项统一禁用+原因。 -->
+  <view wx:if="{{manage.visible}}" class="manage">
+    <view class="manage-head">管理槽 {{manage.slot}}</view>
+    <view wx:for="{{manage.items}}" wx:key="key" class="manage-item {{item.disabled ? 'disabled' : ''}}"
+      data-key="{{item.key}}" bindtap="onManageItem">
+      <text class="manage-label">{{item.label}}</text>
+      <text wx:if="{{item.disabled}}" class="manage-reason">{{item.reason}}</text>
+    </view>
+    <button class="manage-close" bindtap="onCloseManage">关闭</button>
+  </view>
 </view>

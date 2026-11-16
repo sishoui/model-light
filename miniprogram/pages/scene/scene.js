@@ -1,15 +1,16 @@
-// 场景页：查询 / 激活固件场景槽（0–3）。
+// 场景页：场景槽管理器（编排的命名快照，0–3 槽）。
 //
 // 命令通道 ...0001：
-//   SCENE_QUERY(0x24)  → 设备回 0x25 场景上报（payload = 槽 TLV；空槽为 0 长度帧）
+//   SCENE_QUERY(0x24)   → 设备回 0x25 场景上报（payload = 槽 TLV；空槽为 0 长度帧）
 //   ACTIVATE_SCENE(0x23) → 0x17 ACK（result 0=OK / 1=失败 / 2=旧固件不支持）
 //
 // 简化与遗留（勿删注释）：
 // - 场景名展示：取槽 TLV 第一个引脚（pin0）的 name 字段（lib/arrangement decode），
 //   仅作占位展示；固件槽 blob 外层布局是 len(2 LE)+version(2 LE)+TLV，
 //   本页拿到的是 0x25 上报的纯 TLV 字节，外层长度/版本头不在 payload 里。
-// - 「保存当前编排到槽」未接线：固件目前只有 ACTIVATE / QUERY 两个场景命令，
-//   没有 save-scene（device-control.js 也没有对应方法），故按钮隐藏。
+// - 长按槽的管理菜单含四项：重命名 / 另存当前编排 / 覆盖 / 清空。固件尚无
+//   save-scene / clear-scene 命令字与槽名字段（地图 #48 范围，未实现），
+//   这四项统一 disabled 并附原因文案；「激活」不受此限（走既有激活路径）。
 //   待固件增加写入命令后：arrangement-store.loadOrCreate(name) + encode(arr)
 //   产出 TLV，按 len(2 LE)+version(2 LE)+TLV 布局写入槽。
 
@@ -20,6 +21,19 @@ const { ACK_RESULT, SCENE_REPORT_MAX_PAYLOAD } = require('../../lib/device-contr
 const { decode } = require('../../lib/arrangement');
 
 const SLOT_COUNT = 4;
+
+// 依赖固件命令字（#48）的菜单项：命令字到位前统一禁用并附原因。
+const MENU_DISABLED_REASON = '依赖固件命令字，暂不可用';
+const MANAGE_ITEMS = [
+  { key: 'rename', label: '重命名', disabled: true },
+  { key: 'save', label: '另存当前编排', disabled: true },
+  { key: 'overwrite', label: '覆盖', disabled: true },
+  { key: 'clear', label: '清空', disabled: true },
+].map((it) => ({
+  ...it,
+  label: it.disabled ? `${it.label}（${MENU_DISABLED_REASON}）` : it.label,
+  reason: it.disabled ? MENU_DISABLED_REASON : '',
+}));
 
 function emptySlot(index) {
   return { index, name: '', empty: true, truncated: false, error: '', loading: true };
@@ -32,6 +46,7 @@ Page({
     activating: false,
     maxPayload: SCENE_REPORT_MAX_PAYLOAD,
     slots: Array.from({ length: SLOT_COUNT }, (_, i) => emptySlot(i)),
+    manage: { visible: false, slot: -1, items: MANAGE_ITEMS, disabledReason: MENU_DISABLED_REASON },
     message: '',
   },
 
@@ -40,7 +55,10 @@ Page({
     this._deviceName = decodeURIComponent(query.name || '');
     this._chunkSize = Number(query.chunkSize || 20); // 预留：固件 save-scene 落地后使用
     this.ble = createBleClient(wx);
-    this._tokenClient = createTokenClient(this.ble);
+    this._tokenClient = createTokenClient({
+      write: (bytes) => this.ble.write(bytes),
+      onCommand: (cb) => this.ble.onCommandNotify(cb),
+    });
     this.dc = createDeviceControl({
       write: (bytes) => this.ble.write(bytes),
       onCommandNotify: (cb) => this.ble.onCommandNotify(cb),
@@ -107,7 +125,7 @@ Page({
       loading: false,
       empty: false,
       name: label,
-      truncated: bytes.length > SCENE_REPORT_MAX_PAYLOAD,
+      truncated: bytes.length >= SCENE_REPORT_MAX_PAYLOAD,
     });
   },
 
@@ -143,6 +161,31 @@ Page({
       this.setData({ activating: false });
     }
     await this.querySlot(slot); // 激活后刷新该槽展示
+  },
+
+  /** 长按槽 → 管理菜单（四项；重命名/另存/覆盖/清空因固件命令字未实现统一禁用+原因）。 */
+  onLongPressSlot(e) {
+    const slot = Number(e.currentTarget.dataset.slot);
+    this.setData({ manage: { visible: true, slot, items: MANAGE_ITEMS, disabledReason: MENU_DISABLED_REASON } });
+    if (wx.showActionSheet) {
+      wx.showActionSheet({ itemList: MANAGE_ITEMS.map((it) => it.label) });
+    }
+  },
+
+  /** 关闭管理菜单。 */
+  onCloseManage() {
+    this.setData({ manage: { visible: false, slot: -1, items: MANAGE_ITEMS, disabledReason: MENU_DISABLED_REASON } });
+  },
+
+  /** 菜单项点击统一拦截：禁用项弹原因说明，不执行任何操作。 */
+  onManageItem(e) {
+    const key = e.currentTarget.dataset.key;
+    const item = MANAGE_ITEMS.find((it) => it.key === key);
+    if (!item || item.disabled) {
+      wx.showToast({ title: `${item ? item.label : '该操作'}（${MENU_DISABLED_REASON}）`, icon: 'none' });
+      return;
+    }
+    // 固件命令字到位前不可达（见文件头注释）。
   },
 
   _patchSlot(slot, patch) {
