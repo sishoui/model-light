@@ -34,7 +34,7 @@
 
     <view wx:if="{{empty}}" class="empty">还没有灯组，点右上角「＋」新建</view>
     <view wx:elif="{{cellCount === 0}}" class="empty">该引脚灯珠数为 0</view>
-    <view wx:else class="matrix" bindtouchstart="onGridTouchStart" bindtouchmove="onGridTouchMove" bindtouchend="onGridTouchEnd">
+    <view wx:else class="matrix" bindtouchstart="onGridTouchStart" catchtouchmove="onGridTouchMove" bindtouchend="onGridTouchEnd">
       <view wx:for="{{rows}}" wx:for-item="row" wx:key="key" class="matrix-row">
         <view
           wx:for="{{row.cells}}"
@@ -44,7 +44,7 @@
           data-index="{{item.index}}"
           bindtap="onCellTap"
           bindlongpress="onCellLongPress"
-        ></view>
+        ><text class="cell-label">{{item.label}}</text></view>
       </view>
     </view>
 

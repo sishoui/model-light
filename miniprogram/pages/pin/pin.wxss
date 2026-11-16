@@ -36,8 +36,12 @@
 .matrix-row { display: flex; gap: 8rpx; margin-bottom: 6rpx; }
 .cell {
   box-sizing: border-box; border-radius: 10rpx;
+  display: flex; align-items: center; justify-content: center;
   box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff;
 }
+.cell-label { font-size: 20rpx; line-height: 1; font-weight: 600; color: #8a94a6; }
+.cell-selected .cell-label { color: #ffffff; }
+.cell-other .cell-label { color: #f4f6f9; }
 .cell-free { background: #ffffff; border: 2rpx solid #8a94a6; } /* 黑空心：未分配 */
 .cell-selected { background: #60a5fa; border-color: #2563eb; } /* 本组已选 */
 .cell-other { background: #b9c0cc; border-color: #94a3b8; opacity: 0.95; } /* 他组占用 */

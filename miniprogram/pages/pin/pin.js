@@ -337,6 +337,7 @@ Page({
     for (let i = 0; i < states.length; i += this._cols) {
       const cells = states.slice(i, i + this._cols).map((s) => ({
         index: s.index,
+        label: s.index,
         state: s.mine ? 'selected' : (s.occupied ? 'other' : 'free'),
         box: box.has(s.index),
       }));

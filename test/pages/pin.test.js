@@ -118,6 +118,15 @@ describe('引脚页 pin（灯组 tab / 方格矩阵）', () => {
     expect(cells()).toHaveLength(10);
   });
 
+  it('每个格子中心带 0 基序号（与像素索引一致）', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 10, groups: [{ name: 'A', ranges: [[0, 4]] }] });
+    h.page.onShow();
+
+    expect(cells().map((c) => c.label)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(cells().map((c) => c.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
   it('给定 3 个灯组，当连点「+」，则补到 8 个；达上限后再点不再新增且按钮置灰', async () => {
     h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
     seedPin(h.wx, { length: 10, groups: [
