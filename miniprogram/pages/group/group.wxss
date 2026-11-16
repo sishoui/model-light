@@ -32,8 +32,15 @@
   box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
 .del-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
 .stage-row { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; border-bottom: 1rpx solid #e6eaf0; }
+.stage-row:last-child { border-bottom: none; }
+.stage-main { display: flex; align-items: center; gap: 12rpx; flex: 1; min-width: 0; }
 .stage-label { color: #4a5568; font-size: 24rpx; }
 .stage-go { color: #60a5fa; font-size: 24rpx; }
+.stage-ops { display: flex; gap: 8rpx; margin-left: 12rpx; }
+.op-btn { background: #ffffff; color: #4a5568; font-size: 22rpx; border: none; border-radius: 12rpx; padding: 0 16rpx;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.op-btn.del { color: #d66a6a; }
+.op-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
 .stages-btn { margin-top: 16rpx; background: #ffffff; color: #60a5fa; font-size: 26rpx; font-weight: 600;
   border-radius: 16rpx; border: none;
   box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }

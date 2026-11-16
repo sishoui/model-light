@@ -1,8 +1,21 @@
-/* 我的页：新拟物化（居中卡片 + 柔和双阴影） */
-.page { padding: 40rpx; background: #e0e5ec; min-height: 100vh;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.card { background: #ffffff; border-radius: 24rpx; padding: 48rpx 64rpx;
-  box-shadow: 6rpx 6rpx 12rpx #cfd6e0, -6rpx -6rpx 12rpx #ffffff; text-align: center; }
-.title { font-size: 40rpx; font-weight: 700; color: #4a5568; margin-bottom: 8rpx; display: block; }
-.hint { font-size: 28rpx; color: #8a94a6; margin-bottom: 16rpx; display: block; }
-.meta { font-size: 24rpx; color: #8a94a6; display: block; }
+/* 我的页（#110 轻设置中心）：单列分组 + 版本头。
+   新拟物化底 + 卡片分组；行式布局，左标签右值。 */
+.page { min-height: 100vh; background: #e0e5ec; padding: 40rpx; box-sizing: border-box; }
+
+.ver-head { padding: 24rpx 16rpx 40rpx; }
+.ver-title { font-size: 44rpx; font-weight: 700; color: #4a5568; display: block; }
+.ver-num { font-size: 26rpx; color: #8a94a6; display: block; margin-top: 8rpx; }
+
+.group { background: #ffffff; border-radius: 24rpx; padding: 8rpx 32rpx; margin-bottom: 32rpx;
+  box-shadow: 6rpx 6rpx 12rpx #cfd6e0, -6rpx -6rpx 12rpx #ffffff; }
+
+.row { display: flex; justify-content: space-between; align-items: center;
+  padding: 28rpx 0; border-bottom: 1rpx solid #eef1f6; }
+.row:last-child { border-bottom: none; }
+.row-label { font-size: 28rpx; color: #4a5568; }
+.row-value { font-size: 28rpx; color: #8a94a6; }
+.row-value.logged-in { color: #2f9e5f; }
+.row-value.local-only { color: #c47f17; }
+.row-value.warn { color: #c47f17; }
+.row-value.link { color: #60a5fa; }
+.row.tap .row-value.link { color: #3b82f6; }

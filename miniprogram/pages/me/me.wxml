@@ -1,8 +1,51 @@
 <view class="page">
-  <view class="card">
-    <text class="title">我的</text>
-    <text class="hint">模型灯效 小程序</text>
-    <text class="meta">版本 {{version}}</text>
-    <text class="meta">待上报使用日志 {{pendingUsage}} 条</text>
+  <!-- 版本头 -->
+  <view class="ver-head">
+    <text class="ver-title">模型灯效</text>
+    <text class="ver-num">版本 {{version}}</text>
+  </view>
+
+  <!-- 账号状态（单列分组） -->
+  <view class="group">
+    <view class="row">
+      <text class="row-label">账号状态</text>
+      <text class="row-value {{accountKind}}">{{accountLabel}}</text>
+    </view>
+  </view>
+
+  <!-- 云备份只读摘要（无按钮） -->
+  <view class="group">
+    <view class="row">
+      <text class="row-label">上次同步</text>
+      <text class="row-value">{{backupSummary.timeText}}</text>
+    </view>
+    <view class="row">
+      <text class="row-label">备份大小</text>
+      <text class="row-value">{{backupSummary.sizeText}}</text>
+    </view>
+    <view class="row" wx:if="{{backupSummary.behindText}}">
+      <text class="row-label">云端状态</text>
+      <text class="row-value warn">{{backupSummary.behindText}}</text>
+    </view>
+  </view>
+
+  <!-- 日志待发数 -->
+  <view class="group">
+    <view class="row">
+      <text class="row-label">待上报日志</text>
+      <text class="row-value">{{pendingUsageText}}</text>
+    </view>
+  </view>
+
+  <!-- 关于 -->
+  <view class="group">
+    <view class="row">
+      <text class="row-label">版本</text>
+      <text class="row-value">{{version}}</text>
+    </view>
+    <view class="row tap" bindtap="onTapPrivacy" wx:if="{{hasPrivacyGuide}}">
+      <text class="row-label">隐私指引</text>
+      <text class="row-value link">查看</text>
+    </view>
   </view>
 </view>

@@ -5,13 +5,32 @@
       <text class="k">名字（≤16 字节 UTF-8，已输 {{nameBytes}} B）</text>
       <input class="input" value="{{name}}" maxlength="20" bindinput="onNameInput" />
       <button class="save-btn" size="mini" bindtap="saveName">保存名字</button>
+      <text wx:if="{{nameError}}" class="error">{{nameError}}</text>
     </view>
     <view class="field">
       <text class="k">灯珠数量（0–255）</text>
       <input class="input" type="number" value="{{length}}" bindinput="onLengthInput" />
       <button class="save-btn" size="mini" bindtap="saveLength">保存数量</button>
+      <text wx:if="{{lengthError}}" class="error">{{lengthError}}</text>
     </view>
-    <text wx:if="{{errorMessage}}" class="error">{{errorMessage}}</text>
+  </view>
+
+  <view class="panel">
+    <view class="panel-title">3D 布局</view>
+    <view class="field">
+      <text class="k">行宽</text>
+      <view class="chips">
+        <button wx:for="{{rowWidths}}" wx:key="*this"
+          class="chip {{rowWidth === item ? 'on' : ''}}"
+          data-w="{{item}}" bindtap="onRowWidthChange">{{item}}</button>
+      </view>
+    </view>
+    <view class="field">
+      <text class="k">排列</text>
+      <button class="pill" bindtap="onToggleLayout">
+        {{layout === 'row-major-snake' ? '蛇形' : '从左到右'}}
+      </button>
+    </view>
   </view>
 
   <view class="panel">

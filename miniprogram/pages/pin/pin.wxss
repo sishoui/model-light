@@ -21,6 +21,16 @@
   box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
 .del-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
 .empty { color: #8a94a6; font-size: 26rpx; padding: 24rpx 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.chip { background: #ffffff; color: #4a5568; font-size: 24rpx; border: none; border-radius: 12rpx;
+  padding: 8rpx 20rpx; margin: 0;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.chip.on { color: #ffffff; background: #60a5fa;
+  box-shadow: inset 2rpx 2rpx 4rpx #4a90e2, inset -2rpx -2rpx 4rpx #7bb8ff; }
+.pill { background: #ffffff; color: #60a5fa; font-size: 24rpx; font-weight: 600;
+  border: none; border-radius: 14rpx; padding: 10rpx 28rpx;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.pill:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
 .add-btn { margin-top: 20rpx; background: #ffffff; color: #60a5fa; font-size: 26rpx; font-weight: 600;
   border-radius: 16rpx; border: none;
   box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }

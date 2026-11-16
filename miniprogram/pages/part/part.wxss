@@ -1,39 +1,10 @@
-.page { padding: 20rpx; background: #e0e5ec; min-height: 100vh; }
-.toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16rpx; }
-.toolbar-title { font-size: 32rpx; font-weight: 600; color: #4a5568; }
-.group-picker { display: flex; gap: 10rpx; align-items: center; }
-.label { color: #8a94a6; font-size: 26rpx; margin-right: 6rpx; }
-.chip {
-  font-size: 24rpx; padding: 6rpx 14rpx; border-radius: 16rpx;
-  background: #ffffff; color: #8a94a6; border: none;
-  box-shadow: 2px 2px 4px #cfd6e0, -2px -2px 4px #ffffff;
-}
-.chip.active { background: #60a5fa; color: #ffffff;
-  box-shadow: inset 2px 2px 4px #3b82f6, inset -2px -2px 4px #7eafff; }
-.error { color: #d66a6a; padding: 10rpx 0; text-align: center; }
-.pins { display: flex; flex-wrap: wrap; gap: 16rpx; }
-.pin-card {
-  background: #ffffff; border-radius: 24rpx; padding: 20rpx;
-  width: 240rpx;
-  box-shadow: 4px 4px 8px #cfd6e0, -4px -4px 8px #ffffff;
-}
-.pin-header { display: flex; align-items: center; gap: 8rpx; margin-bottom: 12rpx; }
-.pin-title { font-size: 26rpx; font-weight: 600; color: #344049; flex: 1; }
-.pin-title.renaming { color: #60a5fa; }
-.rename-input { font-size: 24rpx; color: #4a5568; background: #ffffff; border: 1rpx solid #cfd6e0; border-radius: 8rpx; padding: 4rpx 8rpx; flex: 1;
-  box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff; }
-.rename-actions { display: flex; gap: 6rpx; }
-.rename-btn { font-size: 22rpx; color: #8a94a6; }
-.leds { display: flex; flex-wrap: wrap; gap: 8rpx; }
-.led {
-  width: 26rpx; height: 26rpx; border-radius: 8rpx; background: #ffffff;
-  box-shadow: 2px 2px 4px #cfd6e0, -2px -2px 4px #ffffff;
-}
-.led.selected { background: #60a5fa;
-  box-shadow: inset 2px 2px 4px #3b82f6, inset -2px -2px 4px #7eafff; }
-.led.occupied { background: #e2e6ea;
-  box-shadow: inset 2px 2px 4px #cfd6e0, inset -2px -2px 4px #ffffff; }
-.footer { margin-top: 20rpx; }
-.footer button { height: 80rpx; background: #ffffff; color: #60a5fa; font-weight: 600; border-radius: 16rpx; border: none;
-  box-shadow: 4px 4px 8px #cfd6e0, -4px -4px 8px #ffffff; }
-.footer button:active { box-shadow: inset 3px 3px 6px #cfd6e0, inset -3px -3px 6px #ffffff; }
+/* 引脚总览：新拟物化（#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa） */
+.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; }
+.panel { background: #ffffff; border-radius: 24rpx; padding: 24rpx; margin-bottom: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
+.pin-row { display: flex; align-items: center; justify-content: space-between; padding: 16rpx 0; border-bottom: 1rpx solid #e6eaf0; }
+.pin-row:last-child { border-bottom: none; }
+.pin-name { color: #4a5568; font-size: 28rpx; flex: 1; }
+.pin-meta { color: #8a94a6; font-size: 24rpx; }
+.pin-row:active { background: #eef1f5; }

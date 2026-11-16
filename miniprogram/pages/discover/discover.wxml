@@ -1,30 +1,58 @@
 <view class="page">
-  <view class="toolbar">
-    <button class="scan-btn" loading="{{scanning}}" bindtap="onTapScan">
-      {{scanning ? '停止扫描' : '扫描设备'}}
-    </button>
+  <view class="title">发现设备</view>
+
+  <!-- 第一段：最近设备（本机缓存，最多 5 条，按最后连接时间倒序） -->
+  <view class="section">
+    <view class="section-title">最近设备</view>
+    <view wx:if="{{recent.length === 0}}" class="empty-inline">暂无最近连接记录</view>
+    <view class="list">
+      <view
+        wx:for="{{recent}}"
+        wx:for-item="item"
+        wx:key="name"
+        class="device-card"
+        data-item-name="{{item.name}}"
+        bindtap="onTapRecent"
+      >
+        <view class="device-name">{{item.name}}</view>
+        <view class="device-meta">
+          <text class="fw">固件 {{item.fwVersion || '—'}}</text>
+          <text class="addr">最后连接 {{item.lastConnectedText}}</text>
+        </view>
+      </view>
+    </view>
   </view>
 
-  <view wx:if="{{error}}" class="error">{{error}}</view>
+  <!-- 第二段：扫描附近设备（手动触发、10s 自动停） -->
+  <view class="section">
+    <view class="section-title">扫描附近设备</view>
+    <view class="toolbar">
+      <button class="scan-btn" loading="{{scanning}}" bindtap="onTapScan">
+        {{scanning ? '停止扫描' : '扫描附近设备'}}
+      </button>
+    </view>
 
-  <view wx:if="{{devices.length === 0 && !scanning}}" class="empty">
-    <text>未发现设备。点击“扫描设备”发现广播 ML-XXXX 的灯控器。</text>
-  </view>
+    <view wx:if="{{error}}" class="error">{{error}}</view>
 
-  <view class="list">
-    <view
-      wx:for="{{devices}}"
-      wx:for-item="device"
-      wx:key="deviceId"
-      class="device-card"
-      data-device-id="{{device.deviceId}}"
-      data-item-name="{{device.name}}"
-      bindtap="onTapDevice"
-    >
-      <view class="device-name">{{device.name || '未知设备'}}</view>
-      <view class="device-meta">
-        <text class="fw">固件 v{{device.major === null ? '?' : device.major}}.{{device.minor === null ? '?' : device.minor}}</text>
-        <text class="addr">{{device.deviceId}}</text>
+    <view wx:if="{{devices.length === 0 && !scanning && hasScanned}}" class="empty">
+      <text>未发现设备。点击“扫描附近设备”发现广播 ML-XXXX 的灯控器。</text>
+    </view>
+
+    <view class="list">
+      <view
+        wx:for="{{devices}}"
+        wx:for-item="device"
+        wx:key="deviceId"
+        class="device-card"
+        data-device-id="{{device.deviceId}}"
+        data-item-name="{{device.name}}"
+        bindtap="onTapDevice"
+      >
+        <view class="device-name">{{device.name || '未知设备'}}</view>
+        <view class="device-meta">
+          <text class="fw">固件 v{{device.major === null ? '?' : device.major}}.{{device.minor === null ? '?' : device.minor}}</text>
+          <text class="addr">{{device.deviceId}}</text>
+        </view>
       </view>
     </view>
   </view>
