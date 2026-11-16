@@ -1,96 +1,76 @@
 <view class="page">
   <view class="topbar">
     <view class="row">
-      <text class="name">{{name}}</text>
+      <text class="name">{{name || '设备'}}</text>
       <view class="badge {{connected ? 'ok' : (reconnecting ? 'warn' : 'bad')}}">
         {{connected ? '已连接' : (reconnecting ? '重连中…' : '未连接')}}
       </view>
     </view>
     <view class="row meta">
       <text>固件 {{firmwareLabel}}</text>
-      <text>mode: {{modeLabel}}</text>
+      <text>{{modeLabel}}</text>
       <text wx:if="{{tokenLabel}}">{{tokenLabel}}</text>
+      <text wx:if="{{arrangementVersion !== null}}">编排 v{{arrangementVersion}}</text>
+    </view>
+    <view class="ota-entry" bindtap="onTapOta">
+      <text class="ota-entry-title">固件升级</text>
+      <text class="ota-entry-version" wx:if="{{firmwareLabel !== '—'}}">当前 {{firmwareLabel}}</text>
+      <text class="ota-entry-arrow">›</text>
     </view>
   </view>
 
   <view wx:if="{{errorMessage}}" class="error-bar">{{errorMessage}}</view>
-  <view wx:if="{{visitorMode}}" class="visitor-bar">来访模式：只能改编排，不能工厂重置</view>
 
-  <!-- §2.1 设备控制：命令通道 ...0001 请求/应答（ACK 0x17）。
-       ACK result=0 才更新本地状态；1=失败（无令牌/设备拒绝）、2=固件不支持。
-       控制命令需控制令牌（requestToken 走页面 _tokenClient）。 -->
-  <view class="panel">
-    <view class="panel-title">设备控制</view>
+  <view class="panel power-panel">
     <view class="ctrl-row">
-      <text class="ctrl-label">电源</text>
+      <text class="ctrl-label">整体开关</text>
       <switch class="ctrl-switch" checked="{{powerOn}}" bindchange="onTogglePower"
         disabled="{{!connected || readOnly}}" />
+      <text class="power-hint">{{powerOn ? '引脚可操作' : '已全灭，卡片置灰'}}</text>
     </view>
-    <view class="ctrl-row">
-      <text class="ctrl-label">亮度</text>
-      <slider class="ctrl-slider" min="0" max="100" value="{{brightness}}" bindchange="onBrightnessChange"
-        show-value disabled="{{!connected || readOnly}}" />
-    </view>
-    <button class="push-btn scene-btn" bindtap="openScene" disabled="{{!connected}}">场景…</button>
     <text wx:if="{{transferMessage}}" class="transfer-msg">{{transferMessage}}</text>
-    <text wx:else class="transfer-msg muted">控制命令需设备授予控制令牌；失败时提示原因</text>
   </view>
 
-  <view class="panel">
-    <view class="stat"><text class="k">限亮</text><text class="v">{{brightnessLimit === null ? '—' : brightnessLimit + '%'}}</text></view>
-    <view class="stat"><text class="k">温度</text><text class="v">{{temperature === null ? '—' : temperature + ' °C'}}</text></view>
-    <view class="stat"><text class="k">状态帧</text><text class="v">{{framesSeen}} 帧</text></view>
-  </view>
-
-  <!-- M2 调试：推送固定编排 TLV（#15：只做传输，不做编辑界面） -->
-  <view class="panel">
-    <view class="stat"><text class="k">协议</text><text class="v">{{readOnly ? '只读（major 不符）' : (protoLabel || '—')}}</text></view>
-    <view class="stat"><text class="k">分片</text><text class="v">{{chunkSize || '—'}} B</text></view>
-    <button class="debug-btn" size="mini" bindtap="sendTestArrangement"
-      disabled="{{!connected || transferring || readOnly}}">
-      {{transferring ? '传输中 ' + progressLabel : '推送测试编排'}}
-    </button>
-  </view>
-
-  <view class="panel">
-    <view class="panel-title">引脚（0–7 固定）</view>
-    <view wx:for="{{pins}}" wx:key="index" class="pin-row">
-      <view class="pin-line" data-pin="{{item.index}}" bindtap="openPin">
-        <text class="pin-label">{{item.label}}</text>
-        <text class="pin-name">{{item.name}}</text>
-        <text class="pin-meta">{{item.length}} 珠 · {{item.groupCount}} 灯组</text>
-        <!-- 行内灯珠数编辑入口（catchtap 不触发行进 pin 编辑页） -->
-        <button class="pin-count-btn" catchtap="openLedCountEditor" data-pin="{{item.index}}"
-          disabled="{{!connected || readOnly}}">灯数</button>
+  <scroll-view class="card-list" scroll-y>
+    <view
+      wx:for="{{pins}}"
+      wx:key="index"
+      class="pin-card {{powerOn ? '' : 'off'}}"
+      data-pin="{{item.index}}"
+      bindtap="onTapPin"
+      bindlongpress="onLongPressPin"
+    >
+      <image wx:if="{{item.cover}}" class="card-image" src="{{item.cover}}" mode="aspectFill" />
+      <view wx:else class="card-image image-placeholder">{{item.gpio}}</view>
+      <view class="card-body">
+        <view class="card-name">{{item.name}}</view>
+        <view class="card-meta">
+          <text>{{item.gpio}}</text>
+          <text class="state state-{{item.state}}">{{item.stateLabel}}</text>
+          <text>{{item.groupCount}} 灯组 · {{item.length}} 珠</text>
+        </view>
       </view>
-      <!-- SET_LED_COUNT 行内编辑：输入 + 确认，ACK OK 后更新该行 length 显示 -->
-      <view wx:if="{{editingPin === item.index}}" class="led-count-editor">
-        <text class="ctrl-label">灯珠数</text>
-        <input class="led-count-input" type="number" value="{{ledCountDraft}}"
-          bindinput="onLedCountInput" placeholder="0–255" />
-        <button class="led-count-ok" catchtap="onLedCountConfirm" data-pin="{{item.index}}"
-          disabled="{{!connected || readOnly}}">确认</button>
-      </view>
+    </view>
+  </scroll-view>
+
+  <!-- 长按编辑菜单（底部弹出） -->
+  <view wx:if="{{menuOpen}}" class="sheet-mask" bindtap="onMenuClose">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-item" data-action="rename" catchtap="onMenuAction">重命名</view>
+      <view class="sheet-item" data-action="cover" catchtap="onMenuAction">更换图片</view>
+      <view class="sheet-cancel" catchtap="onMenuClose">取消</view>
     </view>
   </view>
 
-  <view class="panel">
-    <view class="panel-title">推送编排到设备（本地先缓存，失败不丢编辑）</view>
-    <button class="push-btn" bindtap="pushArrangementAction"
-      disabled="{{!connected || transferring || readOnly}}">
-      {{transferring ? '推送中…' : '推送'}}
-    </button>
-    <text wx:if="{{pushVersion}}" class="transfer-msg">本机编排版本 v{{pushVersion}}</text>
-    <button class="push-btn restore-btn" bindtap="restoreFromCloud"
-      disabled="{{!connected || transferring}}">
-      从云端恢复
-    </button>
-    <text class="transfer-msg muted">恢复是手动操作：只在设备与云端不一致时写回设备</text>
-  </view>
-
-  <view class="panel">
-    <view class="panel-title">固件升级（OTA）</view>
-    <button class="push-btn" bindtap="openOta" disabled="{{!connected}}">固件升级…</button>
-    <text class="transfer-msg muted">升级期间设备暂停编排渲染，其他连接降为只读</text>
+  <!-- 重命名输入 -->
+  <view wx:if="{{renameOpen}}" class="rename-mask" bindtap="onRenameCancel">
+    <view class="rename-panel" catchtap="noop">
+      <view class="rename-title">重命名 GPIO{{renamePin}}</view>
+      <input class="rename-input" value="{{renameDraft}}" bindinput="onRenameInput" focus />
+      <view class="rename-actions">
+        <button class="btn-ghost" bindtap="onRenameCancel">取消</button>
+        <button class="btn-primary" bindtap="onRenameConfirm">确认</button>
+      </view>
+    </view>
   </view>
 </view>

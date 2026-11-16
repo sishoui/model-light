@@ -8,6 +8,7 @@
  *   Arrangement := version(u16) payloadVersion(u16) pinCount(u8) Pin[pinCount]
  *   Pin         := length(u8) name(16B) groupCount(u8) Group[groupCount]
  *   Group       := rangeCount(u8) stageCount(u8) Range[...] Stage[...]
+ *                 [loopMode(u8)]   // payloadVersion >= 2 only
  *   Range       := start(u8) end(u8) reverse(u8)
  *   Stage       := durationMs(u16) fadeInMs(u8) layerCount(u8) Layer[...]
  *   Layer       := role(u8) effectId(u16) paramLen(u8) paramBytes[...]
@@ -40,7 +41,15 @@ extern "C" {
 #define MLARR_MAX_PARAMS  16
 
 /* --- §2.10 payload version --- */
-#define MLARR_PAYLOAD_VERSION 1
+#define MLARR_PAYLOAD_VERSION_V1 1
+#define MLARR_PAYLOAD_VERSION    2
+
+/* --- 灯组循环模式（payloadVersion >= 2，Group 末尾 1 B） --- */
+enum {
+    MLARR_LOOP_NONE = 0, /* 不循环：播完一次冻结在末阶段最后一毫秒 */
+    MLARR_LOOP_LAST = 1, /* 末步循环：前 n-1 阶段播一次后停在末阶段循环 */
+    MLARR_LOOP_ALL  = 2, /* 全部循环：v1 缺省行为 */
+};
 
 /* --- §2.2 commands --- */
 enum {
@@ -128,6 +137,7 @@ typedef struct {
     ml_range_t ranges[MLARR_MAX_RANGES];
     uint8_t stage_count;
     ml_stage_t stages[MLARR_MAX_STAGES];
+    uint8_t loop_mode; /* MLARR_LOOP_NONE/LAST/ALL; payloadVersion >= 2, v1 缺省 MLARR_LOOP_ALL */
 } ml_group_t;
 
 typedef struct {

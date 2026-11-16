@@ -45,10 +45,13 @@ from arrangement import (
     ArrangementError,
     Group,
     Layer,
-    PAYLOAD_VERSION,
+    LOOP_ALL,
+    LOOP_LAST,
+    LOOP_NONE,
     Pin,
     Range,
     Stage,
+    SUPPORTED_PAYLOAD_VERSIONS,
     decode,
     encode,
     validate,
@@ -290,7 +293,7 @@ async def test_happy_path_full_commit(fake_transport):
     # 接收方完成了原子提交（“写 NVS”）
     assert tracker.call_count == 1
     assert len(tracker.committed) == 1
-    assert tracker.committed[0].payload_version == PAYLOAD_VERSION
+    assert tracker.committed[0].payload_version in SUPPORTED_PAYLOAD_VERSIONS
     assert len(tracker.committed[0].pins) == 8
 
     # FIN 被应答为 ACK，status=0；无 NAK
@@ -458,7 +461,7 @@ async def test_nak_nakmask_retransmit_then_commit(fake_transport):
     assert result.total_chunks == total_chunks
     assert tracker.call_count == 1
     assert len(tracker.committed) == 1
-    assert tracker.committed[0].payload_version == PAYLOAD_VERSION
+    assert tracker.committed[0].payload_version in SUPPORTED_PAYLOAD_VERSIONS
 
     # 确实发出过一次 NAK（nakMask 标记缺失片），随后重传并成功
     naks = naks_of(device_to_pc)
@@ -498,6 +501,108 @@ def test_failed_commit_keeps_previous_playback_uninterrupted():
     feed_full(receiver, good)
     assert len(tracker.committed) == 2
     assert tracker.committed[1] == expected
+
+
+# ---------------------------------------------------------------------------
+# loopMode（#132）：v2 往返 / v1 缺省 ALL / 坏 loopMode 拒绝
+# ---------------------------------------------------------------------------
+
+def make_v2_arrangement_bytes() -> bytes:
+    """v2 编排：8 支引脚各一个灯组，loopMode 按 0/1/2 轮换。"""
+    modes = (LOOP_NONE, LOOP_LAST, LOOP_ALL)
+    pins: List[Pin] = []
+    for i in range(8):
+        group = Group(
+            ranges=[Range(start=0, end=6)],
+            stages=[
+                Stage(
+                    duration_ms=1000,
+                    fade_in_ms=0,
+                    layers=[Layer(role=0, effect_id=i, params=b"")],
+                )
+            ],
+            loop_mode=modes[i % 3],
+        )
+        pins.append(Pin(length=6, name=f"pin{i}", groups=[group]))
+    return encode(Arrangement(version=2, payload_version=2, pins=pins))
+
+
+def test_v2_encode_decode_roundtrip_preserves_loop_mode():
+    """v2 encode → decode 往返 loopMode 保真（0/1/2 混合），重编码字节级一致。"""
+    data = make_v2_arrangement_bytes()
+    arr = decode(data)
+    assert arr.payload_version == 2
+    modes = (LOOP_NONE, LOOP_LAST, LOOP_ALL)
+    for i, pin in enumerate(arr.pins):
+        assert pin.groups[0].loop_mode == modes[i % 3]
+    assert encode(arr) == data
+
+
+def test_v1_decode_defaults_loop_all():
+    """v1 编排（无 loopMode 字段）解码后每个灯组 loop_mode 缺省为 LOOP_ALL。"""
+    data = make_valid_arrangement_bytes()  # payload_version=1
+    arr = decode(data)
+    assert arr.payload_version == 1
+    for pin in arr.pins:
+        for g in pin.groups:
+            assert g.loop_mode == LOOP_ALL
+
+
+def test_v2_commit_preserves_loop_mode():
+    """v2 编排经分片传输原子提交，loopMode 逐组保真。"""
+    tracker = CommitTracker()
+    receiver = ShardFrameReceiver(on_complete=tracker)
+    data = make_v2_arrangement_bytes()
+    out = feed_full(receiver, data, payload_version=2)
+
+    assert tracker.call_count == 1
+    committed = tracker.committed[0]
+    assert committed.payload_version == 2
+    modes = (LOOP_NONE, LOOP_LAST, LOOP_ALL)
+    for i, pin in enumerate(committed.pins):
+        assert pin.groups[0].loop_mode == modes[i % 3]
+
+    last = last_frame_ack(out)
+    assert last is not None and not last["is_nak"]
+    assert last["status"] == StatusErrorCode.OK
+
+
+def test_bad_loop_mode_nak_no_commit_previous_kept():
+    """v2 loopMode=3 越界 → decode 抛 LIMITS → NAK，无提交，上一份保持原样。"""
+    tracker = CommitTracker()
+    receiver = ShardFrameReceiver(on_complete=tracker)
+    good = make_valid_arrangement_bytes()
+    feed_full(receiver, good)
+    previous = tracker.committed[0]
+
+    # 构造 loopMode=3 的 v2（绕过 __post_init__ 写坏值；encode 不复查 loop_mode）
+    modes = (LOOP_NONE, LOOP_LAST, LOOP_ALL)
+    pins: List[Pin] = []
+    for i in range(8):
+        g = Group(
+            ranges=[Range(start=0, end=6)],
+            stages=[
+                Stage(
+                    duration_ms=1000,
+                    fade_in_ms=0,
+                    layers=[Layer(role=0, effect_id=0, params=b"")],
+                )
+            ],
+            loop_mode=modes[i % 3],
+        )
+        g.loop_mode = 3  # 越界：decode 必须拒绝
+        pins.append(Pin(length=6, name=f"pin{i}", groups=[g]))
+    bad = encode(Arrangement(version=3, payload_version=2, pins=pins))
+
+    out = feed_full(receiver, bad, payload_version=2)
+
+    assert tracker.call_count == 2
+    assert len(tracker.committed) == 1
+    assert tracker.committed[0] is previous
+
+    naks = naks_of(out)
+    assert naks, f"expected a NAK, got {out}"
+    assert naks[-1]["status"] != StatusErrorCode.OK
 
 
 # ---------------------------------------------------------------------------

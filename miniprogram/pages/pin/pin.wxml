@@ -1,29 +1,245 @@
 <view class="page">
-  <view class="panel">
-    <view class="panel-title">{{pinLabel}}（固定 0–7，不可增删）</view>
-    <view class="field">
-      <text class="k">名字（≤16 字节 UTF-8，已输 {{nameBytes}} B）</text>
-      <input class="input" value="{{name}}" maxlength="20" bindinput="onNameInput" />
-      <button class="save-btn" size="mini" bindtap="saveName">保存名字</button>
+  <!-- 顶栏：设备 + 引脚标识 + 本地待推送标记 -->
+  <view class="topbar">
+    <view class="row">
+      <text class="name">{{deviceName || '设备'}}</text>
+      <text class="badge">{{pinLabel}}</text>
     </view>
-    <view class="field">
-      <text class="k">灯珠数量（0–255）</text>
-      <input class="input" type="number" value="{{length}}" bindinput="onLengthInput" />
-      <button class="save-btn" size="mini" bindtap="saveLength">保存数量</button>
+    <view class="row meta">
+      <text>{{pinName || '未命名引脚'}}</text>
+      <text>{{length}} 颗 · {{groupTabs.length}}/8 灯组</text>
     </view>
-    <text wx:if="{{errorMessage}}" class="error">{{errorMessage}}</text>
+    <text wx:if="{{pendingPush}}" class="pending">本地已改 · 待推送</text>
   </view>
 
-  <view class="panel">
-    <view class="panel-title">灯组（{{groups.length}}）</view>
-    <view wx:for="{{groups}}" wx:key="index" class="group-row" data-group="{{item.index}}" bindtap="openGroup">
-      <view class="group-info">
-        <text class="group-name">灯组 {{item.index + 1}}</text>
-        <text class="group-meta">{{item.rangeLabel}} · {{item.durationLabel}}</text>
-      </view>
-      <button class="del-btn" size="mini" catchtap="removeGroup" data-group="{{item.index}}">删除</button>
+  <!-- 灯组 tab 行：横向滚动，末尾「+」新增（达上限置灰），长按 tab → 重命名 / 删除 -->
+  <scroll-view class="tab-bar" scroll-x>
+    <view
+      wx:for="{{groupTabs}}"
+      wx:key="index"
+      class="tab {{item.active ? 'on' : ''}}"
+      data-group="{{item.index}}"
+      bindtap="onSelectGroup"
+      bindlongpress="onLongPressGroup"
+    >{{item.name}}</view>
+    <view class="tab tab-add {{canAddGroup ? '' : 'off'}}" bindtap="onAddGroup">＋</view>
+  </scroll-view>
+
+  <!-- 内容区：当前灯组的 2D 方格矩阵（每格一颗灯珠） -->
+  <view class="panel matrix-panel">
+    <view class="panel-head">
+      <text class="panel-title">{{currentGroupLabel || '灯珠划分'}}</text>
+      <text class="counts">本组 {{selectedCount}} · 空闲 {{freeCount}} · 他组 {{otherCount}}</text>
     </view>
-    <view wx:if="{{groups.length === 0}}" class="empty">还没有灯组，点下面新建</view>
-    <button class="add-btn" bindtap="createGroup">新建灯组</button>
+
+    <view wx:if="{{empty}}" class="empty">还没有灯组，点右上角「＋」新建</view>
+    <view wx:elif="{{cellCount === 0}}" class="empty">该引脚灯珠数为 0</view>
+    <view wx:else class="matrix" bindtouchstart="onGridTouchStart" catchtouchmove="onGridTouchMove" bindtouchend="onGridTouchEnd">
+      <view wx:for="{{rows}}" wx:for-item="row" wx:key="key" class="matrix-row">
+        <view
+          wx:for="{{row.cells}}"
+          wx:key="index"
+          class="cell cell-{{item.state}} {{item.box ? 'in-box' : ''}}"
+          style="width:{{cellSizeRpx}}rpx;height:{{cellSizeRpx}}rpx"
+          data-index="{{item.index}}"
+          bindtap="onCellTap"
+          bindlongpress="onCellLongPress"
+        ><text class="cell-label">{{item.label}}</text></view>
+      </view>
+    </view>
+
+    <text wx:if="{{truncated}}" class="hint">单引脚最多 100 颗，矩阵只画前 100 格</text>
+    <text class="hint">单击切换归属；长按拖动框选一片</text>
+  </view>
+
+  <!-- #131 内容槽：阶段列表 + 就地编辑（时长/淡入/双层灯效/参数面板/色环）+ 叠加预览 -->
+  <view id="stage-slot" class="panel">
+    <view class="panel-head">
+      <text class="panel-title">阶段与灯效</text>
+      <text class="counts">{{stages.length}}/8 阶段 · 合计 {{totalLabel}}</text>
+    </view>
+
+    <!-- #132 循环模式三选一（绑定当前灯组 loopMode） -->
+    <view class="loop-row">
+      <text class="k">循环模式</text>
+      <view class="segmented">
+        <view
+          wx:for="{{loopOptions}}"
+          wx:key="value"
+          class="seg {{loopMode === item.value ? 'on' : ''}}"
+          data-loop="{{item.value}}"
+          bindtap="onSelectLoopMode"
+        >{{item.label}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{stages.length === 0}}" class="empty">还没有阶段，点下方「加阶段」新建</view>
+
+    <!-- 阶段卡片列表 -->
+    <view wx:for="{{stages}}" wx:key="index" class="stage-card {{editStageIndex === item.index ? 'on' : ''}}">
+      <view class="stage-row" data-stage="{{item.index}}" bindtap="onOpenStage">
+        <text class="stage-no">{{item.index + 1}}</text>
+        <view class="stage-info">
+          <text class="stage-meta">{{item.durationMs}} ms · {{item.fadeLabel}}</text>
+          <view class="stage-thumbs">
+            <view wx:for="{{item.thumbs}}" wx:for-item="th" wx:key="label" class="thumb">
+              <view class="thumb-dot" style="background: {{th.css}}"></view>
+              <text class="thumb-label">{{th.label}}</text>
+            </view>
+          </view>
+        </view>
+        <view class="stage-btns" catchtap="noop">
+          <button class="mini-btn" size="mini" data-stage="{{item.index}}" bindtap="onMoveStageUp" disabled="{{item.index === 0}}">↑</button>
+          <button class="mini-btn" size="mini" data-stage="{{item.index}}" bindtap="onMoveStageDown" disabled="{{item.index === stages.length - 1}}">↓</button>
+          <button class="mini-btn del" size="mini" data-stage="{{item.index}}" bindtap="onDeleteStage">删</button>
+        </view>
+      </view>
+
+      <!-- 就地编辑 -->
+      <view wx:if="{{editStage && editStageIndex === item.index}}" class="stage-editor">
+        <view class="field-row">
+          <text class="k">停留时长 (ms)</text>
+          <input class="inp" type="number" value="{{editStage.durationMs}}" bindinput="onDurationInput" bindblur="onDurationBlur" />
+        </view>
+        <view class="field-row">
+          <text class="k">淡入 (ms，0 = 硬切)</text>
+          <input class="inp" type="number" value="{{editStage.fadeInMs}}" bindinput="onFadeInInput" bindblur="onFadeInBlur" />
+        </view>
+        <text wx:if="{{stageError}}" class="error">{{stageError}}</text>
+
+        <!-- 图层（背景 / 动态各 0 或 1） -->
+        <view wx:for="{{editStage.layers}}" wx:key="layerIndex" wx:for-item="layer" class="layer-box">
+          <view class="layer-head">
+            <text class="layer-title">{{layer.roleLabel}} · {{layer.effectLabel}}</text>
+            <view class="layer-btns" catchtap="noop">
+              <button class="mini-btn" size="mini" data-layer="{{layer.layerIndex}}" bindtap="onReplaceEffect">换灯效</button>
+              <button class="mini-btn del" size="mini" data-layer="{{layer.layerIndex}}" bindtap="onRemoveLayer">删层</button>
+            </view>
+          </view>
+
+          <!-- 参数面板（schema 生成） -->
+          <view wx:for="{{layer.panel}}" wx:key="name" wx:for-item="p" class="param-row">
+            <text class="k">{{p.label}}</text>
+
+            <view wx:if="{{p.view === 'color'}}" class="color-cell">
+              <view class="color-chip" style="background: {{p.css}}"></view>
+              <text class="color-hex">{{p.hex}}</text>
+              <button class="mini-btn" size="mini" data-layer="{{layer.layerIndex}}" data-param="{{p.name}}" bindtap="onOpenWheel">调色</button>
+            </view>
+
+            <slider wx:if="{{p.view === 'range'}}" class="param-slider" min="{{p.min}}" max="{{p.max}}"
+              value="{{p.value}}" block-size="12" activeColor="#60a5fa"
+              data-layer="{{layer.layerIndex}}" data-param="{{p.name}}" bindchange="onParamSlider" />
+            <text wx:if="{{p.view === 'range'}}" class="param-value">{{p.value}}</text>
+
+            <picker wx:if="{{p.view === 'enum'}}" mode="selector" range="{{p.options}}" value="{{p.value}}"
+              data-layer="{{layer.layerIndex}}" data-param="{{p.name}}" bindchange="onParamEnum">
+              <view class="enum-value">{{p.options[p.value]}}</view>
+            </picker>
+
+            <switch wx:if="{{p.view === 'bool'}}" checked="{{p.boolChecked}}" color="#60a5fa"
+              data-layer="{{layer.layerIndex}}" data-param="{{p.name}}" bindchange="onParamBool" />
+          </view>
+
+          <!-- 色环：色相环 + SV 面板 + hex/RGB 输入 -->
+          <view wx:if="{{wheel && wheel.layer === layer.layerIndex}}" class="wheel-box">
+            <view class="wheel-head">
+              <text class="wheel-title">调色 · {{wheel.hex}}</text>
+              <button class="mini-btn" size="mini" bindtap="onCloseWheel">收起</button>
+            </view>
+            <view
+              id="hue-ring"
+              class="hue-ring"
+              style="background: {{wheel.hueCss}}"
+              data-layer="{{layer.layerIndex}}"
+              bindtouchstart="onHueStart"
+              bindtouchmove="onHueMove"
+              bindtouchend="onHueEnd"
+            >
+              <view class="hue-arm" style="transform: rotate({{wheel.h}}deg)">
+                <view class="hue-handle"></view>
+              </view>
+            </view>
+            <view
+              id="sv-panel"
+              class="sv-panel"
+              style="background-color: {{wheel.hueCss}}"
+              data-layer="{{layer.layerIndex}}"
+              bindtouchstart="onSvStart"
+              bindtouchmove="onSvMove"
+              bindtouchend="onSvEnd"
+            >
+              <view class="sv-white"></view>
+              <view class="sv-black"></view>
+              <view class="sv-cursor" style="left: {{wheel.s * 100}}%; top: {{(1 - wheel.v) * 100}}%"></view>
+            </view>
+            <view class="wheel-inputs">
+              <input class="inp hex" value="{{wheel.hex}}" bindinput="onWheelHexInput" bindblur="onWheelHexBlur" />
+              <input class="inp rgb" type="number" value="{{wheel.r}}" data-part="r" bindinput="onWheelRgbInput" bindblur="onWheelRgbBlur" />
+              <input class="inp rgb" type="number" value="{{wheel.g}}" data-part="g" bindinput="onWheelRgbInput" bindblur="onWheelRgbBlur" />
+              <input class="inp rgb" type="number" value="{{wheel.b}}" data-part="b" bindinput="onWheelRgbInput" bindblur="onWheelRgbBlur" />
+            </view>
+          </view>
+        </view>
+
+        <!-- 加层：只列缺失 role 的清单 -->
+        <view wx:if="{{editStage.layers.length < 2}}" class="add-layer">
+          <button class="btn-ghost" wx:if="{{editStage.canAddBg}}" bindtap="onAddBgLayer">加背景层</button>
+          <button class="btn-ghost" wx:elif="{{editStage.canAddDy}}" bindtap="onAddDyLayer">加动态层</button>
+        </view>
+      </view>
+    </view>
+
+    <button wx:if="{{canAddStage}}" class="add-btn" bindtap="onAddStage">+ 加阶段</button>
+
+    <!-- 叠加预览条（§4.4：动态层亮 → 动态色；熄灭 → 透出背景层） -->
+    <view class="overlay-preview">
+      <text class="panel-sub">叠加预览 · {{previewLabel}}</text>
+      <view wx:if="{{previewPixels.length === 0}}" class="empty slim">{{previewLabel === '无阶段' ? '还没有阶段' : '本组还没有灯珠'}}</view>
+      <view wx:else class="preview-strip">
+        <view wx:for="{{previewPixels}}" wx:key="index" class="preview-px" style="background: {{item}}"></view>
+      </view>
+      <text class="hint">有亮度显动态层，熄灭透出背景层</text>
+    </view>
+  </view>
+
+  <!-- 灯效库（底部弹出，按 role 过滤：背景 0–4 / 动态 5–11） -->
+  <view wx:if="{{effectPicker.open}}" class="sheet-mask" bindtap="onCloseEffectPicker">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-title">选择{{effectPicker.roleLabel}}灯效</view>
+      <view
+        wx:for="{{effectPicker.choices}}"
+        wx:key="index"
+        wx:for-item="ch"
+        class="sheet-item {{ch.enabled ? '' : 'off'}}"
+        data-effect="{{ch.index}}"
+        bindtap="{{ch.enabled ? 'onPickEffect' : 'noop'}}"
+      >
+        <text>{{ch.name}}</text>
+        <text wx:if="{{!ch.enabled}}" class="choice-warn">{{ch.disabledReason}}</text>
+      </view>
+      <view class="sheet-cancel" catchtap="onCloseEffectPicker">取消</view>
+    </view>
+  </view>
+
+  <!-- 长按 tab 的编辑菜单（底部弹出） -->
+  <view wx:if="{{menuOpen}}" class="sheet-mask" bindtap="onMenuClose">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-item" data-action="rename" catchtap="onMenuAction">重命名</view>
+      <view class="sheet-item danger" data-action="delete" catchtap="onMenuAction">删除</view>
+      <view class="sheet-cancel" catchtap="onMenuClose">取消</view>
+    </view>
+  </view>
+
+  <!-- 重命名灯组 -->
+  <view wx:if="{{renameOpen}}" class="rename-mask" bindtap="onRenameCancel">
+    <view class="rename-panel" catchtap="noop">
+      <view class="rename-title">重命名灯组</view>
+      <input class="rename-input" value="{{renameDraft}}" bindinput="onRenameInput" focus />
+      <view class="rename-actions">
+        <button class="btn-ghost" bindtap="onRenameCancel">取消</button>
+        <button class="btn-primary" bindtap="onRenameConfirm">确认</button>
+      </view>
+    </view>
   </view>
 </view>

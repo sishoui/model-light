@@ -1,4 +1,5 @@
-const { createArrangement, createGroup, createStage, createLayer } = require('../arrangement');
+const { createArrangement, createGroup, createStage, createLayer, createRange } = require('../arrangement');
+const { LOOP_NONE, LOOP_LAST, LOOP_ALL } = require('../arrangement');
 const {
   FRAME_INTERVAL_MS,
   FPS,
@@ -280,6 +281,73 @@ describe('render-engine (wayfinder #64)', () => {
       expect([frame[0], frame[1], frame[2]]).toEqual([255, 0, 0]);
       for (let i = 3; i < 6; i += 1) {
         expect([frame[i * 3], frame[i * 3 + 1], frame[i * 3 + 2]]).toEqual([0, 0, 0]);
+      }
+    });
+  });
+
+  describe('循环模式 loopMode（#132）：NONE / LAST / ALL 渲染语义（与固件 mlarr_render 一致）', () => {
+    // 两阶段：1000ms 红 + 500ms 绿（fadeIn 100）→ 阶段内 t 可观测
+    function twoStage(loopMode) {
+      return createGroup({
+        ranges: [createRange({ start: 0, end: 1 })],
+        stages: [
+          solidLayer([255, 0, 0], { durationMs: 1000, fadeInMs: 0 }),
+          solidLayer([0, 255, 0], { durationMs: 500, fadeInMs: 100 }),
+        ],
+        loopMode,
+      });
+    }
+    function px(loopMode, clockMs) {
+      const arr = createArrangement();
+      arr.pins[0].length = 1;
+      arr.pins[0].groups = [twoStage(loopMode)];
+      const f = renderPinFrame(arr, 0, clockMs);
+      return [f[0], f[1], f[2]];
+    }
+
+    it('LOOP_ALL（默认 2）：整体回环，1500ms 回到阶段 0', () => {
+      expect(px(LOOP_ALL, 0)).toEqual([255, 0, 0]);
+      expect(px(LOOP_ALL, 999)).toEqual([255, 0, 0]);
+      expect(px(LOOP_ALL, 1000)).toEqual([0, 0, 0]);   // 阶段 1 t=0 淡入起点
+      expect(px(LOOP_ALL, 1050)).toEqual([0, 127, 0]);  // t=50 半绿
+      expect(px(LOOP_ALL, 1499)).toEqual([0, 255, 0]);
+      expect(px(LOOP_ALL, 1500)).toEqual([255, 0, 0]);  // 回环到阶段 0
+    });
+
+    it('LOOP_NONE（0）：播完一次冻结在末阶段最后一毫秒，不回环', () => {
+      expect(px(LOOP_NONE, 0)).toEqual([255, 0, 0]);
+      expect(px(LOOP_NONE, 999)).toEqual([255, 0, 0]);
+      expect(px(LOOP_NONE, 1000)).toEqual([0, 0, 0]);   // 阶段 1 t=0 淡入起点
+      expect(px(LOOP_NONE, 1050)).toEqual([0, 127, 0]);  // t=50 半绿
+      expect(px(LOOP_NONE, 1499)).toEqual([0, 255, 0]);
+      expect(px(LOOP_NONE, 1500)).toEqual([0, 255, 0]);  // 冻结：末阶段 t=499 全绿
+      expect(px(LOOP_NONE, 99999)).toEqual([0, 255, 0]); // 永远不回阶段 0
+    });
+
+    it('LOOP_LAST（1）：前 n-1 阶段播一次后停在末阶段循环，不回阶段 0', () => {
+      expect(px(LOOP_LAST, 0)).toEqual([255, 0, 0]);
+      expect(px(LOOP_LAST, 999)).toEqual([255, 0, 0]);
+      expect(px(LOOP_LAST, 1000)).toEqual([0, 0, 0]);   // 阶段 1 t=0 淡入起点
+      expect(px(LOOP_LAST, 1050)).toEqual([0, 127, 0]);  // t=50 半绿
+      expect(px(LOOP_LAST, 1499)).toEqual([0, 255, 0]);
+      expect(px(LOOP_LAST, 1500)).toEqual([0, 0, 0]);   // 末阶段重启 t=0 淡入
+      expect(px(LOOP_LAST, 99999)).not.toEqual([255, 0, 0]); // 永不回阶段 0
+    });
+
+    it('n==1 时 LOOP_LAST 等价于 LOOP_ALL', () => {
+      const one = (loopMode, clockMs) => {
+        const arr = createArrangement();
+        arr.pins[0].length = 1;
+        arr.pins[0].groups = [createGroup({
+          ranges: [createRange({ start: 0, end: 1 })],
+          stages: [solidLayer([0, 0, 255], { durationMs: 500, fadeInMs: 0 })],
+          loopMode,
+        })];
+        const f = renderPinFrame(arr, 0, clockMs);
+        return [f[0], f[1], f[2]];
+      };
+      for (const t of [0, 250, 500, 750, 1000, 12345]) {
+        expect(one(LOOP_LAST, t)).toEqual(one(LOOP_ALL, t));
       }
     });
   });

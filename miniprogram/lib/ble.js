@@ -22,11 +22,24 @@ function call(wxApi, name, options) {
   });
 }
 
+// 模拟模式开关（storage: mock:enabled）。仅当 wx 提供 getStorageSync 时生效。
+function isMockEnabled(wxApi) {
+  try {
+    return !!(wxApi && typeof wxApi.getStorageSync === 'function' && wxApi.getStorageSync('mock:enabled'));
+  } catch (e) {
+    return false;
+  }
+}
+
 /**
  * 创建一个面向单设备的 BLE 会话。
  * 不缓存 deviceId 到持久存储（§2.7）：deviceId 只在本会话内存中有效。
  */
 function createBleClient(wxApi) {
+  // 模拟模式：无真机时返回 mock 客户端（见 lib/mock-ble.js）。开关在 storage: mock:enabled。
+  if (isMockEnabled(wxApi)) {
+    return require('./mock-ble').createMockBleClient(wxApi);
+  }
   let deviceId = null;        // 仅内存，会话结束即弃
   let connected = false;
   let notifyBound = null;
@@ -42,7 +55,7 @@ function createBleClient(wxApi) {
   }
 
   /** 扫描并按广播名 ML-XXXX 过滤（§2.7：微信只能按服务 UUID 过滤，其余在此做） */
-  async function scan(onDeviceFound, { timeoutMs = 10000 } = {}) {
+  async function scan(onDeviceFound, { timeoutMs = 10000, serviceFilter = true } = {}) {
     await openAdapter();
     const found = new Map(); // name -> ad，同一次扫描内去重
     const handler = (res) => {
@@ -55,8 +68,9 @@ function createBleClient(wxApi) {
       }
     };
     wxApi.onBluetoothDeviceFound(handler);
+    // §2.7：默认按服务 UUID 过滤；serviceFilter=false 时全量扫描，由 JS 层按广播名过滤（#109）
     await call(wxApi, 'startBluetoothDevicesDiscovery', {
-      services: [SERVICE_UUID], // §2.7：按服务 UUID 过滤
+      ...(serviceFilter ? { services: [SERVICE_UUID] } : {}),
       allowDuplicatesKey: false,
     });
     return {

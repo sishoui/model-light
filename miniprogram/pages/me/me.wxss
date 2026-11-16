@@ -1,8 +1,0 @@
-/* 我的页：新拟物化（居中卡片 + 柔和双阴影） */
-.page { padding: 40rpx; background: #e0e5ec; min-height: 100vh;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.card { background: #ffffff; border-radius: 24rpx; padding: 48rpx 64rpx;
-  box-shadow: 6rpx 6rpx 12rpx #cfd6e0, -6rpx -6rpx 12rpx #ffffff; text-align: center; }
-.title { font-size: 40rpx; font-weight: 700; color: #4a5568; margin-bottom: 8rpx; display: block; }
-.hint { font-size: 28rpx; color: #8a94a6; margin-bottom: 16rpx; display: block; }
-.meta { font-size: 24rpx; color: #8a94a6; display: block; }

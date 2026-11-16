@@ -20,3 +20,6 @@
 .row { display: flex; justify-content: space-between; margin-top: 8rpx; font-size: 26rpx; }
 .msg { display: block; margin-top: 16rpx; font-size: 26rpx; color: #d66a6a; }
 .msg.muted, .muted { color: #8a94a6; }
+.back { margin-left: auto; font-size: 26rpx; color: #60a5fa; }
+.hint-bar { margin-top: 16rpx; background: #fdf3e3; color: #b45309; padding: 16rpx 24rpx;
+  border-radius: 16rpx; font-size: 26rpx; }

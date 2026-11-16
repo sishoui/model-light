@@ -130,7 +130,7 @@ static size_t build_valid(uint8_t *buf)
 {
     size_t i = 0;
     put_u16(buf + i, 7); i += 2;              /* version */
-    put_u16(buf + i, MLARR_PAYLOAD_VERSION); i += 2;
+    put_u16(buf + i, MLARR_PAYLOAD_VERSION_V1); i += 2; /* v1 fixture: byte-identical */
     buf[i++] = 8;                             /* pinCount */
 
     /* pin 0 */
@@ -151,6 +151,46 @@ static size_t build_valid(uint8_t *buf)
     buf[i++] = 20; buf[i++] = 30; buf[i++] = 0;
     i += enc_stage(buf + i, 500, 100, MLARR_ROLE_DY, 0x0006,
                    (const uint8_t *)"\xFF\x00\x00\x0A\x05\x14\x00", 7);
+
+    /* pins 1..7: empty */
+    for (int pin = 1; pin < 8; pin++) {
+        buf[i++] = 0;                          /* length */
+        memset(buf + i, 0, MLARR_NAME_LEN); i += MLARR_NAME_LEN;
+        buf[i++] = 0;                          /* group count */
+    }
+    return i;
+}
+
+/* v2 fixture: identical to build_valid except payloadVersion 2 and one
+ * loopMode byte appended after each group's stages (values differ per group
+ * so a mis-aligned read cannot pass unnoticed). 190 B. */
+static size_t build_valid_v2(uint8_t *buf, uint8_t loop0, uint8_t loop1)
+{
+    size_t i = 0;
+    put_u16(buf + i, 7); i += 2;              /* version */
+    put_u16(buf + i, MLARR_PAYLOAD_VERSION); i += 2;
+    buf[i++] = 8;                             /* pinCount */
+
+    /* pin 0 */
+    buf[i++] = 30;                            /* length */
+    memcpy(buf + i, "head", 5); i += 5;       /* name "head" + NUL */
+    memset(buf + i, 0, MLARR_NAME_LEN - 5); i += MLARR_NAME_LEN - 5;
+    buf[i++] = 2;                             /* group count */
+
+    /* group 0: two ranges, one stage, loopMode */
+    buf[i++] = 2; buf[i++] = 1;
+    buf[i++] = 0; buf[i++] = 10; buf[i++] = 0;
+    buf[i++] = 10; buf[i++] = 20; buf[i++] = 0;
+    i += enc_stage(buf + i, 1000, 0, MLARR_ROLE_BG, 0x0001,
+                   (const uint8_t *)"\xC8\xAA\x78", 3);
+    buf[i++] = loop0;
+
+    /* group 1: one range, one stage, loopMode */
+    buf[i++] = 1; buf[i++] = 1;
+    buf[i++] = 20; buf[i++] = 30; buf[i++] = 0;
+    i += enc_stage(buf + i, 500, 100, MLARR_ROLE_DY, 0x0006,
+                   (const uint8_t *)"\xFF\x00\x00\x0A\x05\x14\x00", 7);
+    buf[i++] = loop1;
 
     /* pins 1..7: empty */
     for (int pin = 1; pin < 8; pin++) {
@@ -183,7 +223,7 @@ static void test_decode_structure(void)
     ml_arrangement_t *a = malloc(sizeof *a);
     assert(mlarr_parse(buf, n, a) == MLARR_OK);
     assert(a->version == 7);
-    assert(a->payload_version == MLARR_PAYLOAD_VERSION);
+    assert(a->payload_version == MLARR_PAYLOAD_VERSION_V1);
     assert(a->pins[0].length == 30);
     assert(memcmp(a->pins[0].name, "head", 5) == 0); /* "head" + NUL pad */
     assert(a->pins[0].group_count == 2);
@@ -819,6 +859,136 @@ static size_t enc_stage_f3(size_t o, uint8_t *b, uint16_t dur, uint8_t fade,
     return enc_stage_hdr(o, b, dur, fade, layer_count);
 }
 
+/* ---- v1 → v2 loopMode: validation, parse, render ---- */
+
+static void test_v1_defaults_loop_all(void)
+{
+    uint8_t buf[256];
+    size_t n = build_valid(buf);
+    ml_arrangement_t a;
+    assert(mlarr_parse(buf, n, &a) == MLARR_OK);
+    assert(a.payload_version == MLARR_PAYLOAD_VERSION_V1);
+    assert(a.pins[0].groups[0].loop_mode == MLARR_LOOP_ALL);
+    assert(a.pins[0].groups[1].loop_mode == MLARR_LOOP_ALL);
+}
+
+static void test_v2_roundtrip(void)
+{
+    uint8_t buf[256];
+    size_t n = build_valid_v2(buf, MLARR_LOOP_ALL, MLARR_LOOP_LAST);
+    ml_arrangement_t a;
+    assert(mlarr_parse(buf, n, &a) == MLARR_OK);
+    assert(a.payload_version == MLARR_PAYLOAD_VERSION);
+    assert(a.pins[0].groups[0].loop_mode == MLARR_LOOP_ALL);
+    assert(a.pins[0].groups[1].loop_mode == MLARR_LOOP_LAST);
+
+    /* different loop modes per group decode to exactly what wire said */
+    size_t n2 = build_valid_v2(buf, MLARR_LOOP_NONE, MLARR_LOOP_LAST);
+    assert(mlarr_parse(buf, n2, &a) == MLARR_OK);
+    assert(a.pins[0].groups[0].loop_mode == MLARR_LOOP_NONE);
+    assert(a.pins[0].groups[1].loop_mode == MLARR_LOOP_LAST);
+}
+
+static void test_reject_bad_loop_mode(void)
+{
+    uint8_t buf[256];
+    size_t n = build_valid_v2(buf, 3, MLARR_LOOP_ALL);
+    ml_arrangement_t a;
+    memset(&a, 0, sizeof a);
+    assert(mlarr_parse(buf, n, &a) == MLARR_ERR_LIMITS);
+}
+
+static void test_render_loop_none_freezes_last_frame(void)
+{
+    /* stages: 1000 ms red, 500 ms green fadeIn 100; loop NONE: play once,
+     * freeze on the last stage's final millisecond (not black). */
+    uint8_t b[256];
+    size_t o = enc_header(0, b, 1, MLARR_PAYLOAD_VERSION, 1);
+    o = enc_pin_header(o, b, 1, 1);
+    o = enc_group_header(o, b, 1, 2);
+    o = enc_range(o, b, 0, 1, 0);
+    o = enc_stage_f3(o, b, 1000, 0, 1);
+    o = enc_layer_solid2(o, b, MLARR_ROLE_BG, 200, 0, 0);
+    o = enc_stage_f3(o, b, 500, 100, 1);
+    o = enc_layer_solid2(o, b, MLARR_ROLE_BG, 0, 200, 0);
+    b[o++] = MLARR_LOOP_NONE;
+    ml_arrangement_t a;
+    assert(mlarr_parse(b, o, &a) == MLARR_OK);
+    assert(a.pins[0].groups[0].loop_mode == MLARR_LOOP_NONE);
+
+    uint8_t rgb[3];
+    mlarr_render(&a, 0, 0, rgb, 1);
+    assert(rgb[0] == 200);                       /* stage 0 red */
+    mlarr_render(&a, 999, 0, rgb, 1);
+    assert(rgb[0] == 200);                       /* stage 0 tail */
+    mlarr_render(&a, 1000, 0, rgb, 1);
+    assert(rgb[1] == 0);                         /* stage 1 t=0 fade start */
+    mlarr_render(&a, 1050, 0, rgb, 1);
+    assert(rgb[1] == 99);                        /* t=50 fadeIn 100 → half green */
+    mlarr_render(&a, 1499, 0, rgb, 1);
+    assert(rgb[1] == 200);                       /* last stage full */
+    mlarr_render(&a, 1500, 0, rgb, 1);
+    assert(rgb[1] == 200);                       /* freeze at t=499 full */
+    mlarr_render(&a, 99999, 0, rgb, 1);
+    assert(rgb[0] == 0 && rgb[1] == 200);        /* never wraps to stage 0 */
+}
+
+static void test_render_loop_last_loops_last_stage_only(void)
+{
+    /* same stages, loop LAST: stages 0..n-2 once, last stage loops */
+    uint8_t b[256];
+    size_t o = enc_header(0, b, 1, MLARR_PAYLOAD_VERSION, 1);
+    o = enc_pin_header(o, b, 1, 1);
+    o = enc_group_header(o, b, 1, 2);
+    o = enc_range(o, b, 0, 1, 0);
+    o = enc_stage_f3(o, b, 1000, 0, 1);
+    o = enc_layer_solid2(o, b, MLARR_ROLE_BG, 200, 0, 0);
+    o = enc_stage_f3(o, b, 500, 100, 1);
+    o = enc_layer_solid2(o, b, MLARR_ROLE_BG, 0, 200, 0);
+    b[o++] = MLARR_LOOP_LAST;
+    ml_arrangement_t a;
+    assert(mlarr_parse(b, o, &a) == MLARR_OK);
+    assert(a.pins[0].groups[0].loop_mode == MLARR_LOOP_LAST);
+
+    uint8_t rgb[3];
+    mlarr_render(&a, 0, 0, rgb, 1);
+    assert(rgb[0] == 200);   /* stage 0 red */
+    mlarr_render(&a, 999, 0, rgb, 1);
+    assert(rgb[0] == 200);
+    mlarr_render(&a, 1000, 0, rgb, 1);
+    assert(rgb[1] == 0);     /* stage 1 t=0 fade start */
+    mlarr_render(&a, 1050, 0, rgb, 1);
+    assert(rgb[1] == 99);    /* t=50 half green */
+    mlarr_render(&a, 1499, 0, rgb, 1);
+    assert(rgb[1] == 200);   /* last stage full */
+    mlarr_render(&a, 1500, 0, rgb, 1);
+    assert(rgb[1] == 0);     /* last stage RESTARTS (t=0 fade start) */
+    mlarr_render(&a, 10050, 0, rgb, 1);
+    assert(rgb[0] == 0 && rgb[1] == 99); /* never back to stage 0 red */
+}
+
+static void test_rx_v2_commit(void)
+{
+    events_t ev = { 0 };
+    mlarr_rx_t *rx = mlarr_rx_new(ev_commit, ev_send, &ev, 1);
+    uint8_t buf[256];
+    size_t n = build_valid_v2(buf, MLARR_LOOP_NONE, MLARR_LOOP_LAST);
+    uint32_t crc = mlarr_crc32(buf, n);
+    uint32_t now = 0;
+    send_start(rx, now++, (uint16_t)n, 2, 1, 0, crc);   /* payloadVersion 2 */
+    uint16_t chunks = (uint16_t)((n + 19) / 20);
+    for (uint16_t c = 0; c < chunks; c++) {
+        uint16_t len = (uint16_t)((c == chunks - 1) ? n - c * 20 : 20);
+        send_data(rx, now++, c, buf + c * 20, len);
+    }
+    send_fin(rx, now);
+    assert(ev.committed_n == 1);
+    assert(ev.committed[0].len == n);
+    assert(ev.committed[0].version == 7);
+    assert(memcmp(ev.committed[0].buf, buf, n) == 0);
+    mlarr_rx_free(rx);
+}
+
 /* Build the minimal arrangement: pin 0, len 30, one group covering
  * [0,10) reversed + [20,25), one stage 1000 ms, one bg.solid red layer. */
 static size_t build_minimal(uint8_t *b)
@@ -1247,7 +1417,7 @@ static void test_render_role_enforced(void)
 static void test_render_perf_8pins(void)
 {
     uint8_t b[2048];
-    size_t o = enc_header(0, b, 1, MLARR_PAYLOAD_VERSION, 8);
+    size_t o = enc_header(0, b, 1, MLARR_PAYLOAD_VERSION_V1, 8);
     for (int pin = 0; pin < 8; pin++) {
         o = enc_pin_header(o, b, 100, 4);
         for (int gi = 0; gi < 4; gi++) {
@@ -1464,6 +1634,12 @@ int main(void)
     test_reject_range_out_of_pin();
     test_reject_bad_payload_version();
     test_reject_reversed_range();
+    test_v1_defaults_loop_all();
+    test_v2_roundtrip();
+    test_reject_bad_loop_mode();
+    test_render_loop_none_freezes_last_frame();
+    test_render_loop_last_loops_last_stage_only();
+    test_rx_v2_commit();
     test_rx_happy_path();
     test_rx_gap_then_nak_retransmit();
     test_rx_gap_nak_on_fin();
@@ -1489,7 +1665,7 @@ int main(void)
     test_scene_activate_load_fail();
     test_scene_activate_validation_fail_keeps_active();
     test_scene_activate_commit_fail();
-    /* 51 = 上面 test_*() 调用的数量（增删用例时同步更新）。 */
-    printf("all mlarr host tests passed (%d cases)\n", 51);
+    /* 57 = 上面 test_*() 调用的数量（增删用例时同步更新）。 */
+    printf("all mlarr host tests passed (%d cases)\n", 57);
     return 0;
 }

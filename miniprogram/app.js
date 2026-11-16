@@ -1,10 +1,6 @@
 // App 级状态：设备会话在页面间共享。
 // §2.7：不缓存 deviceId —— 只存广播名（跨会话稳定的设备身份），deviceId 每次会话重扫现取。
-
-const { createCloudAuth } = require('./lib/cloud-auth');
-const { createCloudApi } = require('./lib/cloud-api');
-const { createCloudSync, makeMemoryStorage } = require('./lib/cloud-sync');
-const { createUsageLog } = require('./lib/usage-log');
+// v2（#127）：去掉云端会话与静默登录，app 只保留本机已知设备缓存。
 
 App({
   onLaunch() {
@@ -13,62 +9,11 @@ App({
       knownDevices: wx.getStorageSync('knownDevices') || {}, // 名字可缓存，deviceId 不可
       currentDeviceName: null,
     };
-    // 云端会话（M7）：wx.login 静默登录，失败不影响本地功能
-    this._cloudStorage = makeMemoryStorage(); // 会话内内存态（重推标记/仅本地标记不跨启动）
-    this.cloudAuth = createCloudAuth({
-      requester: null, // 由 createCloudApi.rawRequest 接线（见下）
-      storage: wx,     // 令牌持久化进真实 storage（重启后仍可刷新）
-      loginCode: null,
-    });
-    this.cloudApi = createCloudApi({ wxApi: wx, auth: this.cloudAuth });
-    // 使用日志（spec 决策 #4）：HTTP 接缝走 cloudApi.rawRequest（{statusCode}，
-    // 网络错误抛出）；未配后端时 log()/flush() 返回 null 静默，不阻塞任何主流程。
-    this.usageLog = createUsageLog({
-      request: (url, body) => this.cloudApi.rawRequest({ method: 'POST', url, body }),
-    });
-    // requester 接到 wx.request 通道
-    this._rebuildCloudAuth();
-    this.silentLogin();
   },
 
-  /** 静默登录：wx.login 拿 code → 后端换令牌。任何失败都不阻塞本地。 */
-  silentLogin() {
-    wx.login({
-      success: (res) => {
-        if (!res.code) return;
-        this._cloudLoginCode = res.code;
-        this._rebuildCloudAuth();
-        this.cloudAuth.login().then((r) => {
-          if (r.ok) this.cloudSync.clearLocalOnly();
-        }).catch(() => { /* 仅本地 */ });
-      },
-      fail: () => { /* 未登录：全功能本地可用，只是不推备份 */ },
-    });
-  },
-
-  /** loginCode 变化后重建 auth（code 一次性） */
-  _rebuildCloudAuth() {
-    const api = this.cloudApi;
-    this.cloudAuth = createCloudAuth({
-      requester: (req) => api.rawRequest(req),
-      storage: wx,
-      loginCode: this._cloudLoginCode || null,
-    });
-    // cloudApi 在 onLaunch 里先于本次重建创建，捕获的是旧 auth；同步引用，
-    // 否则备份请求会打到 requester=null 的旧实例（E2E #87 发现）。
-    if (typeof api.setAuth === 'function') api.setAuth(this.cloudAuth);
-    this.cloudSync = createCloudSync({
-      cloudApi: api,
-      auth: this.cloudAuth,
-      storage: this._cloudStorage,
-    });
-  },
-
-  /** onAppShow：用缓存 deviceId 直连而不重扫（§2.5）；并补报使用日志待发记录 */
+  /** onAppShow：用缓存 deviceId 直连而不重扫（§2.5） */
   onAppShow() {
     if (this._reconnectHook) this._reconnectHook();
-    // usage-log：前台 fire-and-forget flush（lib 内部已吞请求错误，兜底防未处理拒绝）
-    if (this.usageLog) this.usageLog.flush().catch(() => {});
   },
 
   /** 记住一个设备（只记名字，deviceId 由当前会话在内存中引用） */

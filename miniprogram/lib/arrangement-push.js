@@ -5,9 +5,10 @@
 const { crc32 } = require('./crc32');
 const { createArrangementSender } = require('./arrangement-sender');
 const { createTokenClient } = require('./token-client');
+const { PAYLOAD_VERSION } = require('./arrangement');
 
 const PROTO_MAJOR = 1;
-const PROTO_MINOR = 0;
+const PROTO_MINOR = 1;
 
 function defaultSleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -30,7 +31,7 @@ async function pushArrangement(ble, { chunkSize, payloadBytes, version, getStatu
   try {
     const sender = createArrangementSender(transport || ble, { chunkSize });
   const result = await sender.send({
-    payloadVersion: 1,
+    payloadVersion: PAYLOAD_VERSION,
     protoMajor: PROTO_MAJOR,
     protoMinor: PROTO_MINOR,
     data: payloadBytes,

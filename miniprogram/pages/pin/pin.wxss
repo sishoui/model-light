@@ -1,27 +1,157 @@
-/* 引脚编辑页：新拟物化（#e0e5ec 底 / #ffffff 卡片 / 柔和双阴影 / 强调 #60a5fa） */
-.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; }
+/* 引脚页 v2（#130）样式 — 新拟物：底 #e0e5ec / 卡片 #ffffff / 柔和双阴影 / 强调 #60a5fa。
+   结构：顶栏 → 灯组 tab 行 → 方格矩阵 → #131 内容槽 → 长按菜单 → 重命名弹层。 */
+
+.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; box-sizing: border-box; }
+
+/* 顶栏 */
+.topbar { background: #ffffff; border-radius: 24rpx; padding: 24rpx; margin-bottom: 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.name { font-size: 36rpx; font-weight: 700; color: #4a5568; }
+.meta { margin-top: 16rpx; color: #8a94a6; font-size: 26rpx; }
+.badge { font-size: 24rpx; color: #3b82f6; }
+.pending { margin-top: 10rpx; color: #b45309; font-size: 24rpx; font-weight: 600; }
+
+/* 灯组 tab 行（横向滚动，末尾「+」） */
+.tab-bar { margin-bottom: 16rpx; white-space: nowrap; }
+.tab { display: inline-block; color: #8a94a6; font-size: 28rpx; font-weight: 500;
+  padding: 0 22rpx; height: 72rpx; line-height: 72rpx; border-radius: 36rpx;
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.tab + .tab { margin-left: 10rpx; }
+.tab.on { color: #ffffff; background: #60a5fa; font-weight: 600;
+  box-shadow: inset 2rpx 2rpx 4rpx #2563eb, inset -2rpx -2rpx 4rpx #7bb8ff; }
+.tab-add { color: #60a5fa; font-size: 36rpx; font-weight: 700; padding: 0 26rpx; }
+.tab-add.off { color: #cbd5e1; pointer-events: none; }
+
+/* 卡片与矩阵头 */
 .panel { background: #ffffff; border-radius: 24rpx; padding: 24rpx; margin-bottom: 24rpx;
   box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff; }
-.panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 16rpx; }
-.field { margin-bottom: 20rpx; }
-.k { color: #8a94a6; font-size: 24rpx; display: block; margin-bottom: 8rpx; }
-.input { background: #ffffff; color: #4a5568; border: none; border-radius: 12rpx; padding: 12rpx 20rpx; font-size: 28rpx;
-  box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.save-btn { margin-top: 16rpx; background: #ffffff; color: #60a5fa; font-size: 24rpx; font-weight: 600;
-  border-radius: 14rpx; border: none;
-  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
-.save-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.error { color: #d66a6a; font-size: 24rpx; }
-.group-row { display: flex; align-items: center; justify-content: space-between; padding: 16rpx 0; border-bottom: 1rpx solid #e6eaf0; }
-.group-row:last-child { border-bottom: none; }
-.group-info { flex: 1; }
-.group-name { color: #4a5568; font-size: 28rpx; display: block; }
-.group-meta { color: #8a94a6; font-size: 24rpx; }
-.del-btn { background: #ffffff; color: #d66a6a; font-size: 22rpx; border: none; border-radius: 12rpx;
+.matrix-panel { margin-top: 0; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16rpx; }
+.panel-title { color: #4a5568; font-size: 30rpx; font-weight: 600; }
+.counts { color: #8a94a6; font-size: 24rpx; }
+
+/* 方格矩阵（每格一颗灯珠，三态：黑空心 / 蓝实心 / 灰实心） */
+.matrix { display: flex; flex-direction: column; gap: 8rpx; }
+.matrix-row { display: flex; gap: 8rpx; margin-bottom: 6rpx; }
+.cell {
+  box-sizing: border-box; border-radius: 10rpx;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff;
+}
+.cell-label { font-size: 20rpx; line-height: 1; font-weight: 600; color: #8a94a6; }
+.cell-selected .cell-label { color: #ffffff; }
+.cell-other .cell-label { color: #f4f6f9; }
+.cell-free { background: #ffffff; border: 2rpx solid #8a94a6; } /* 黑空心：未分配 */
+.cell-selected { background: #60a5fa; border-color: #2563eb; } /* 本组已选 */
+.cell-other { background: #b9c0cc; border-color: #94a3b8; opacity: 0.95; } /* 他组占用 */
+.in-box { box-shadow: inset 0 0 0 4rpx #2563eb; }
+
+.empty { color: #8a94a6; font-size: 26rpx; padding: 40rpx 0; text-align: center; }
+.hint { color: #b4b8c0; font-size: 22rpx; margin-top: 10rpx; text-align: center; }
+
+/* 长按编辑菜单（底部弹出） */
+.sheet-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 50;
+  display: flex; align-items: flex-end; }
+.sheet { width: 100%; background: #e0e5ec; border-radius: 28rpx 28rpx 0 0;
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom)); }
+.sheet-item { text-align: center; color: #4a5568; font-size: 30rpx; padding: 30rpx 0; border-bottom: 1rpx solid #cfd6e0; }
+.sheet-item.danger { color: #d66a6a; }
+.sheet-cancel { text-align: center; color: #8a94a6; font-size: 28rpx; padding: 24rpx 0; }
+
+/* 重命名弹层 */
+.rename-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 60;
+  display: flex; align-items: center; justify-content: center; }
+.rename-panel { width: 600rpx; background: #ffffff; border-radius: 24rpx; padding: 32rpx;
+  box-shadow: 8rpx 8rpx 16rpx #b9c4d4, -8rpx -8rpx 16rpx #ffffff; }
+.rename-title { color: #4a5568; font-size: 30rpx; font-weight: 600; margin-bottom: 20rpx; }
+.rename-input { background: #e0e5ec; border-radius: 16rpx; padding: 20rpx; font-size: 28rpx; color: #4a5568; }
+.rename-actions { display: flex; gap: 20rpx; margin-top: 28rpx; }
+.btn-ghost, .btn-primary { flex: 1; height: 80rpx; line-height: 80rpx; border: none; border-radius: 40rpx;
+  font-size: 28rpx; font-weight: 600; }
+.btn-ghost { background: #ffffff; color: #8a94a6; box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
+.btn-primary { background: #60a5fa; color: #ffffff; }
+
+/* ---- #131 阶段与双层灯效 ---- */
+.stage-card { border-radius: 16rpx; padding: 16rpx; margin-bottom: 12rpx; background: #f4f6f9;
+  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
+.stage-card.on { background: #eef4ff; box-shadow: inset 0 0 0 2rpx #60a5fa; }
+.stage-row { display: flex; align-items: center; gap: 16rpx; }
+.stage-no { width: 56rpx; height: 56rpx; line-height: 56rpx; text-align: center; border-radius: 50%;
+  background: #60a5fa; color: #ffffff; font-size: 28rpx; font-weight: 600; flex: none; }
+.stage-info { flex: 1; min-width: 0; }
+.stage-meta { color: #4a5568; font-size: 26rpx; }
+.stage-thumbs { display: flex; flex-wrap: wrap; gap: 8rpx 16rpx; margin-top: 8rpx; }
+.thumb { display: flex; align-items: center; gap: 8rpx; }
+.thumb-dot { width: 24rpx; height: 24rpx; border-radius: 50%; flex: none;
+  box-shadow: inset 1rpx 1rpx 2rpx #cfd6e0; }
+.thumb-label { color: #8a94a6; font-size: 22rpx; }
+.stage-btns { display: flex; gap: 8rpx; flex: none; }
+.mini-btn { margin: 0; padding: 0 16rpx; height: 52rpx; line-height: 52rpx; font-size: 22rpx;
+  border-radius: 26rpx; background: #ffffff; color: #8a94a6;
+  box-shadow: 2rpx 2rpx 4rpx #cfd6e0, -2rpx -2rpx 4rpx #ffffff; }
+.mini-btn[disabled] { color: #cbd5e1; }
+.mini-btn.del { color: #d66a6a; }
+.add-btn { margin-top: 16rpx; background: #60a5fa; color: #ffffff; font-size: 28rpx; border-radius: 40rpx; }
+.error { color: #d66a6a; font-size: 24rpx; margin-top: 8rpx; display: block; }
+
+.stage-editor { margin-top: 16rpx; border-top: 1rpx dashed #cfd6e0; padding-top: 16rpx; }
+.field-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12rpx; gap: 16rpx; }
+.k { color: #4a5568; font-size: 26rpx; flex: none; }
+.inp { background: #e0e5ec; border-radius: 12rpx; padding: 8rpx 16rpx; font-size: 26rpx;
+  color: #4a5568; min-width: 160rpx; text-align: right; }
+
+.layer-box { background: #ffffff; border-radius: 16rpx; padding: 16rpx; margin-bottom: 12rpx;
   box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
-.del-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
-.empty { color: #8a94a6; font-size: 26rpx; padding: 24rpx 0; }
-.add-btn { margin-top: 20rpx; background: #ffffff; color: #60a5fa; font-size: 26rpx; font-weight: 600;
-  border-radius: 16rpx; border: none;
-  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
-.add-btn:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
+.layer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8rpx; }
+.layer-title { color: #4a5568; font-size: 26rpx; font-weight: 600; }
+.layer-btns { display: flex; gap: 8rpx; }
+.param-row { display: flex; align-items: center; gap: 16rpx; padding: 8rpx 0; }
+.param-slider { flex: 1; margin: 0 8rpx; }
+.param-value { color: #8a94a6; font-size: 24rpx; width: 72rpx; text-align: right; flex: none; }
+.enum-value { background: #e0e5ec; border-radius: 12rpx; padding: 8rpx 16rpx; color: #4a5568;
+  font-size: 26rpx; flex: 1; }
+.color-cell { display: flex; align-items: center; gap: 12rpx; flex: 1; }
+.color-chip { width: 48rpx; height: 48rpx; border-radius: 12rpx; border: 2rpx solid #cfd6e0; }
+.color-hex { color: #8a94a6; font-size: 24rpx; font-family: monospace; }
+
+.wheel-box { margin-top: 12rpx; background: #f4f6f9; border-radius: 16rpx; padding: 16rpx; }
+.wheel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12rpx; }
+.wheel-title { color: #4a5568; font-size: 26rpx; }
+.hue-ring { position: relative; width: 240rpx; height: 240rpx; border-radius: 50%; margin: 0 auto 16rpx;
+  background-image: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
+.hue-arm { position: absolute; inset: 0; }
+.hue-handle { position: absolute; top: -10rpx; left: 50%; width: 28rpx; height: 28rpx; margin-left: -14rpx;
+  border-radius: 50%; background: #ffffff; border: 4rpx solid #4a5568; box-sizing: border-box; }
+.sv-panel { position: relative; width: 100%; height: 320rpx; border-radius: 12rpx; overflow: hidden;
+  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0; }
+.sv-white { position: absolute; inset: 0; background: linear-gradient(to right, #ffffff, rgba(255, 255, 255, 0)); }
+.sv-black { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, 0), #000000); }
+.sv-cursor { position: absolute; width: 24rpx; height: 24rpx; border: 4rpx solid #ffffff; border-radius: 50%;
+  margin-left: -12rpx; margin-top: -12rpx; box-shadow: 0 0 4rpx rgba(0, 0, 0, 0.6); }
+.wheel-inputs { display: flex; gap: 12rpx; margin-top: 16rpx; }
+.wheel-inputs .hex { flex: 2; }
+.wheel-inputs .rgb { flex: 1; min-width: 0; text-align: center; }
+
+.add-layer { margin-top: 8rpx; }
+.add-layer .btn-ghost { width: 100%; }
+
+.overlay-preview { margin-top: 24rpx; border-top: 1rpx dashed #cfd6e0; padding-top: 16rpx; }
+.panel-sub { color: #4a5568; font-size: 26rpx; font-weight: 600; }
+.preview-strip { display: flex; flex-wrap: wrap; gap: 6rpx; margin-top: 12rpx; }
+.preview-px { width: 40rpx; height: 40rpx; border-radius: 8rpx;
+  box-shadow: inset 1rpx 1rpx 2rpx rgba(0, 0, 0, 0.15); }
+.empty.slim { padding: 20rpx 0; }
+
+/* #132 循环模式三选一（segmented） */
+.loop-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-bottom: 16rpx; }
+.segmented { display: flex; gap: 8rpx; }
+.seg { padding: 0 20rpx; height: 56rpx; line-height: 56rpx; border-radius: 28rpx; font-size: 24rpx;
+  color: #8a94a6; background: #ffffff;
+  box-shadow: 2rpx 2rpx 4rpx #cfd6e0, -2rpx -2rpx 4rpx #ffffff; }
+.seg.on { color: #ffffff; background: #60a5fa; font-weight: 600;
+  box-shadow: inset 2rpx 2rpx 4rpx #2563eb, inset -2rpx -2rpx 4rpx #7bb8ff; }
+.sheet-title { text-align: center; color: #4a5568; font-size: 28rpx; font-weight: 600; padding: 16rpx 0 8rpx; }
+.sheet-item.off { color: #b4b8c0; }
+.choice-warn { display: block; color: #b45309; font-size: 22rpx; }

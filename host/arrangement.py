@@ -10,6 +10,7 @@ PC 端（代替手机侧）的编排 TLV 编解码、CRC32、版本兼容检查�
     Arrangement := version(u16) payloadVersion(u16) pinCount(u8) Pin[pinCount]
     Pin         := length(u8) name(16B) groupCount(u8) Group[groupCount]
     Group       := rangeCount(u8) stageCount(u8) Range[...] Stage[...]
+                   [loopMode(u8)]   # 仅 payloadVersion >= 2
     Range       := start(u8) end(u8) reverse(u8)
     Stage       := durationMs(u16) fadeInMs(u8) layerCount(u8) Layer[...]
     Layer       := role(u8) effectId(u16) paramLen(u8) paramBytes[...]
@@ -39,6 +40,10 @@ __all__ = [
     "MAX_LAYERS",
     "MAX_PARAMS",
     "PAYLOAD_VERSION",
+    "SUPPORTED_PAYLOAD_VERSIONS",
+    "LOOP_NONE",
+    "LOOP_LAST",
+    "LOOP_ALL",
     "ROLE_BG",
     "ROLE_DY",
     "ArrangementError",
@@ -70,7 +75,12 @@ MAX_GROUPS = 8
 MAX_STAGES = 8
 MAX_LAYERS = 2
 MAX_PARAMS = 16
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 2
+SUPPORTED_PAYLOAD_VERSIONS = frozenset({1, 2})
+
+LOOP_NONE = 0  # 不循环：播完一次冻结在末阶段最后一毫秒
+LOOP_LAST = 1  # 末步循环：前 n-1 阶段播一次后停在末阶段循环
+LOOP_ALL = 2   # 全部循环：v1 缺省行为
 
 ROLE_BG = 0
 ROLE_DY = 1
@@ -149,6 +159,7 @@ class Group:
 
     ranges: List[Range] = field(default_factory=list)
     stages: List[Stage] = field(default_factory=list)
+    loop_mode: int = LOOP_ALL
 
     def __post_init__(self) -> None:
         if not self.ranges:
@@ -163,6 +174,8 @@ class Group:
             raise ArrangementError(
                 f"阶段数超上限 {MAX_STAGES}: {len(self.stages)}", code="LIMITS"
             )
+        if self.loop_mode not in (LOOP_NONE, LOOP_LAST, LOOP_ALL):
+            raise ArrangementError(f"loopMode 非法: {self.loop_mode}", code="LIMITS")
 
     def total_duration_ms(self) -> int:
         return sum(s.duration_ms for s in self.stages)
@@ -313,13 +326,15 @@ def validate_structure(arr: Arrangement) -> None:
 def validate(arr: Arrangement, *, check_version: bool = True) -> None:
     """完整校验：结构 + 版本兼容。
 
-    - check_version=True 且 payload_version != PAYLOAD_VERSION 时抛错。
+    - check_version=True 且 payload_version 不在 SUPPORTED_PAYLOAD_VERSIONS 时抛错。
     - 像素互斥由 validate_structure 完成。
+    - loopMode 由 Group.__post_init__ 校验（0/1/2）。
     """
     validate_structure(arr)
-    if check_version and arr.payload_version != PAYLOAD_VERSION:
+    if check_version and arr.payload_version not in SUPPORTED_PAYLOAD_VERSIONS:
         raise ArrangementError(
-            f"payloadVersion 不兼容: {arr.payload_version} != {PAYLOAD_VERSION}",
+            f"payloadVersion 不兼容: {arr.payload_version} "
+            f"不在 {sorted(SUPPORTED_PAYLOAD_VERSIONS)}",
             code="VERSION",
         )
 
@@ -364,6 +379,8 @@ def encode(arr: Arrangement) -> bytes:
                     u16(l.effect_id)
                     u8(len(l.params))
                     out.extend(l.params)
+            if arr.payload_version >= 2:
+                u8(g.loop_mode)
 
     return bytes(out)
 
@@ -465,7 +482,16 @@ def decode(data: bytes) -> Arrangement:
                     Stage(duration_ms=duration_ms, fade_in_ms=fade_in_ms, layers=layers)
                 )
 
-            groups.append(Group(ranges=ranges, stages=stages))
+            if payload_version >= 2:
+                loop_mode = rd_u8()
+                if loop_mode > LOOP_ALL:
+                    raise ArrangementError(
+                        f"loopMode 越界: {loop_mode}", code="LIMITS"
+                    )
+            else:
+                loop_mode = LOOP_ALL  # v1 缺省全部循环
+
+            groups.append(Group(ranges=ranges, stages=stages, loop_mode=loop_mode))
 
         pins.append(Pin(length=length, name=name, groups=groups))
 

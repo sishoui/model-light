@@ -13,7 +13,11 @@ const { SCHEMA_VERSION } = require('./effect-schema');
 
 const PIN_COUNT = 8;
 const NAME_BYTES = 16;
-const PAYLOAD_VERSION = 1;
+const PAYLOAD_VERSION = 2;
+
+const LOOP_NONE = 0; // 不循环：播完一次冻结在末阶段最后一毫秒
+const LOOP_LAST = 1; // 末步循环：前 n-1 阶段播一次后停在末阶段循环
+const LOOP_ALL = 2;  // 全部循环：v1 缺省行为
 
 const MAX_RANGES = 4;
 const MAX_GROUPS = 8;
@@ -78,11 +82,15 @@ function createStage({ durationMs = 1000, fadeInMs = 0, layers = [] } = {}) {
   return { durationMs, fadeInMs, layers: layers.map((l) => ({ ...l, params: [...l.params] })) };
 }
 
-function createGroup({ ranges = [], stages = [] } = {}) {
-  return { ranges: ranges.map((r) => ({ ...r })), stages: stages.map((s) => ({
-    ...s,
-    layers: s.layers.map((l) => ({ ...l, params: [...l.params] })),
-  })) };
+function createGroup({ ranges = [], stages = [], loopMode = LOOP_ALL } = {}) {
+  return {
+    ranges: ranges.map((r) => ({ ...r })),
+    stages: stages.map((s) => ({
+      ...s,
+      layers: s.layers.map((l) => ({ ...l, params: [...l.params] })),
+    })),
+    loopMode,
+  };
 }
 
 function createPin({ length = 0, name = '' } = {}) {
@@ -115,6 +123,9 @@ function validateStructure(arr) {
       if (g.ranges.length > MAX_RANGES) throw new Error(`pin[${pi}].group[${gi}] 区间数超上限`);
       if (g.stages.length === 0) throw new Error(`pin[${pi}].group[${gi}] 无阶段`);
       if (g.stages.length > MAX_STAGES) throw new Error(`pin[${pi}].group[${gi}] 阶段数超上限`);
+      if (g.loopMode != null && g.loopMode !== LOOP_NONE && g.loopMode !== LOOP_LAST && g.loopMode !== LOOP_ALL) {
+        throw new Error(`pin[${pi}].group[${gi}] loopMode 非法: ${g.loopMode}`);
+      }
       g.ranges.forEach((r, ri) => {
         if (r.start == null || r.end == null || r.end < r.start || r.end > pin.length) {
           throw new Error(`pin[${pi}].group[${gi}].range[${ri}] 越界: [${r.start}, ${r.end})`);
@@ -183,6 +194,9 @@ function encode(arr) {
           l.params.forEach((p) => u8(p));
         });
       });
+      if ((arr.payloadVersion ?? PAYLOAD_VERSION) >= 2) {
+        u8(g.loopMode ?? LOOP_ALL);
+      }
     });
   });
   return out;
@@ -256,7 +270,12 @@ function decode(bytes) {
         }
         stages.push(createStage({ durationMs, fadeInMs, layers }));
       }
-      groups.push(createGroup({ ranges, stages }));
+      let loopMode = LOOP_ALL;
+      if (payloadVersion >= 2) {
+        loopMode = rdU8();
+        if (loopMode > LOOP_ALL) throw new Error(`loopMode 越界: ${loopMode}`);
+      }
+      groups.push(createGroup({ ranges, stages, loopMode }));
     }
     pins.push(createPin({ length, name }));
     pins[p].groups = groups;
@@ -306,4 +325,5 @@ module.exports = {
   encode, decode, getOccupiedPixels, getUncoveredPixels, isPixelCovered, totalDurationMs,
   utf8Len,
   PAYLOAD_VERSION, PIN_COUNT, NAME_BYTES, SCHEMA_VERSION_REF: SCHEMA_VERSION,
+  LOOP_NONE, LOOP_LAST, LOOP_ALL,
 };
