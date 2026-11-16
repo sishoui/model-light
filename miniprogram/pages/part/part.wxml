@@ -1,9 +1,0 @@
-<view class="page">
-  <view class="panel">
-    <view class="panel-title">引脚总览（8 引脚，点行进引脚页）</view>
-    <view wx:for="{{pins}}" wx:key="index" class="pin-row" data-pin="{{item.index}}" bindtap="onTapPin">
-      <text class="pin-name">{{item.name}}</text>
-      <text class="pin-meta">{{item.length}} 珠 · {{item.groupCount}} 灯组 · {{item.totalDuration}} ms</text>
-    </view>
-  </view>
-</view>

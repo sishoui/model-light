@@ -1,40 +1,33 @@
-// 页面导航骨架 — 决策 #5（页面结构与 tabBar）
+// 页面导航骨架 — v2 收敛（#127）：去掉 me tabBar 与已删页面（scene / preview / part / device-info）。
 // 纯函数，无 wx 依赖，Node/vitest 可单测。
 
-// tabBar 两个 tab：home/设备、me/我的
-const TABS = [
-  { id: 'home', title: '设备', path: '/pages/discover/discover' },
-  { id: 'me', title: '我的', path: '/pages/me/me' },
-];
-
-// 新增三页：discover、device-info、part
+// v2 保留的六页：设备列表首页 / 设备 / 引脚 / 灯组 / 阶段 / OTA
 const PAGES = {
   discover: { id: 'discover', title: '发现设备', path: '/pages/discover/discover' },
-  'device-info': { id: 'device-info', title: '设备信息', path: '/pages/device-info/device-info' },
-  part: { id: 'part', title: '部件/引脚', path: '/pages/part/part' },
+  device: { id: 'device', title: '设备', path: '/pages/device/device' },
+  pin: { id: 'pin', title: '引脚', path: '/pages/pin/pin' },
+  group: { id: 'group', title: '灯组', path: '/pages/group/group' },
+  stage: { id: 'stage', title: '阶段', path: '/pages/stage/stage' },
+  ota: { id: 'ota', title: '固件升级', path: '/pages/ota/ota' },
 };
 
-// 交互骨架：设备列表 → 设备详情 → 8 引脚（可命名） → 灯组 → 阶段 → 双层灯效 + 时长
+// 交互骨架：设备列表 → 设备 → 8 引脚（可命名） → 灯组 → 阶段 → OTA
 const PIN_COUNT = 8;
 
 const INTERACTION_SKELETON = [
-  { id: 'device-list', title: '设备列表', path: '/pages/devices/devices' },
-  { id: 'device-detail', title: '设备详情', path: '/pages/device-info/device-info' },
+  { id: 'devices', title: '设备列表', path: '/pages/discover/discover' },
+  { id: 'device', title: '设备', path: '/pages/device/device' },
   { id: 'pins', title: '8 引脚（可命名）', path: '/pages/pin/pin' },
   { id: 'light-groups', title: '灯组', path: '/pages/group/group' },
   { id: 'stages', title: '阶段', path: '/pages/stage/stage' },
-  { id: 'effects', title: '双层灯效 + 时长', path: '/pages/preview/preview' },
+  { id: 'ota', title: '固件升级', path: '/pages/ota/ota' },
 ];
 
 const STEP_INDEX = new Map();
 INTERACTION_SKELETON.forEach((step, i) => STEP_INDEX.set(step.id, i));
 
-function listTabs() {
-  return TABS.slice();
-}
-
 function listPages() {
-  return [PAGES.discover, PAGES['device-info'], PAGES.part];
+  return Object.keys(PAGES).map((id) => PAGES[id]);
 }
 
 function getPage(id) {
@@ -75,7 +68,7 @@ function isValidNavigation(fromStepId, toStepId) {
 }
 
 module.exports = {
-  TABS, PAGES, INTERACTION_SKELETON, PIN_COUNT,
-  listTabs, listPages, getPage, skeletonSteps, getStep, stepIndex,
+  PAGES, INTERACTION_SKELETON, PIN_COUNT,
+  listPages, getPage, skeletonSteps, getStep, stepIndex,
   nextStep, prevStep, isValidNavigation,
 };

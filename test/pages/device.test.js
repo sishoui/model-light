@@ -93,7 +93,7 @@ describe('设备详情 device（信息分层 + 连接让出）', () => {
     expect(data.temperature).toBe(30);
     expect(data.framesSeen).toBeGreaterThanOrEqual(1);
     // 折叠卡结构
-    expect(data.folds).toEqual({ pins: false, push: false, scene: false, ota: false });
+    expect(data.folds).toEqual({ pins: false, push: false, ota: false });
     expect(Array.isArray(data.pins)).toBe(true);
     expect(data.pins).toHaveLength(8);
   });

@@ -28,7 +28,6 @@
       <slider class="ctrl-slider" min="0" max="100" value="{{brightness}}" bindchange="onBrightnessChange"
         show-value disabled="{{!connected || readOnly}}" />
     </view>
-    <button class="push-btn scene-btn" bindtap="openScene" disabled="{{!connected}}">场景…</button>
     <text wx:if="{{transferMessage}}" class="transfer-msg">{{transferMessage}}</text>
     <text wx:else class="transfer-msg muted">控制命令需设备授予控制令牌；失败时提示原因</text>
   </view>
@@ -66,7 +65,7 @@
 
   <view class="fold-card">
     <view class="fold-head" bindtap="onToggleFold" data-key="push">
-      <text class="fold-title">推送编排与云端恢复</text>
+      <text class="fold-title">推送编排</text>
       <text class="fold-arrow">{{folds.push ? '▾' : '▸'}}</text>
     </view>
     <view wx:if="{{folds.push}}">
@@ -75,22 +74,6 @@
         {{transferring ? '推送中…' : '推送'}}
       </button>
       <text wx:if="{{pushVersion}}" class="transfer-msg">本机编排版本 v{{pushVersion}}</text>
-      <button class="push-btn restore-btn" bindtap="restoreFromCloud"
-        disabled="{{!connected || transferring}}">
-        从云端恢复
-      </button>
-      <text class="transfer-msg muted">恢复是手动操作：只在设备与云端不一致时写回设备</text>
-    </view>
-  </view>
-
-  <view class="fold-card">
-    <view class="fold-head" bindtap="onToggleFold" data-key="scene">
-      <text class="fold-title">场景</text>
-      <text class="fold-arrow">{{folds.scene ? '▾' : '▸'}}</text>
-    </view>
-    <view wx:if="{{folds.scene}}">
-      <button class="push-btn" bindtap="openScene" disabled="{{!connected}}">管理场景槽…</button>
-      <text class="transfer-msg muted">场景槽 0–3：查询 / 激活固件存储的编排快照</text>
     </view>
   </view>
 

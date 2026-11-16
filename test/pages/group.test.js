@@ -79,7 +79,7 @@ describe('灯组页 group（像素 + 区间 + 阶段 + 出口）', () => {
     expect(pixels.find((p) => p.index === 0).selectable).toBe(true);
   });
 
-  it('给定点「编辑阶段与灯效」/「3D 灯板预览」、则跳转 url 分别带 name+pin+group 到 stage / preview', async () => {
+  it('给定点「编辑阶段与灯效」、则跳转 url 带 name+pin+group 到 stage', async () => {
     h = openWithSeed();
 
     await h.tap('openStagePage');
@@ -89,13 +89,5 @@ describe('灯组页 group（像素 + 区间 + 阶段 + 出口）', () => {
     expect(navStage.url).toContain('name=' + encodeURIComponent('ML-8DCC'));
     expect(navStage.url).toContain('pin=0');
     expect(navStage.url).toContain('group=0');
-
-    await h.tap('openPreview');
-    const navPreview = h.getLastNavigation();
-    expect(navPreview.type).toBe('navigateTo');
-    expect(navPreview.url).toContain('/pages/preview/preview');
-    expect(navPreview.url).toContain('name=' + encodeURIComponent('ML-8DCC'));
-    expect(navPreview.url).toContain('pin=0');
-    expect(navPreview.url).toContain('group=0');
   });
 });

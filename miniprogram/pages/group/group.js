@@ -181,10 +181,4 @@ Page({
       url: `/pages/stage/stage?name=${encodeURIComponent(this.deviceName)}&pin=${this.data.pinIndex}&group=${this.data.groupIndex}`,
     });
   },
-
-  openPreview() {
-    wx.navigateTo({
-      url: `/pages/preview/preview?name=${encodeURIComponent(this.deviceName)}&pin=${this.data.pinIndex}&group=${this.data.groupIndex}`,
-    });
-  },
 });

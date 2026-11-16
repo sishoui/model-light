@@ -1,5 +1,6 @@
 // 3D 灯板预览推演逻辑 - spec-3d-preview.md / issue #27
-// 纯逻辑，node:test 可测；xr-frame 页面（pages/preview/）只做渲染胶水。
+// 纯逻辑，node:test 可测。v2（#127）删除了 xr-frame 预览页，但 render-engine 仍复用
+// 其中的 2D 推演函数（resolveStage / stageColorAt），故本库保留。
 //
 // 核心约定（§3.3 / §4.2）：
 // - 灯珠位置按 (ledCount, rowWidth, layout) 参数化推导，不存坐标；

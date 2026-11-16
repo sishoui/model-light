@@ -2,9 +2,7 @@ const { createBleClient, SERVICE_UUID, CHAR_STATUS } = require('../../lib/ble');
 const { parseStatusFrame } = require('../../lib/status-frame');
 const { nextBackoffMs, resetBackoff } = require('../../lib/backoff');
 const { MODE_LABELS, ERROR_MESSAGES, TOKEN_LABELS } = require('../../lib/labels');
-const { createArrangementSender } = require('../../lib/arrangement-sender');
 const { computeChunkSize } = require('../../lib/chunk-size');
-const { crc32 } = require('../../lib/crc32');
 const { parseDeviceInfo } = require('../../lib/device-info');
 const { isReadOnlyProtocol, describeNakStatus } = require('../../lib/device-protocol');
 const { createArrangementStore } = require('../../lib/arrangement-store');
@@ -23,7 +21,6 @@ const { createStatusCache } = require('../../lib/status-cache');
 
 const PROTO_MAJOR = 1;
 const PROTO_MINOR = 0;
-const PAYLOAD_VERSION = 1;
 
 /** app 实例安全获取：真机 getApp()；测试环境可能未定义。 */
 function safeGetApp() {
@@ -57,7 +54,7 @@ Page({
     brightness: 100,
     editingPin: -1,
     ledCountDraft: '',
-    folds: { pins: false, push: false, scene: false, ota: false },
+    folds: { pins: false, push: false, ota: false },
     otaUpgrading: false, // OTA 升级中徽标（读 ota 页写入的共享键）
   },
 
@@ -168,15 +165,12 @@ Page({
       });
       this._tokenClient = createTokenClient(this.ble);
       this.setData({ connected: true, reconnecting: false });
-      this._recordUsage('connect', { deviceName: this._deviceName, ts: Date.now() });
       const app = safeGetApp();
       if (app && typeof app.rememberDevice === 'function') {
         app.rememberDevice(this._deviceName, this.deviceId);
       }
       this.reloadPins();
       await this.probeDeviceCapabilities();
-      this.maybeAutoPushBackup();
-      this.maybeEmptyDeviceHint();
       this._tokenTimer = setInterval(() => {
         if (this._tokenClient) this._tokenClient.tick();
       }, 2000);
@@ -291,7 +285,6 @@ Page({
         return;
       }
       this.setData({ powerOn: on, transferMessage: '' });
-      this._recordUsage('control:power', { deviceName: this._deviceName, on, ts: Date.now() });
     } finally {
       this._dcBusy = false;
     }
@@ -315,7 +308,6 @@ Page({
         return;
       }
       this.setData({ brightness: pct, transferMessage: '' });
-      this._recordUsage('control:brightness', { deviceName: this._deviceName, pct, ts: Date.now() });
     } finally {
       this._dcBusy = false;
     }
@@ -355,24 +347,9 @@ Page({
       }
       const pins = this.data.pins.map((p) => (p.index === pin ? { ...p, length: count } : p));
       this.setData({ pins, editingPin: -1, transferMessage: `引脚 ${pin} 灯珠数已设为 ${count}` });
-      this._recordUsage('control:led-count', { deviceName: this._deviceName, pin, count, ts: Date.now() });
     } finally {
       this._dcBusy = false;
     }
-  },
-
-  openScene() {
-    if (!this.data.connected) return;
-    wx.navigateTo({
-      url: `../scene/scene?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&chunkSize=${this._chunkSize || 20}`,
-    });
-  },
-
-  _recordUsage(type, payload) {
-    try {
-      const app = safeGetApp();
-      if (app && app.usageLog) app.usageLog.log(type, payload);
-    } catch (e) { /* 静默 */ }
   },
 
   sendRealtimeParam(params) {
@@ -447,104 +424,6 @@ Page({
 
   deviceFirmwareVersion() {
     return this._fwVersion || null;
-  },
-
-  maybeAutoPushBackup() {
-    const app = safeGetApp();
-    if (!app || !app.cloudSync || !app.cloudAuth || !app.cloudAuth.isLoggedIn()) return;
-    try {
-      const arr = this.store.loadOrCreate(this._deviceName);
-      const payloadBytes = new Uint8Array(encode(arr));
-      const frame = this._lastStatusFrame;
-      app.cloudSync.autoPush({
-        mlId: this._deviceName,
-        bytes: payloadBytes,
-        crc32Value: crc32(payloadBytes),
-        payloadVersion: PAYLOAD_VERSION,
-        fwVersion: this.deviceFirmwareVersion(),
-        baseRev: frame ? frame.arrangementVersion : 0,
-      }).then((r) => {
-        if (r && r.behindHint) this.setData({ transferMessage: r.behindHint });
-      }).catch(() => { /* 静默 */ });
-    } catch (e) { /* 静默 */ }
-  },
-
-  maybeEmptyDeviceHint() {
-    const app = safeGetApp();
-    if (!app || !app.cloudSync) return;
-    try {
-      const arr = this.store.load(this._deviceName);
-      const empty = !arr || !arr.pins || arr.pins.every((p) => !p.groups || p.groups.length === 0);
-      if (!empty) return;
-      if (!app.cloudAuth || !app.cloudAuth.isLoggedIn()) return;
-      const storageKey = `cloudSync:hinted:${this._deviceName}`;
-      if (wx.getStorageSync(storageKey)) return;
-      wx.setStorageSync(storageKey, true);
-      this.setData({ transferMessage: '设备编排为空，若云端有备份可在下方点「从云端恢复」' });
-    } catch (e) { /* 静默 */ }
-  },
-
-  restoreFromCloud() {
-    const app = safeGetApp();
-    if (!app || !app.cloudSync || !app.cloudAuth || !app.cloudAuth.isLoggedIn()) {
-      this.setData({ transferMessage: '未登录云端，无法恢复（本地功能不受影响）' });
-      return;
-    }
-    if (this._senderActive || !this._chunkSize) return;
-    app.cloudSync.restore({
-      mlId: this._deviceName,
-      fwVersion: this.deviceFirmwareVersion(),
-      statusFrame: this._lastStatusFrame,
-      confirmedStale: this._staleConfirmed || false,
-      restoreToDevice: async (bytes) => this.writeBytesToDevice(bytes),
-    }).then((r) => {
-      if (r.ok && r.restored) {
-        this._staleConfirmed = false;
-        this.setData({ transferMessage: '已从云端恢复编排到设备' });
-      } else if (r.ok && r.skipped === 'same-crc') {
-        this.setData({ transferMessage: '设备上已是云端这份编排，无需恢复' });
-      } else if (r.reason === 'stale-needs-confirm') {
-        this._staleConfirmed = true;
-        wx.showModal({
-          title: '固件版本不同',
-          content: `备份来自 ${r.backupFwVersion}，你设备是 ${r.deviceFwVersion}，恢复可能丢新灯效。继续恢复？`,
-          success: (res) => { if (res.confirm) this.restoreFromCloud(); else this._staleConfirmed = false; },
-        });
-      } else if (r.reason === 'no-backup') {
-        this.setData({ transferMessage: '云端没有这台设备的备份' });
-      } else if (r.reason === 'unauthorized') {
-        this.setData({ transferMessage: '登录态失效，已转仅本地模式' });
-      } else if (r.reason === 'restore-failed') {
-        this.setData({ transferMessage: '写回设备失败，设备编排未变' });
-      } else if (r.reason === 'network' || (r.reason && r.reason.startsWith('http-'))) {
-        this.setData({ transferMessage: '网络异常，拉取备份失败' });
-      }
-    }).catch(() => { /* 静默 */ });
-  },
-
-  async writeBytesToDevice(payloadBytes) {
-    const frame = this._lastStatusFrame;
-    const version = frame ? (frame.arrangementVersion + 1) & 0xffff : 1;
-    if (!this._tokenClient) throw Object.assign(new Error('no-token'), { reason: 'no-token' });
-    const token = await this._tokenClient.requestToken();
-    if (!token.granted) {
-      throw Object.assign(new Error('no-token'), { reason: 'no-token' });
-    }
-    try {
-      const sender = createArrangementSender(this._arrangementTransport(), { chunkSize: this._chunkSize });
-      const result = await sender.send({
-        payloadVersion: PAYLOAD_VERSION,
-        protoMajor: PROTO_MAJOR,
-        protoMinor: PROTO_MINOR,
-        data: payloadBytes,
-      });
-      if (!result.ok) {
-        throw Object.assign(new Error(result.reason), { reason: result.reason });
-      }
-    } finally {
-      this._tokenClient.release();
-    }
-    this.setData({ pushVersion: version });
   },
 
   scheduleReconnect() {

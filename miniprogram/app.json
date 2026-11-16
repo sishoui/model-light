@@ -1,27 +1,12 @@
 {
   "pages": [
     "pages/discover/discover",
-    "pages/me/me",
     "pages/device/device",
-    "pages/part/part",
     "pages/pin/pin",
     "pages/group/group",
     "pages/stage/stage",
-    "pages/preview/preview",
-    "pages/scene/scene",
     "pages/ota/ota"
   ],
-  "tabBar": {
-    "custom": true,
-    "color": "#8a94a6",
-    "selectedColor": "#60a5fa",
-    "backgroundColor": "#e0e5ec",
-    "borderStyle": "white",
-    "list": [
-      { "pagePath": "pages/discover/discover", "text": "设备" },
-      { "pagePath": "pages/me/me", "text": "我的" }
-    ]
-  },
   "window": {
     "navigationBarTitleText": "模型灯效",
     "navigationBarBackgroundColor": "#e0e5ec",
