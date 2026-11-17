@@ -644,7 +644,7 @@ class _NakRetxReceiver(ShardFrameReceiver):
                 i = self._nak_seq - ack_up_to - 1
                 if 0 <= i < 16:
                     out.append(
-                        build_nak_frame(0, ack_up_to, nak_mask=(1 << i), status=0x02)
+                        build_nak_frame(ack_up_to, nak_mask=(1 << i), status=0x02)
                     )
 
         # 丢失片被重传并补齐后，显式回 ACK，让发送方发 FIN 并结束
@@ -654,6 +654,6 @@ class _NakRetxReceiver(ShardFrameReceiver):
             and p["seq"] == self._drop_seq
             and self._dropped
         ):
-            out.append(build_ack_frame(0, self._expected_seq - 1, status=0))
+            out.append(build_ack_frame(self._expected_seq - 1, status=0))
 
         return out

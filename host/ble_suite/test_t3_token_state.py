@@ -49,6 +49,10 @@ pytestmark = pytest.mark.spec_section("§6")
 class DeviceSim:
     """微型设备仿真器：在两条 PC 连接之间路由令牌帧，裁决令牌授予与交接。
 
+    线格式与真机一致（...0001 命令通道，cmd(1) + seq(2, LE) + payload）：
+    - 上行请求帧带 seq（REQ_TOKEN / PROBE_YES / PROBE_NO / HEARTBEAT）；
+    - 下行 GRANT/PROBE 无请求 seq，seq 字段回 0（firmware ble.c token_send）。
+
     - 无持有方时，首个 REQ_TOKEN 直接授予。
     - 已有持有方时，新的 REQ_TOKEN 导致设备 PROBE 当前持有方。
     - 持有方 YES -> 释放持有方、授予请求方；NO -> 持有方保留。
@@ -97,9 +101,9 @@ class DeviceSim:
         elif cmd == int(TokenCmd.HEARTBEAT):
             # 持有方心跳，设备仅记录，不改变令牌状态
             pass
-        elif cmd == int(TokenCmd.YES):
+        elif cmd == int(TokenCmd.PROBE_YES):
             self._on_yes(sender)
-        elif cmd == int(TokenCmd.NO):
+        elif cmd == int(TokenCmd.PROBE_NO):
             self._on_no(sender)
 
     def _on_req_token(self, requester) -> None:
@@ -108,12 +112,12 @@ class DeviceSim:
             return
         if self._holder is None:
             self._holder = requester
-            self._inject(requester, bytes([int(TokenEvent.TOKEN_GRANTED)]))
+            self._inject(requester, _grant_frame())
         elif requester == self._holder:
-            self._inject(requester, bytes([int(TokenEvent.TOKEN_GRANTED)]))
+            self._inject(requester, _grant_frame())
         else:
             self._pending_probe = {"holder": self._holder, "requester": requester}
-            self._inject(self._holder, bytes([int(TokenEvent.PROBE)]))
+            self._inject(self._holder, _probe_frame())
 
     def _on_yes(self, holder) -> None:
         pend = self._pending_probe
@@ -121,7 +125,7 @@ class DeviceSim:
             requester = pend["requester"]
             self._inject(holder, bytes([int(TokenEvent.TOKEN_RELEASED)]))
             self._holder = requester
-            self._inject(requester, bytes([int(TokenEvent.TOKEN_GRANTED)]))
+            self._inject(requester, _grant_frame())
             self._pending_probe = None
 
     def _on_no(self, holder) -> None:
@@ -131,6 +135,17 @@ class DeviceSim:
 
     def _inject(self, transport, frame: bytes) -> None:
         transport.inject(frame)
+
+
+def _grant_frame() -> bytes:
+    """GRANT(0x14) 下行帧：cmd(1) + seq(2, LE) + outcome(1)。
+    无请求 seq，固件回 0；outcome=0x00（OK，授予）。"""
+    return bytes([int(TokenEvent.GRANT), 0x00, 0x00, 0x00])
+
+
+def _probe_frame() -> bytes:
+    """PROBE(0x11) 下行帧：cmd(1) + seq(2, LE)，无 payload；seq 固件回 0。"""
+    return bytes([int(TokenEvent.PROBE), 0x00, 0x00])
 
 
 def make_machine(name, sim, transport=None, *, now=None, **kwargs):

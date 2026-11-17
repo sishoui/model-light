@@ -6,18 +6,23 @@
 PC 端（代替手机侧）的分片发送与设备侧分片接收/ACK，以及原子提交校验。
 纯 Python，不依赖 bleak；bleak 的写入/通知通过传输层回调注入，便于单元测试。
 
-线格式（与 miniprogram/lib/transfer-frames.js 保持 wire 兼容）：
+线格式（与 firmware/components/mlarr/mlarr.h、miniprogram/lib/transfer-frames.js
+保持 wire 兼容）：
 
-    Frame := cmd(1) + seq(2, LE) + payload(n)
+    上行（手机/PC → 设备，START/DATA/FIN/RESET）：
+        Frame := cmd(1) + seq(2, LE) + payload(n)
+    下行（设备 → 手机/PC，ACK/NAK）：
+        Frame := cmd(1) + ackUpTo(2, LE) + nakMask(2, LE) + status(1) = 6 B
+        （无 seq 字段，ackUpTo 占据字节 1–2，与固件 ble.c xfer_send 一致）
 
 帧命令：
 
     0x01 START 手机→设备：totalLen(2) + payloadVersion(2) + protoMajor(1) +
-        protoMinor(1) + crc32(4) = 10 B
+        protoMinor(1) + crc32(4) = 10 B（整帧 13 B）
     0x02 DATA  手机→设备：原始编排字节 [seq * chunkSize, ...)
     0x03 FIN   手机→设备：无
     0x04 RESET 手机→设备：无
-    0x05 ACK   设备→手机：ackUpTo(2) + nakMask(2) + status(1) = 5 B
+    0x05 ACK   设备→手机：ackUpTo(2) + nakMask(2) + status(1)（整帧 6 B，无 seq）
     0x06 NAK   设备→手机：同 ACK，status 非 0
 
 规则：
@@ -117,19 +122,23 @@ def build_reset_frame(seq: int) -> bytes:
     return build_frame(Cmd.RESET, seq)
 
 
-def build_ack_frame(seq: int, ack_up_to: int, nak_mask: int = 0, status: int = 0) -> bytes:
-    """ACK(0x05) payload：ackUpTo(2) + nakMask(2) + status(1) = 5 B。"""
-    payload = struct.pack("<HHB", ack_up_to, nak_mask, status)
-    return build_frame(Cmd.ACK, seq, payload)
+def build_ack_frame(ack_up_to: int, nak_mask: int = 0, status: int = 0) -> bytes:
+    """ACK(0x05) 整帧：cmd(1) + ackUpTo(2) + nakMask(2) + status(1) = 6 B，无 seq
+    （与 mlarr.h / 固件 ble.c xfer_send 一致；ackUpTo 占据字节 1–2）。"""
+    return bytes([int(Cmd.ACK)]) + struct.pack("<HHB", ack_up_to, nak_mask, status)
 
 
-def build_nak_frame(seq: int, ack_up_to: int, nak_mask: int = 0, status: int = 1) -> bytes:
-    payload = struct.pack("<HHB", ack_up_to, nak_mask, status)
-    return build_frame(Cmd.NAK, seq, payload)
+def build_nak_frame(ack_up_to: int, nak_mask: int = 0, status: int = 1) -> bytes:
+    """NAK(0x06) 整帧：cmd(1) + ackUpTo(2) + nakMask(2) + status(1) = 6 B，无 seq。"""
+    return bytes([int(Cmd.NAK)]) + struct.pack("<HHB", ack_up_to, nak_mask, status)
 
 
 def parse_frame(frame: bytes) -> Optional[dict]:
-    """剥离帧头：{cmd, seq, payload}；太短则返回 None。"""
+    """剥离帧头：{cmd, seq, payload}；太短则返回 None。
+
+    仅适用于上行 START/DATA/FIN/RESET（cmd(1) + seq(2, LE) + payload）；
+    ACK/NAK 无 seq，请用 parse_ack。
+    """
     if frame is None or len(frame) < DATA_HEADER:
         return None
     return {
@@ -140,22 +149,20 @@ def parse_frame(frame: bytes) -> Optional[dict]:
 
 
 def parse_ack(frame: bytes) -> Optional[dict]:
-    """解析 ACK(0x05)/NAK(0x06) 整帧：cmd(1) + seq(2) + ackUpTo(2) +
-    nakMask(2) + status(1) = 8 B。长度不符或 cmd 不对返回 None。"""
-    p = parse_frame(frame)
-    if p is None or len(p["payload"]) < 5:
+    """解析 ACK(0x05)/NAK(0x06) 整帧：cmd(1) + ackUpTo(2) + nakMask(2) +
+    status(1) = 6 B，无 seq（与 mlarr.h / 固件 ble.c xfer_send 一致）。
+    长度不足或 cmd 不对返回 None。"""
+    if frame is None or len(frame) < 6:
         return None
-    cmd = p["cmd"]
+    cmd = frame[0]
     if cmd not in (Cmd.ACK, Cmd.NAK):
         return None
-    pl = p["payload"]
     return {
         "cmd": cmd,
         "is_nak": cmd == Cmd.NAK,
-        "seq": p["seq"],
-        "ack_up_to": pl[0] | (pl[1] << 8),
-        "nak_mask": pl[2] | (pl[3] << 8),
-        "status": pl[4],
+        "ack_up_to": frame[1] | (frame[2] << 8),
+        "nak_mask": frame[3] | (frame[4] << 8),
+        "status": frame[5],
     }
 
 
@@ -466,15 +473,15 @@ class ShardFrameReceiver:
             seq = base + 1 + i
             if seq in self._buffer:
                 nak_mask |= (1 << i)
-        return build_ack_frame(0, ack_up_to, nak_mask, status=0)
+        return build_ack_frame(ack_up_to, nak_mask, status=0)
 
     def _on_fin(self, out: list[bytes]) -> None:
         ok = self._validate_and_commit()
         last = self._expected_seq - 1 if self._expected_seq > 0 else 0
         if ok:
-            out.append(build_ack_frame(0, last, nak_mask=0, status=0))
+            out.append(build_ack_frame(last, nak_mask=0, status=0))
         else:
-            out.append(build_nak_frame(0, last, nak_mask=0, status=0x02))  # 编排校验失败
+            out.append(build_nak_frame(last, nak_mask=0, status=0x02))  # 编排校验失败
 
     def _validate_and_commit(self) -> bool:
         """原子提交校验：长度 → CRC32 → （交给 on_complete 做编解码/像素/版本）。"""

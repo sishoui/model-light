@@ -373,7 +373,8 @@ async def test_nak_nakmask_retransmits_then_success(fake_transport):
 
 
 def test_wire_frame_layout():
-    """(6) 线帧布局：START payload 10 B，ACK/NAK payload 5 B，cmd 字节正确。"""
+    """(6) 线帧布局：START 整帧 13 B（payload 10 B），ACK/NAK 整帧 6 B
+    （无 seq，ackUpTo 占据字节 1–2），cmd 字节正确。"""
     start = build_start_frame(5, 0x0246, 1, 1, 0, 0xDEADBEEF)
     assert len(start) == 3 + 10  # cmd(1) + seq(2) + payload(10)
     assert start[0] == Cmd.START
@@ -394,9 +395,9 @@ def test_wire_frame_layout():
     fin = build_fin_frame(9)
     assert fin == bytes([Cmd.FIN, 0x09, 0x00])
 
-    ack = build_ack_frame(0, 7, nak_mask=3, status=0)
-    assert len(ack) == 3 + 5  # cmd(1)+seq(2)+payload(5)
-    assert ack[0] == Cmd.ACK
+    ack = build_ack_frame(7, nak_mask=3, status=0)
+    assert len(ack) == 6  # cmd(1) + ackUpTo(2) + nakMask(2) + status(1)，无 seq
+    assert ack == bytes([Cmd.ACK, 0x07, 0x00, 0x03, 0x00, 0x00])
     parsed = parse_ack(ack)
     assert parsed is not None
     assert not parsed["is_nak"]
@@ -404,7 +405,8 @@ def test_wire_frame_layout():
     assert parsed["nak_mask"] == 3
     assert parsed["status"] == 0
 
-    nak = build_nak_frame(0, 7, nak_mask=0, status=StatusErrorCode.PIXEL_OVERLAP)
+    nak = build_nak_frame(7, nak_mask=0, status=StatusErrorCode.PIXEL_OVERLAP)
+    assert len(nak) == 6
     assert nak[0] == Cmd.NAK
     parsed = parse_ack(nak)
     assert parsed is not None
@@ -460,7 +462,7 @@ class _NakRetxReceiver(ShardFrameReceiver):
                 i = self._nak_seq - ack_up_to - 1
                 if 0 <= i < 16:
                     out.append(
-                        build_nak_frame(0, ack_up_to, nak_mask=(1 << i), status=0x02)
+                        build_nak_frame(ack_up_to, nak_mask=(1 << i), status=0x02)
                     )
 
         # 丢失片被重传并补齐后，显式回 ACK，让发送方发 FIN 并结束
@@ -470,6 +472,6 @@ class _NakRetxReceiver(ShardFrameReceiver):
             and p["seq"] == self._drop_seq
             and self._dropped
         ):
-            out.append(build_ack_frame(0, self._expected_seq - 1, status=0))
+            out.append(build_ack_frame(self._expected_seq - 1, status=0))
 
         return out

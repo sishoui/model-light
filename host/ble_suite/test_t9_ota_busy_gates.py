@@ -160,10 +160,23 @@ async def wait_for(condition: Callable[[], bool], *,
 # 设备仿真器：A（持有方、OTA 方）与 B（请求方）两条连接
 # --------------------------------------------------------------------------- #
 
+def _grant_frame() -> bytes:
+    """GRANT(0x14) 下行帧：cmd(1) + seq(2, LE) + outcome(1)。
+    无请求 seq，固件回 0；outcome=0x00（OK，授予）。"""
+    return bytes([int(TokenEvent.GRANT), 0x00, 0x00, 0x00])
+
+
+def _probe_frame() -> bytes:
+    """PROBE(0x11) 下行帧：cmd(1) + seq(2, LE)，无 payload；seq 固件回 0。"""
+    return bytes([int(TokenEvent.PROBE), 0x00, 0x00])
+
+
 class _BleDeviceSim:
     """模拟设备侧对等。
 
-    - 路由令牌帧（REQ_TOKEN/YES/NO）在两连接间裁决令牌授予与交接；
+    - 路由令牌帧（REQ_TOKEN/PROBE_YES/PROBE_NO）在两连接间裁决令牌授予与
+      交接；下行 GRANT/PROBE 采用真机线格式（cmd(1) + seq(2, LE) + payload，
+      GRANT/PROBE 无请求 seq、seq 回 0）；
     - OTA 进行中时拒绝令牌交接及 ...0002 / ...0003 写入，向发起方连接
       注入 mode=2 + error_code=0x05 状态帧（BUSY，不静默丢）；
     - 向两连接广播 OTA 开始/结束状态帧（mode=2 <-> mode=0）；
@@ -271,9 +284,9 @@ class _BleDeviceSim:
             self._on_req_token(sender)
         elif cmd == int(TokenCmd.HEARTBEAT):
             pass  # 设备仅记录持有方心跳
-        elif cmd == int(TokenCmd.YES):
+        elif cmd == int(TokenCmd.PROBE_YES):
             self._on_yes(sender)
-        elif cmd == int(TokenCmd.NO):
+        elif cmd == int(TokenCmd.PROBE_NO):
             self._on_no(sender)
         elif self._ota_active:
             # OTA 中非令牌写入（...0002 / ...0003）：记为 BUSY 事件
@@ -286,12 +299,12 @@ class _BleDeviceSim:
             return  # 拒绝交接，不授予也不 PROBE
         if self._holder is None:
             self._holder = requester
-            self._inject(requester, bytes([int(TokenEvent.TOKEN_GRANTED)]))
+            self._inject(requester, _grant_frame())
         elif requester == self._holder:
-            self._inject(requester, bytes([int(TokenEvent.TOKEN_GRANTED)]))
+            self._inject(requester, _grant_frame())
         else:
             self._pending_probe = {"holder": self._holder, "requester": requester}
-            self._inject(self._holder, bytes([int(TokenEvent.PROBE)]))
+            self._inject(self._holder, _probe_frame())
 
     def _on_yes(self, holder: str) -> None:
         pend = self._pending_probe
@@ -299,7 +312,7 @@ class _BleDeviceSim:
             requester = pend["requester"]
             self._inject(holder, bytes([int(TokenEvent.TOKEN_RELEASED)]))
             self._holder = requester
-            self._inject(requester, bytes([int(TokenEvent.TOKEN_GRANTED)]))
+            self._inject(requester, _grant_frame())
             self._pending_probe = None
 
     def _on_no(self, holder: str) -> None:
@@ -361,17 +374,17 @@ class _OtaDeviceSim:
         cmd = p["cmd"]
         if cmd == OtaCmd.BEGIN:
             # 指纹匹配：ACK status=0
-            self._transport.inject(build_ack_frame(0, 0, 0, 0))
+            self._transport.inject(build_ack_frame(0))
         elif cmd == OtaCmd.DATA:
             seq = p["seq"]
             self.data_seqs.append(seq)
             if self._release is not None:
                 await self._release.wait()  # 保持 OTA 处于传输中
             # 累计 ACK：ackUpTo = 当前片
-            self._transport.inject(build_ack_frame(0, seq, 0, 0))
+            self._transport.inject(build_ack_frame(seq))
         elif cmd == OtaCmd.COMMIT:
             self.commit_count += 1
-            self._transport.inject(build_ack_frame(0, 0, 0, 0))
+            self._transport.inject(build_ack_frame(0))
 
 
 # --------------------------------------------------------------------------- #

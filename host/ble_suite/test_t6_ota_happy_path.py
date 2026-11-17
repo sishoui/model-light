@@ -156,7 +156,7 @@ class _OtaDeviceSim:
         # 指纹不符：静默作废旧会话（esp_ota_abort + 清 NVS），回 status=1
         status = 0 if matched else 1
         if self._reply_begin:
-            self._transport.inject(build_ack_frame(0, 0, 0, status))
+            self._transport.inject(build_ack_frame(0, status=status))
 
     def _on_data(self, p) -> None:
         seq = p["seq"]
@@ -169,11 +169,11 @@ class _OtaDeviceSim:
         while (ack_up_to + 1) in self._received_seqs:
             ack_up_to += 1
         self.acks_sent.append(ack_up_to)
-        self._transport.inject(build_ack_frame(0, ack_up_to, 0, 0))
+        self._transport.inject(build_ack_frame(ack_up_to))
 
     def _on_commit(self) -> None:
         self.commit_count += 1
-        self._transport.inject(build_ack_frame(0, 0, 0, self._commit_status))
+        self._transport.inject(build_ack_frame(0, status=self._commit_status))
 
 
 # --------------------------------------------------------------------------- #

@@ -246,7 +246,7 @@ class _OtaLightDeviceSim:
                        and sha256 == self._sha256
                        and crc_value == self._crc)
         status = 0 if matched else 1
-        self._transport.inject(build_ack_frame(0, 0, 0, status))
+        self._transport.inject(build_ack_frame(0, status=status))
         if status == 0:
             # OTA_BEGIN 成功：进入传输模式，灯效切为呼吸蓝 5 FPS（mode=2，传输位）
             self._phase = "transmitting"
@@ -269,13 +269,13 @@ class _OtaLightDeviceSim:
         self._data_acks_sent += 1
         self.acks_sent.append(ack_up_to)
         self._bytes_written = (ack_up_to + 1) * CHUNK_PAYLOAD
-        self._transport.inject(build_ack_frame(0, ack_up_to, 0, 0))
+        self._transport.inject(build_ack_frame(ack_up_to))
         if self._phase == "transmitting":
             self._inject_status(StatusMode.TRANSMITTING, StatusFlags.TRANSMITTING)
 
     def _on_commit(self) -> None:
         self.commit_count += 1
-        self._transport.inject(build_ack_frame(0, 0, 0, self._commit_status))
+        self._transport.inject(build_ack_frame(0, status=self._commit_status))
         if self._commit_status == 0:
             # 提交成功：设备重启，常亮绿，停帧（不再上报状态帧）
             self._phase = "committed"

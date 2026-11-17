@@ -6,18 +6,23 @@
 PC 端（代替手机侧）的控制令牌状态机。纯 Python，不依赖 bleak；bleak 的
 写入/通知通过传输层回调注入，便于单元测试。
 
-命令帧（手机/PC → 设备，cmd(1) + ...）：
+命令帧（手机/PC → 设备，...0001 命令通道，cmd(1) + seq(2, LE) + payload(n)，
+seq 由本机维护、按帧递增；固件 mltoken 侧忽略 seq）：
 
     REQ_TOKEN 0x10  请求令牌
-    HEARTBEAT 0x11  持有方心跳
-    YES 0x12        同意令牌交接（响应设备 PROBE）
-    NO 0x13         拒绝令牌交接（响应设备 PROBE）
+    PROBE_YES 0x12  同意令牌交接（响应设备 PROBE；seq 回填 PROBE 帧的 seq）
+    PROBE_NO  0x13  拒绝令牌交接（响应设备 PROBE；seq 回填 PROBE 帧的 seq）
+    HEARTBEAT 0x15  持有方心跳
 
-设备事件帧（设备 → 手机/PC，cmd(1)）：
+设备事件帧（设备 → 手机/PC，...0001 命令通道，cmd(1) + seq(2, LE) + payload；
+GRANT/PROBE 无请求 seq，固件回 0）：
 
-    PROBE 0x20          设备请求当前持有方同意交接
-    TOKEN_GRANTED 0x21  令牌已授予本连接
-    TOKEN_RELEASED 0x22 令牌已释放（本连接失去令牌）
+    PROBE 0x11          设备请求当前持有方同意交接
+    GRANT 0x14          令牌已授予本连接（payload 1 B 结果码：0 OK / 1 DENIED /
+                        2 BUSY；本状态机只消费「授予」事件，语义与真机一致）
+    TOKEN_RELEASED 0x22 令牌已释放（本连接失去令牌）※ 主机双 PC 连接模拟专用
+                        的合成事件，固件 mltoken.h 无等价命令字（真机不会下发），
+                        仅为保持状态机逻辑而保留
 
 状态（TokenState）：
 
@@ -39,6 +44,7 @@ PC 端（代替手机侧）的控制令牌状态机。纯 Python，不依赖 ble
 from __future__ import annotations
 
 import asyncio
+import struct
 import time
 from dataclasses import dataclass
 from enum import IntEnum
@@ -64,17 +70,20 @@ HEARTBEAT_TIMEOUT_MS = 5000        # 心跳停止后多长时间释放令牌
 
 
 class TokenCmd(IntEnum):
-    """PC → 设备的令牌命令。"""
+    """PC → 设备的令牌命令（firmware mltoken.h MLT_CMD_*，...0001 命令通道）。"""
     REQ_TOKEN = 0x10
-    HEARTBEAT = 0x11
-    YES = 0x12
-    NO = 0x13
+    PROBE_YES = 0x12
+    PROBE_NO = 0x13
+    HEARTBEAT = 0x15
+    FACTORY_RESET = 0x16
+    ACK = 0x17               # 设备 → PC：控制命令结果（host 不主动发，方向占位）
 
 
 class TokenEvent(IntEnum):
-    """设备 → PC 的令牌事件。"""
-    PROBE = 0x20
-    TOKEN_GRANTED = 0x21
+    """设备 → PC 的令牌事件（firmware mltoken.h MLT_CMD_*，设备方向）。"""
+    PROBE = 0x11
+    GRANT = 0x14             # payload 1 B 结果码：0 OK / 1 DENIED / 2 BUSY
+    # ※ 主机双 PC 连接模拟专用的合成事件，固件无等价命令字（真机不下发）
     TOKEN_RELEASED = 0x22
 
 
@@ -144,6 +153,8 @@ class TokenStateMachine:
         self._has_token = False
         self._ota_active = False
         self._suspended_at: Optional[float] = None  # 进入 SUSPENDED 的时点（ms）
+        self._seq = 0                              # 上行命令帧 seq（16 位回绕）
+        self._probe_seq: Optional[int] = None      # 最近一次 PROBE 的 seq（应答回填）
 
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
         self._release_task: Optional[asyncio.Task[None]] = None
@@ -217,12 +228,23 @@ class TokenStateMachine:
 
     # -- 令牌操作 -----------------------------------------------------
 
+    async def _write_cmd(self, cmd: TokenCmd, payload: bytes = b"",
+                         seq: Optional[int] = None) -> None:
+        """写一条上行命令帧：cmd(1) + seq(2, LE) + payload(n)（...0001 命令通道，
+        与 miniprogram/lib/token-frames.js buildTokenFrame 同构）。seq=None 时
+        取内部计数器并按帧递增；传入具体值时原样回填（如 PROBE 应答）。"""
+        if seq is None:
+            seq = self._seq
+            self._seq = (self._seq + 1) & 0xFFFF
+        await self._transport.write(
+            bytes([int(cmd)]) + struct.pack("<H", seq) + payload)
+
     async def request_token(self) -> TokenResult:
         """请求令牌。
 
         - OTA 进行中：直接拒绝（BUSY）。
         - 已持有：幂等，返回 already-held。
-        - 否则发送 REQ_TOKEN；由设备返回 TOKEN_GRANTED（直接授予）或
+        - 否则发送 REQ_TOKEN；由设备返回 GRANT（直接授予）或
           PROBE（需当前持有方应答）。结果由设备驱动的状态迁移决定。
         """
         if self._ota_active:
@@ -231,24 +253,25 @@ class TokenStateMachine:
         if self._has_token and self._state == TokenState.HOLDING:
             return TokenResult(granted=True, reason="already-held")
 
-        await self._transport.write(bytes([int(TokenCmd.REQ_TOKEN)]))
+        await self._write_cmd(TokenCmd.REQ_TOKEN)
         return TokenResult(granted=False, reason="pending")
 
     async def respond_probe(self, decision: TokenDecision) -> TokenResult:
         """响应设备 PROBE。
 
-        YES：同意交接，本连接释放令牌（回只读），发送 YES 给设备。
-        NO：拒绝交接，本连接保持持有，发送 NO 给设备。
+        YES：同意交接，本连接释放令牌（回只读），发送 PROBE_YES 给设备。
+        NO：拒绝交接，本连接保持持有，发送 PROBE_NO 给设备。
+        应答帧回填收到 PROBE 时的 seq（未收到过 PROBE 时用内部计数器）。
         """
         if self._state != TokenState.HOLDING:
             return TokenResult(granted=False, reason="not-holding")
 
         if decision == TokenDecision.YES:
-            await self._transport.write(bytes([int(TokenCmd.YES)]))
+            await self._write_cmd(TokenCmd.PROBE_YES, seq=self._probe_seq)
             self._enter_read_only()
             return TokenResult(granted=False, reason="relinquished")
         else:
-            await self._transport.write(bytes([int(TokenCmd.NO)]))
+            await self._write_cmd(TokenCmd.PROBE_NO, seq=self._probe_seq)
             return TokenResult(granted=True, reason="retained")
 
     def start_heartbeat(self) -> None:
@@ -268,15 +291,18 @@ class TokenStateMachine:
     # -- 帧/状态处理（由传输层回调调用） --------------------------------
 
     def on_frame(self, frame: bytes) -> None:
-        """处理设备发来的令牌命令/事件帧。"""
+        """处理设备发来的令牌命令/事件帧（cmd(1) + seq(2, LE) + payload）。"""
         frame = bytes(frame)
         if len(frame) < 1:
             return
         cmd = frame[0]
 
         if cmd == int(TokenEvent.PROBE):
+            # 记录 PROBE 的 seq，供 respond_probe 应答时回填
+            self._probe_seq = (
+                frame[1] | (frame[2] << 8)) if len(frame) >= 3 else None
             self._on_probe_received()
-        elif cmd == int(TokenEvent.TOKEN_GRANTED):
+        elif cmd == int(TokenEvent.GRANT):
             self._on_token_granted()
         elif cmd == int(TokenEvent.TOKEN_RELEASED):
             self._on_token_released()
@@ -363,7 +389,7 @@ class TokenStateMachine:
             while True:
                 now = self._now()
                 if self._heartbeat_due is not None and now >= self._heartbeat_due:
-                    await self._transport.write(bytes([int(TokenCmd.HEARTBEAT)]))
+                    await self._write_cmd(TokenCmd.HEARTBEAT)
                     self._last_heartbeat_ms = now
                     self._heartbeat_due = now + self._heartbeat_interval_ms
                 await asyncio.sleep(0.05)

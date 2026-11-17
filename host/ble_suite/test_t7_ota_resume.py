@@ -177,7 +177,8 @@ class _OtaDeviceSim:
             )
         status = 0 if matched else 1
         if self._reply_begin:
-            self._inject(bytes([0x05, 0, 0]) + struct.pack("<HHB", 0, 0, status))
+            # ACK(0x05) 整帧 6 B：cmd(1) + ackUpTo(2) + nakMask(2) + status(1)，无 seq
+            self._inject(bytes([0x05]) + struct.pack("<HHB", 0, 0, status))
 
     def _on_data(self, p) -> None:
         seq = p["seq"]
@@ -202,7 +203,7 @@ class _OtaDeviceSim:
         # 累计 ACK：ackUpTo = 迄今提交的最大连续片（按序到达）
         ack_up_to = self._expected_seq - 1 if self._expected_seq > 0 else 0
         self.acks_sent.append(ack_up_to)
-        self._inject(bytes([0x05, 0, 0]) + struct.pack("<HHB", ack_up_to, 0, 0))
+        self._inject(bytes([0x05]) + struct.pack("<HHB", ack_up_to, 0, 0))
 
     def _on_query(self) -> None:
         if not self.answer_query:
@@ -234,8 +235,8 @@ class _OtaDeviceSim:
 
     def _on_commit(self) -> None:
         self.commit_count += 1
-        self._inject(bytes([0x05, 0, 0]) + struct.pack("<HHB", 0, 0,
-                                                        self._commit_status))
+        self._inject(bytes([0x05]) + struct.pack("<HHB", 0, 0,
+                                                self._commit_status))
 
 
 # --------------------------------------------------------------------------- #

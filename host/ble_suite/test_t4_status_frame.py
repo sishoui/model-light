@@ -346,15 +346,15 @@ async def test_ota_progress_throttle_1_percent_and_consistency():
     await asyncio.sleep(0)  # 让 run() 注册回调
 
     # BEGIN 应答：指纹匹配
-    transport.inject(build_ack_frame(0, 0, status=0))
+    transport.inject(build_ack_frame(0, status=0))
     # 逐片 ACK 推进整个镜像
     ack_up_to = -1
     while ack_up_to < total_chunks - 1:
         ack_up_to += 1
-        transport.inject(build_ack_frame(0, ack_up_to, status=0))
+        transport.inject(build_ack_frame(ack_up_to, status=0))
         await asyncio.sleep(0)
     # COMMIT 应答：已提交
-    transport.inject(build_ack_frame(0, 0, status=0))
+    transport.inject(build_ack_frame(0, status=0))
 
     result = await task
     assert result.ok
@@ -420,10 +420,10 @@ async def test_ota_progress_links_to_transmitting_status_frame(fake_transport):
     ack_up_to = -1
     while ack_up_to < total_chunks - 1:
         ack_up_to += 1
-        transport.inject(build_ack_frame(0, ack_up_to, status=0))
+        transport.inject(build_ack_frame(ack_up_to, status=0))
         await asyncio.sleep(0)
     # COMMIT 应答：已提交
-    transport.inject(build_ack_frame(0, 0, status=0))
+    transport.inject(build_ack_frame(0, status=0))
 
     result = await task
     assert result.ok

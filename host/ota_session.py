@@ -21,12 +21,14 @@ PC 端（代替手机侧）的 OTA 会话封装：OTA_BEGIN 指纹首包、分�
     0x24 ABORT     主机→设备：空；设备执行 esp_ota_abort
     0x25 RESUME    主机→设备：续传请求
 
-设备→主机应答（同一帧格式）：
+设备→主机应答：
 
-    OTA_BEGIN 应答：ACK(0x05)，status(1) = 0 指纹匹配/可开始，1 指纹不符（静默作废旧会话）
-    QUERY 应答    ：cmd(0x21)，payload = bytes_written(4 LE)
-    COMMIT 应答   ：ACK(0x05)，status(1) = 0 已提交并重启，1 提交失败（已 esp_ota_abort）
-    ABORT 应答    ：ACK(0x05)，status(1)
+    OTA_BEGIN 应答：ACK(0x05)，§2.2 的 6 B 整帧（cmd(1)+ackUpTo(2)+nakMask(2)+
+        status(1)，无 seq），status(1) = 0 指纹匹配/可开始，1 指纹不符（静默作废旧会话）
+    QUERY 应答    ：cmd(0x21) + seq(2) + payload = bytes_written(4 LE)
+    COMMIT 应答   ：ACK(0x05)（6 B，无 seq），status(1) = 0 已提交并重启，
+                    1 提交失败（已 esp_ota_abort）
+    ABORT 应答    ：ACK(0x05)（6 B，无 seq），status(1)
 
 DATA 流控复用 §2.2：窗口 8 片在途，ACK(0x05)/NAK(0x06) 累计确认 ackUpTo，
 per-ACK 3 s，连续 20 次无进展转「待续传」（发 QUERY，以设备回复的 bytes_written
