@@ -407,7 +407,7 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
 
     expect(h.getData().stages).toHaveLength(1);
     expect(h.getData().totalLabel).toBe('500 ms');
-    expect(h.getData().stages[0].thumbs[0].label).toBe('背·bg.solid');
+    expect(h.getData().stages[0].thumbs[0].label).toBe('背·纯色');
 
     // 加阶段：spec §3.3 默认 2000 ms
     await h.tap('onAddStage');
@@ -514,7 +514,7 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     const edit = h.getData().editStage;
     expect(edit.layers).toHaveLength(2);
     const dy = edit.layers.find((l) => l.role === 1);
-    expect(dy.effectLabel).toBe('dy.comet');
+    expect(dy.effectLabel).toBe('彗星');
     expect(dy.panel.map((p) => p.name)).toEqual(['color', 'tailLen', 'speedMs', 'reverse']);
     expect(dy.panel.map((p) => p.view)).toEqual(['color', 'range', 'range', 'bool']);
 
@@ -522,7 +522,7 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     await h.tap('onReplaceEffect', { currentTarget: { dataset: { layer: 0 } } });
     await h.tap('onPickEffect', { currentTarget: { dataset: { effect: 1 } } });
     const bg = h.getData().editStage.layers.find((l) => l.role === 0);
-    expect(bg.effectLabel).toBe('bg.gradient');
+    expect(bg.effectLabel).toBe('渐变');
     expect(bg.panel.map((p) => p.name)).toEqual(['colorA', 'colorB', 'reverse']);
 
     // 缓存：背景在前、动态在后

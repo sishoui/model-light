@@ -3,6 +3,7 @@
   "effects": [
     {
       "id": "bg.solid",
+      "name": "纯色",
       "role": 0,
       "params": [
         {
@@ -13,6 +14,7 @@
     },
     {
       "id": "bg.gradient",
+      "name": "渐变",
       "role": 0,
       "params": [
         {
@@ -31,6 +33,7 @@
     },
     {
       "id": "bg.breath",
+      "name": "呼吸",
       "role": 0,
       "params": [
         {
@@ -55,6 +58,7 @@
     },
     {
       "id": "bg.rainbowLow",
+      "name": "低彩彩虹",
       "role": 0,
       "params": [
         {
@@ -82,6 +86,7 @@
     },
     {
       "id": "bg.flame",
+      "name": "火焰",
       "role": 0,
       "params": [
         {
@@ -103,6 +108,7 @@
     },
     {
       "id": "dy.comet",
+      "name": "彗星",
       "role": 1,
       "params": [
         {
@@ -131,6 +137,7 @@
     },
     {
       "id": "dy.scan",
+      "name": "扫描",
       "role": 1,
       "params": [
         {
@@ -164,6 +171,7 @@
     },
     {
       "id": "dy.blink",
+      "name": "闪烁",
       "role": 1,
       "params": [
         {
@@ -195,6 +203,7 @@
     },
     {
       "id": "dy.rainbowFlow",
+      "name": "彩虹流",
       "role": 1,
       "params": [
         {
@@ -222,6 +231,7 @@
     },
     {
       "id": "dy.sparkle",
+      "name": "星闪",
       "role": 1,
       "params": [
         {
@@ -246,6 +256,7 @@
     },
     {
       "id": "dy.pulse",
+      "name": "脉冲",
       "role": 1,
       "params": [
         {
@@ -274,6 +285,7 @@
     },
     {
       "id": "dy.colorWipe",
+      "name": "色彩擦除",
       "role": 1,
       "params": [
         {

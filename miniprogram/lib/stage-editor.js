@@ -23,12 +23,10 @@ const PARAM_LABELS = {
   wipeMs: '擦除时长 (ms)', holdMs: '保持时长 (ms)',
 };
 
-const EFFECT_NAMES = {};
-EFFECTS.forEach((e, i) => { EFFECT_NAMES[i] = e.id; });
-
 function displayName(effectIndex) {
   const fx = EFFECTS[effectIndex];
-  return fx ? fx.id : `灯效 ${effectIndex}`;
+  if (!fx) return `灯效 ${effectIndex}`;
+  return fx.name || fx.id;
 }
 
 function effectRole(effectIndex) {
