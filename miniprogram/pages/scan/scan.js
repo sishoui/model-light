@@ -75,20 +75,25 @@ Page({
 
   async stopScan() {
     this._stopScanTimer();
-    if (this.scanHandle) {
-      const handle = this.scanHandle;
-      this.scanHandle = null;
+    const handle = this.scanHandle;
+    this.scanHandle = null;
+    this.setData({ scanning: false }); // 先更新 UI（停止/重新扫描按钮立即切换），BLE 后台停
+    if (handle) {
       await handle.stop().catch(() => {});
     }
-    this.setData({ scanning: false });
   },
 
-  // 停止 / 取消：扫描时点停止扫描；连接时点取消连接并返回
+  // 停止 / 取消 / 重新扫描：连接时点取消连接并返回；扫描中点停止；扫描已停（超时/手动）点重新开扫
   onTapStop() {
     if (this._connecting) {
       this._disconnectedByUser = true;
       this.ble.disconnect();
       wx.navigateBack();
+      return;
+    }
+    if (!this.data.scanning) {
+      // 扫描已停止：重新开扫（超时后停止按钮变「重新扫描」）
+      this.startScan();
       return;
     }
     this.stopScan();

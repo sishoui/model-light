@@ -286,6 +286,11 @@ Page({
           this.deviceList.remove(device.name);
           this.arrangementStore.remove(device.name);
           this._online.delete(device.name);
+          this._deviceIds.delete(device.name);
+          const app = safeGetApp();
+          if (app && typeof app.forgetDevice === 'function') {
+            try { app.forgetDevice(device.name); } catch (e) { /* 忽略 */ }
+          }
           this.setData({ menuOpen: false });
           this._refreshDevices();
           wx.showToast({ title: '已删除', icon: 'success' });

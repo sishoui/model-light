@@ -76,6 +76,21 @@ describe('扫描页 scan（独立添加设备）', () => {
     expect(nav.type).toBe('navigateBack');
   });
 
+  it('扫描已停止时点停止按钮 → 重新开扫（超时后「停止」变「重新扫描」）', async () => {
+    h = createPageHarness(PAGE);
+    await h.tap('onShow');
+    await flush();
+    expect(h.getData().scanning).toBe(true);
+
+    // 扫描中点停止 → scanning=false
+    await h.tap('onTapStop');
+    expect(h.getData().scanning).toBe(false);
+
+    // 再次点停止按钮（此时文案是「重新扫描」）→ 重新开扫
+    await h.tap('onTapStop');
+    expect(h.getData().scanning).toBe(true);
+  });
+
   it('连接失败时提示错误，停留扫描页', async () => {
     h = createPageHarness(PAGE);
     await h.tap('onShow');

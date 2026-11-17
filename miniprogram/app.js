@@ -28,4 +28,16 @@ App({
   knownDeviceNames() {
     return Object.keys(this.globalData.knownDevices);
   },
+
+  /** 删除设备时清除 knownDevices 缓存（设备名 + 持久化 deviceId） */
+  forgetDevice(name) {
+    const known = this.globalData.knownDevices;
+    if (!known || !known[name]) return;
+    delete known[name];
+    const persisted = {};
+    for (const [k, v] of Object.entries(known)) {
+      persisted[k] = { lastDeviceId: v.lastDeviceId || '', lastSeenAt: v.lastSeenAt };
+    }
+    wx.setStorageSync('knownDevices', persisted);
+  },
 });
