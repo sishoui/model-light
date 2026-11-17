@@ -28,34 +28,34 @@ test('bg.solid 只能放背景层，dy.* 只能放动态层（role 约束）', (
   }
 });
 
-test('参数类型只允许 color / int / enum / bool / speed，含取值范围', () => {
-  const allowed = new Set(['color', 'int', 'enum', 'bool', 'speed']);
+test('参数类型只允许 color / int / byte / enum / bool / speed，含取值范围', () => {
+  const allowed = new Set(['color', 'int', 'byte', 'enum', 'bool', 'speed']);
   for (const fx of EFFECTS) {
     assert.ok(fx.params.length > 0, fx.id);
     for (const p of fx.params) {
       assert.ok(allowed.has(p.type), `${fx.id}.${p.name} 类型 ${p.type}`);
-      if (p.type === 'int') assert.ok(p.min <= p.max, `${fx.id}.${p.name}`);
+      if (p.type === 'int' || p.type === 'byte') assert.ok(p.min <= p.max, `${fx.id}.${p.name}`);
       if (p.type === 'enum') assert.ok(Array.isArray(p.options) && p.options.length > 0, `${fx.id}.${p.name}`);
     }
   }
 });
 
-test('抽查：bg.breath = color + periodMs(int) + minLevel(int 0-100)', () => {
+test('抽查：bg.breath = color + periodMs(int) + minLevel(byte 0-100)', () => {
   const fx = getEffect('bg.breath');
   assert.deepStrictEqual(fx.params.map((p) => [p.name, p.type]), [
-    ['color', 'color'], ['periodMs', 'int'], ['minLevel', 'int'],
+    ['color', 'color'], ['periodMs', 'int'], ['minLevel', 'byte'],
   ]);
   assert.strictEqual(fx.params[2].min, 0);
   assert.strictEqual(fx.params[2].max, 100);
 });
 
-test('抽查：dy.scan 含 speedMs(speed) 与 direction(enum)', () => {
+test('抽查：dy.scan 含 speedMs(speed) 与 direction(enum)、width(byte)', () => {
   const fx = getEffect('dy.scan');
   const types = Object.fromEntries(fx.params.map((p) => [p.name, p.type]));
   assert.strictEqual(types.color, 'color');
   assert.strictEqual(types.speedMs, 'speed');
   assert.strictEqual(types.direction, 'enum');
-  assert.strictEqual(types.width, 'int');
+  assert.strictEqual(types.width, 'byte');
 });
 
 test('抽查：bg.gradient 与 dy.pulse 含 bool 参数', () => {
@@ -69,12 +69,12 @@ test('encodeParams/decodeParams 往返一致（bg.solid：color 3B）', () => {
   assert.deepStrictEqual(decodeParams(getEffect(0), bytes), { color: [255, 128, 0] });
 });
 
-test('encodeParams：speed 类型 2 字节小端（speedMs 可超 255）', () => {
+test('encodeParams：speed 类型 2 字节小端（speedMs 可超 255），byte 类型 1 字节', () => {
   const fx = getEffect('dy.comet');
   const bytes = encodeParams(fx.id, { color: [10, 20, 30], tailLen: 8, speedMs: 1000, reverse: true });
-  assert.strictEqual(bytes.length, 3 + 2 + 2 + 1);
-  assert.deepStrictEqual([...bytes.slice(3, 5)], [8, 0]);
-  assert.deepStrictEqual([...bytes.slice(5, 7)], [1000 & 0xff, 1000 >> 8]);
+  assert.strictEqual(bytes.length, 3 + 1 + 2 + 1);
+  assert.deepStrictEqual([...bytes.slice(3, 4)], [8]);
+  assert.deepStrictEqual([...bytes.slice(4, 6)], [1000 & 0xff, 1000 >> 8]);
   assert.deepStrictEqual(decodeParams(fx, bytes),
     { color: [10, 20, 30], tailLen: 8, speedMs: 1000, reverse: true });
 });
@@ -82,12 +82,13 @@ test('encodeParams：speed 类型 2 字节小端（speedMs 可超 255）', () =>
 test('encodeParams：int 越界取值钳制到 range', () => {
   const bytes = encodeParams('bg.breath', { color: [0, 0, 0], periodMs: 3000, minLevel: 150 });
   // periodMs/max 与 minLevel/max 由 schema 决定，编码不抛错即说明有钳制
-  assert.ok(bytes.length >= 5);
+  assert.strictEqual(bytes.length, 3 + 2 + 1);
+  assert.strictEqual(bytes[5], 100); // minLevel 钳制到 max 100
 });
 
 test('decodeParams 忽略未知多余字节（前向兼容），缺省补默认值', () => {
   const fx = getEffect('bg.breath');
-  const out = decodeParams(fx, [255, 0, 0, 200, 0, 20, 0, 0xAA, 0xBB]);
+  const out = decodeParams(fx, [255, 0, 0, 200, 0, 20, 0xAA, 0xBB]);
   assert.strictEqual(out.periodMs, 200);
   assert.strictEqual(out.minLevel, 20);
 });

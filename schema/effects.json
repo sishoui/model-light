@@ -49,7 +49,7 @@
         },
         {
           "name": "minLevel",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 100,
           "default": 10
@@ -63,14 +63,14 @@
       "params": [
         {
           "name": "saturation",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 255,
           "default": 255
         },
         {
           "name": "brightness",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 255,
           "default": 128
@@ -99,7 +99,7 @@
         },
         {
           "name": "intensity",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 100,
           "default": 50
@@ -117,7 +117,7 @@
         },
         {
           "name": "tailLen",
-          "type": "int",
+          "type": "byte",
           "min": 1,
           "max": 255,
           "default": 8
@@ -146,7 +146,7 @@
         },
         {
           "name": "width",
-          "type": "int",
+          "type": "byte",
           "min": 1,
           "max": 255,
           "default": 4
@@ -194,7 +194,7 @@
         },
         {
           "name": "duty",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 100,
           "default": 50
@@ -208,14 +208,14 @@
       "params": [
         {
           "name": "saturation",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 255,
           "default": 255
         },
         {
           "name": "brightness",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 255,
           "default": 128
@@ -240,7 +240,7 @@
         },
         {
           "name": "density",
-          "type": "int",
+          "type": "byte",
           "min": 0,
           "max": 100,
           "default": 20
@@ -272,7 +272,7 @@
         },
         {
           "name": "width",
-          "type": "int",
+          "type": "byte",
           "min": 1,
           "max": 255,
           "default": 8

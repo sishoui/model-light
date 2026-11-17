@@ -115,7 +115,7 @@ function paramValues(layer, effectId, schema) {
     if (p.type === 'color') {
       out[p.name] = [bytes[o] ?? 0, bytes[o + 1] ?? 0, bytes[o + 2] ?? 0];
       o += 3;
-    } else if (p.type === 'bool' || p.type === 'enum') {
+    } else if (p.type === 'bool' || p.type === 'enum' || p.type === 'byte') {
       out[p.name] = bytes[o] ?? 0;
       o += 1;
     } else { // int / speed: u16 LE

@@ -110,8 +110,8 @@ test('addLayer: bg 灯效进背景层、dy 灯效进动态层，双层成立，�
   assert.strictEqual(layers[0].role, 0);
   assert.strictEqual(layers[1].role, 1);
   assert.strictEqual(layers[1].effectId, dyIndex);
-  // dy.comet 参数: color(3) + tailLen(2) + speedMs(2) + reverse(1) = 8
-  assert.strictEqual(layers[1].params.length, 8);
+  // dy.comet 参数: color(3) + tailLen(1 byte) + speedMs(2) + reverse(1) = 7
+  assert.strictEqual(layers[1].params.length, 7);
   assert.doesNotThrow(() => encode(arr));
 });
 
@@ -152,8 +152,8 @@ test('setLayerEffect: 换同 role 灯效，参数重置为默认；跨 role 拒�
   assert.strictEqual(r.ok, true);
   const layer = arr.pins[0].groups[0].stages[0].layers[0];
   assert.strictEqual(layer.effectId, breath);
-  // bg.breath 参数: color(3) + periodMs(2) + minLevel(2) = 7
-  assert.strictEqual(layer.params.length, 7);
+  // bg.breath 参数: color(3) + periodMs(2) + minLevel(1 byte) = 6
+  assert.strictEqual(layer.params.length, 6);
   const comet = EFFECTS.findIndex((e) => e.id === 'dy.comet');
   const bad = setLayerEffect(arr, 0, 0, 0, 0, comet);
   assert.strictEqual(bad.ok, false);
@@ -204,7 +204,7 @@ test('layerParamPanel: 五种类型字段齐全，值来自当前参数字节', 
   assert.strictEqual(color.type, 'color');
   assert.deepStrictEqual(color.value, [0, 0, 0]); // schema 默认黑
   const tail = panel[1];
-  assert.strictEqual(tail.type, 'int');
+  assert.strictEqual(tail.type, 'byte');
   assert.strictEqual(tail.min, 1);
   assert.strictEqual(tail.max, 255);
   assert.strictEqual(tail.value, 8); // schema 默认

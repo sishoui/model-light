@@ -13,41 +13,41 @@ const EFFECTS = [
   { id: 'bg.breath',     name: '呼吸',   role: 0, params: [
       { name: 'color', type: 'color' },
       { name: 'periodMs', type: 'int', min: 100, max: 2000, default: 1000 },
-      { name: 'minLevel', type: 'int', min: 0, max: 100, default: 10 } ] },
+      { name: 'minLevel', type: 'byte', min: 0, max: 100, default: 10 } ] },
   { id: 'bg.rainbowLow', name: '低彩彩虹', role: 0, params: [
-      { name: 'saturation', type: 'int', min: 0, max: 255, default: 255 },
-      { name: 'brightness', type: 'int', min: 0, max: 255, default: 128 },
+      { name: 'saturation', type: 'byte', min: 0, max: 255, default: 255 },
+      { name: 'brightness', type: 'byte', min: 0, max: 255, default: 128 },
       { name: 'periodMs', type: 'int', min: 100, max: 2000, default: 1000 } ] },
   { id: 'bg.flame',      name: '火焰',   role: 0, params: [
       { name: 'colorHot', type: 'color' }, { name: 'colorCold', type: 'color' },
-      { name: 'intensity', type: 'int', min: 0, max: 100, default: 50 } ] },
+      { name: 'intensity', type: 'byte', min: 0, max: 100, default: 50 } ] },
   { id: 'dy.comet',      name: '彗星',   role: 1, params: [
       { name: 'color', type: 'color' },
-      { name: 'tailLen', type: 'int', min: 1, max: 255, default: 8 },
+      { name: 'tailLen', type: 'byte', min: 1, max: 255, default: 8 },
       { name: 'speedMs', type: 'speed', min: 10, max: 1000, default: 200 },
       { name: 'reverse', type: 'bool' } ] },
   { id: 'dy.scan',       name: '扫描',   role: 1, params: [
       { name: 'color', type: 'color' },
-      { name: 'width', type: 'int', min: 1, max: 255, default: 4 },
+      { name: 'width', type: 'byte', min: 1, max: 255, default: 4 },
       { name: 'speedMs', type: 'speed', min: 10, max: 1000, default: 200 },
       { name: 'direction', type: 'enum', options: ['forward', 'backward'], default: 0 } ] },
   { id: 'dy.blink',      name: '闪烁',   role: 1, params: [
       { name: 'color', type: 'color' },
       { name: 'onMs', type: 'int', min: 10, max: 1000, default: 200 },
       { name: 'offMs', type: 'int', min: 10, max: 1000, default: 200 },
-      { name: 'duty', type: 'int', min: 0, max: 100, default: 50 } ] },
+      { name: 'duty', type: 'byte', min: 0, max: 100, default: 50 } ] },
   { id: 'dy.rainbowFlow', name: '彩虹流', role: 1, params: [
-      { name: 'saturation', type: 'int', min: 0, max: 255, default: 255 },
-      { name: 'brightness', type: 'int', min: 0, max: 255, default: 128 },
+      { name: 'saturation', type: 'byte', min: 0, max: 255, default: 255 },
+      { name: 'brightness', type: 'byte', min: 0, max: 255, default: 128 },
       { name: 'speedMs', type: 'speed', min: 10, max: 1000, default: 200 } ] },
   { id: 'dy.sparkle',    name: '星闪',   role: 1, params: [
       { name: 'color', type: 'color' },
-      { name: 'density', type: 'int', min: 0, max: 100, default: 20 },
+      { name: 'density', type: 'byte', min: 0, max: 100, default: 20 },
       { name: 'decayMs', type: 'int', min: 10, max: 1000, default: 300 } ] },
   { id: 'dy.pulse',      name: '脉冲',   role: 1, params: [
       { name: 'color', type: 'color' },
       { name: 'periodMs', type: 'int', min: 100, max: 2000, default: 1000 },
-      { name: 'width', type: 'int', min: 1, max: 255, default: 8 },
+      { name: 'width', type: 'byte', min: 1, max: 255, default: 8 },
       { name: 'fromCenter', type: 'bool' } ] },
   { id: 'dy.colorWipe',  name: '色彩擦除', role: 1, params: [
       { name: 'colorA', type: 'color' }, { name: 'colorB', type: 'color' },
@@ -78,11 +78,12 @@ function defaultValue(param) {
     case 'bool': return false;
     case 'speed': return 200;
     case 'int': return param.min ?? 0;
+    case 'byte': return param.min ?? 0;
     default: return 0;
   }
 }
 
-/** 按 schema 顺序编码参数：color 3B，bool 1B，enum 1B，int/speed 2B LE。 */
+/** 按 schema 顺序编码参数：color 3B，bool/enum/byte 1B，int/speed 2B LE。 */
 function encodeParams(idOrIndex, values = {}) {
   const fx = getEffect(idOrIndex);
   if (!fx) throw new Error(`未知灯效: ${idOrIndex}`);
@@ -94,8 +95,12 @@ function encodeParams(idOrIndex, values = {}) {
       out.push(v[0] & 0xff, v[1] & 0xff, v[2] & 0xff);
     } else if (p.type === 'bool') {
       out.push(v ? 1 : 0);
-    } else if (p.type === 'enum') {
-      out.push(Number(v) & 0xff);
+    } else if (p.type === 'enum' || p.type === 'byte') {
+      // enum / byte：u8，byte 钳制到 0-255
+      const n = p.type === 'byte'
+        ? clamp(Math.round(Number(v)), p.min ?? 0, p.max ?? 255)
+        : Number(v);
+      out.push(n & 0xff);
     } else {
       // int / speed：u16 LE，取值钳制到 range
       const n = clamp(Math.round(Number(v)), p.min ?? 0, p.max ?? 0xffff);
@@ -119,7 +124,7 @@ function decodeParams(idOrIndex, bytes) {
     } else if (p.type === 'bool') {
       out[p.name] = (data[o] ?? 0) !== 0;
       o += 1;
-    } else if (p.type === 'enum') {
+    } else if (p.type === 'enum' || p.type === 'byte') {
       out[p.name] = data[o] ?? 0;
       o += 1;
     } else {

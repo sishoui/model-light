@@ -73,7 +73,7 @@ function layerParamPanel(effectIndex, layer) {
       type: p.type,
       value: values[p.name],
     };
-    if (p.type === 'int') { field.min = p.min; field.max = p.max; }
+    if (p.type === 'int' || p.type === 'byte') { field.min = p.min; field.max = p.max; }
     if (p.type === 'speed') { field.min = p.min; field.max = p.max; }
     if (p.type === 'enum') field.options = p.options;
     if (p.type === 'bool') field.value = !!values[p.name];
