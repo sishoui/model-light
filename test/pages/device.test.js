@@ -293,17 +293,19 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     expect(store.load(NAME).pins[0].cover == null || store.load(NAME).pins[0].cover === '').toBe(true);
   });
 
-  it('给定已连接设备，当 onHide 再 onShow，则 onHide 断开 BLE、onShow 用缓存 deviceId 重连（#111）', async () => {
+  it('给定已连接设备，当 onHide 再 onShow，则 onHide 保持 BLE 连接只释放令牌、onShow 复用连接重订阅（避免 SUSPENDED 60s）', async () => {
     h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
     await flush();
 
     expect(h.bleState.connected).toBe(true);
 
     await h.tap('onHide');
-    expect(h.bleState.connected).toBe(false);
+    // onHide 不断连（保持 BLE 链路），只释放令牌 + 清 notify
+    expect(h.bleState.connected).toBe(true);
     expect(h.getData().connected).toBe(false);
 
     await h.tap('onShow');
+    // onShow 复用已有连接，直接重新订阅
     expect(h.bleState.connected).toBe(true);
     expect(h.bleState.deviceId).toBe(FAKE_DEVICE_ID);
     expect(h.getData().connected).toBe(true);

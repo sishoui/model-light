@@ -39,9 +39,10 @@ function createDeviceControl({ write, onCommandNotify, requestToken, timeoutMs =
 
   /** 订阅命令通道 notify（首次需要时再绑；ble.js 约定：回调收原始 Uint8Array）。 */
   function bind() {
-    if (unbind) return;
+    if (unbind) return unbind.ready || Promise.resolve();
     const u = onCommandNotify(onFrame);
     unbind = typeof u === 'function' ? u : null;
+    return (unbind && unbind.ready) || Promise.resolve();
   }
 
   /** 结算一个等待：摘除 pending、停表、resolve。幂等（迟到帧不重复结算）。 */
@@ -50,23 +51,41 @@ function createDeviceControl({ write, onCommandNotify, requestToken, timeoutMs =
     if (!entry) return;
     pending.delete(s);
     if (entry.timer !== null) clearTimeout(entry.timer);
+    console.log(`[dc] settle seq=${s} ok=${value.ok} reason=${value.reason || value.result}`);
     entry.resolve(value);
   }
 
   function onFrame(raw) {
+    if (!raw || raw.length < 3) return; // 命令帧至少 3 字节；状态帧 12 字节也会到这里，靠长度过滤
     let f;
     try {
       f = parseDeviceControlFrame(raw);
     } catch (e) {
-      return; // 短帧 / 坏帧静默丢弃（不打断 notify 链路）
+      console.warn('[dc] bad frame:', raw);
+      return;
+    }
+    console.log(`[dc] rx cmd=0x${f.cmd.toString(16).padStart(2, '0')} seq=${f.seq} len=${raw.length} pending=${pending.size}`);
+    // 固件端 token_send 回的 ACK seq 始终为 0，且某些固件版本回的 ACK cmd 可能不是 0x17。
+    // 单命令在途时放宽匹配：只看 payload[0] 是否为合法结果码，避免因 cmd 不匹配而丢 ACK。
+    if (pending.size === 1) {
+      const onlySeq = pending.keys().next().value;
+      const onlyEntry = pending.get(onlySeq);
+      if (onlyEntry && onlyEntry.waitCmd === CMD_DEVICE.ACK && f.payload.length >= 1) {
+        const result = f.payload[0];
+        console.log(`[dc] ACK matched (single-pending) seq=${onlySeq} result=${result}`);
+        settle(onlySeq, { ok: true, result });
+        return;
+      }
     }
     const entry = pending.get(f.seq);
-    if (!entry || entry.waitCmd !== f.cmd) return; // seq / cmd 不匹配 → 防串扰
+    if (!entry || entry.waitCmd !== f.cmd) {
+      console.warn(`[dc] frame dropped: cmd=0x${f.cmd.toString(16).padStart(2, '0')} seq=${f.seq} (no match, pending=${pending.size})`);
+      return;
+    }
+    console.log(`[dc] ACK matched seq=${f.seq} result=${f.payload[0]}`);
     if (f.cmd === CMD_DEVICE.ACK) {
-      // 命令 ACK：result 透传（OK / FAILED / UNSUPPORTED 由调用方判断）
       settle(f.seq, { ok: true, result: f.payload.length > 0 ? f.payload[0] : ACK_RESULT.FAILED });
     } else if (f.cmd === CMD_DEVICE.SCENE_REPORT) {
-      // 场景上报：与 pending 的查询匹配（下文 queryScene 注释说明 seq 假设）
       if (typeof entry.onReport === 'function') entry.onReport(f.payload);
       settle(f.seq, { ok: true, bytes: f.payload });
     }
@@ -78,14 +97,18 @@ function createDeviceControl({ write, onCommandNotify, requestToken, timeoutMs =
    * @param {(seq:number)=>Uint8Array} buildFrame
    * @param {object} opts { waitCmd, onReport }
    */
-  function sendCommand(buildFrame, { waitCmd = CMD_DEVICE.ACK, onReport = null } = {}) {
+  async function sendCommand(buildFrame, { waitCmd = CMD_DEVICE.ACK, onReport = null } = {}) {
+    await bind(); // 等 notify 订阅就绪再发，避免 ACK 在订阅完成前到达而丢失
     const s = nextSeq();
     const frame = buildFrame(s);
-    bind();
+    console.log(`[dc] tx cmd=0x${frame[0].toString(16).padStart(2, '0')} seq=${s} len=${frame.length}`);
     return new Promise((resolve) => {
       const entry = { resolve, timer: null, waitCmd, onReport };
       pending.set(s, entry);
-      entry.timer = setTimeout(() => settle(s, { ok: false, reason: 'timeout' }), timeoutMs);
+      entry.timer = setTimeout(() => {
+        console.warn(`[dc] timeout cmd=0x${frame[0].toString(16).padStart(2, '0')} seq=${s} (no ACK in ${timeoutMs}ms)`);
+        settle(s, { ok: false, reason: 'timeout' });
+      }, timeoutMs);
       let w;
       try {
         w = write(frame);
@@ -99,36 +122,44 @@ function createDeviceControl({ write, onCommandNotify, requestToken, timeoutMs =
     });
   }
 
-  /** requestToken 真值 = 持令牌；{ granted: false }（token-client 形态）= 无令牌。 */
+  /** requestToken 真值 = 持令牌；{ granted: false }（token-client 形态）= 无令牌。
+   * 返回 { ok, reason } 让调用方把 tokenReason 透给 UI。 */
   async function ensureToken() {
     const t = await requestToken();
-    return !!t && t.granted !== false;
+    if (!t || t.granted === false) {
+      return { ok: false, reason: t?.reason || 'no-token' };
+    }
+    return { ok: true };
   }
 
   /**
    * 开 / 关灯（on truthy → 1，否则 0）。
-   * @returns {Promise<{ok:true, result:number} | {ok:false, reason:string}>}
+   * @returns {Promise<{ok:true, result:number} | {ok:false, reason:string, tokenReason?:string}>}
    */
   async function setPower(on) {
-    if (!(await ensureToken())) return { ok: false, reason: 'no-token' };
+    const tk = await ensureToken();
+    if (!tk.ok) return { ok: false, reason: 'no-token', tokenReason: tk.reason };
     return sendCommand((s) => buildSetPowerFrame(s, on));
   }
 
   /** 亮度 0–100（越界由 buildSetBrightnessFrame 抛 RangeError）。 */
   async function setBrightness(pct) {
-    if (!(await ensureToken())) return { ok: false, reason: 'no-token' };
+    const tk = await ensureToken();
+    if (!tk.ok) return { ok: false, reason: 'no-token', tokenReason: tk.reason };
     return sendCommand((s) => buildSetBrightnessFrame(s, pct));
   }
 
   /** 灯珠数（pin 0–7、count 0–255；越界由 buildSetLedCountFrame 抛 RangeError）。 */
   async function setLedCount(pin, count) {
-    if (!(await ensureToken())) return { ok: false, reason: 'no-token' };
+    const tk = await ensureToken();
+    if (!tk.ok) return { ok: false, reason: 'no-token', tokenReason: tk.reason };
     return sendCommand((s) => buildSetLedCountFrame(s, pin, count));
   }
 
   /** 激活场景槽（slot 取低 2 位，0–3）。 */
   async function activateScene(slot) {
-    if (!(await ensureToken())) return { ok: false, reason: 'no-token' };
+    const tk = await ensureToken();
+    if (!tk.ok) return { ok: false, reason: 'no-token', tokenReason: tk.reason };
     return sendCommand((s) => buildActivateSceneFrame(s, slot));
   }
 
@@ -140,7 +171,8 @@ function createDeviceControl({ write, onCommandNotify, requestToken, timeoutMs =
    * onReport（可选）：匹配的上报到达时以 payload 调用（页面可先更新 UI）。
    */
   async function queryScene(slot, onReport) {
-    if (!(await ensureToken())) return { ok: false, reason: 'no-token' };
+    const tk = await ensureToken();
+    if (!tk.ok) return { ok: false, reason: 'no-token', tokenReason: tk.reason };
     return sendCommand(
       (s) => buildSceneQueryFrame(s, slot),
       { waitCmd: CMD_DEVICE.SCENE_REPORT, onReport: typeof onReport === 'function' ? onReport : null },

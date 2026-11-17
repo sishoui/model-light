@@ -22,6 +22,16 @@ function call(wxApi, name, options) {
   });
 }
 
+/** 给 BLE 操作加超时：WeChat BLE API 偶尔不回调 success/fail，导致 UI 永久卡住。 */
+function callWithTimeout(wxApi, name, options, timeoutMs, label) {
+  return Promise.race([
+    call(wxApi, name, options),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label || name}超时（${timeoutMs}ms）`)), timeoutMs);
+    }),
+  ]);
+}
+
 // 模拟模式开关（storage: mock:enabled）。仅当 wx 提供 getStorageSync 时生效。
 function isMockEnabled(wxApi) {
   try {
@@ -48,6 +58,8 @@ function createBleClient(wxApi) {
     try {
       await call(wxApi, 'openBluetoothAdapter', {});
     } catch (e) {
+      // errCode 10001 = 适配器已打开，忽略
+      if (e && e.errCode === 10001) return;
       const err = new Error('蓝牙适配器打开失败，请检查系统蓝牙');
       err.cause = e;
       throw err;
@@ -85,16 +97,41 @@ function createBleClient(wxApi) {
 
   async function connect(id) {
     deviceId = id;
-    await call(wxApi, 'createBLEConnection', { deviceId });
-    connected = true;
-    // §2.5 重连流程：订阅状态帧 → 读设备信息
-    await call(wxApi, 'getBLEDeviceServices', { deviceId });
-    await call(wxApi, 'notifyBLECharacteristicValueChange', {
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_STATUS,
-      state: true,
-    });
+    // 确保适配器已打开（直接从设备页进入时可能没扫过描）
+    await openAdapter();
+    // 微信 createBLEConnection 对已连接设备可能不回调 → 超时。
+    // 先查 getConnectedBluetoothDevices，已连接则跳过 createBLEConnection。
+    let alreadyConnected = false;
+    try {
+      const res = await callWithTimeout(wxApi, 'getConnectedBluetoothDevices',
+        { services: [SERVICE_UUID] }, 3000, '查询已连接设备');
+      alreadyConnected = (res.devices || []).some(d => d.deviceId === id);
+    } catch (e) { /* 查询失败则回退到 createBLEConnection */ }
+    if (alreadyConnected) {
+      connected = true;
+    } else {
+      if (connected) {
+        await call(wxApi, 'closeBLEConnection', { deviceId }).catch(() => {});
+        connected = false;
+      }
+      await callWithTimeout(wxApi, 'createBLEConnection', { deviceId }, 15000, '连接设备');
+      connected = true;
+    }
+    try {
+      // §2.5 重连流程：订阅状态帧 → 读设备信息
+      await callWithTimeout(wxApi, 'getBLEDeviceServices', { deviceId }, 8000, '发现服务');
+      await callWithTimeout(wxApi, 'notifyBLECharacteristicValueChange', {
+        deviceId,
+        serviceId: SERVICE_UUID,
+        characteristicId: CHAR_STATUS,
+        state: true,
+      }, 5000, '订阅状态帧');
+    } catch (e) {
+      // 连接已建立但服务/notify 失败：断开回滚，让调用方走重连逻辑
+      connected = false;
+      await call(wxApi, 'closeBLEConnection', { deviceId }).catch(() => {});
+      throw e;
+    }
   }
 
   /**
@@ -130,22 +167,77 @@ function createBleClient(wxApi) {
   }
 
   /**
+   * 全局 BLE notify 分发器：wx.onBLECharacteristicValueChange 只能注册一个
+   * handler（多次调用会互相覆盖），所以这里维护一个 Map，所有订阅共用一个
+   * 全局 handler，按 characteristicId 分发到对应的回调集合。
+   */
+  const _notifyMap = new Map(); // characteristicId(upper) → Set<callback>
+  let _globalHandlerBound = false;
+
+  function _globalNotifyHandler(res) {
+    const cid = (res.characteristicId || '').toUpperCase();
+    const bytes = res.value ? new Uint8Array(res.value) : new Uint8Array(0);
+    console.log(`[ble] notify cid=${cid} len=${bytes.length} head=[${Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
+    // 广播模式：所有 notify 帧发给所有已订阅的回调，由各自 handler 自己按长度/cmd 过滤。
+    // 避免微信对 characteristicId 返回短/长 UUID 不一致导致帧漏发。
+    for (const [, cbs] of _notifyMap) {
+      if (cbs.size === 0) continue;
+      for (const cb of Array.from(cbs)) {
+        try { cb(bytes); } catch (e) { /* ignore */ }
+      }
+    }
+  }
+
+  function _ensureGlobalHandler() {
+    if (_globalHandlerBound) return;
+    wxApi.onBLECharacteristicValueChange(_globalNotifyHandler);
+    _globalHandlerBound = true;
+  }
+
+  function _removeNotifyHandler() {
+    if (!_globalHandlerBound) return;
+    wxApi.offBLECharacteristicValueChange(_globalNotifyHandler);
+    _globalHandlerBound = false;
+  }
+
+  /**
    * 订阅某个特征的 notify，返回解绑函数。
-   * 命令(0001)/编排 ACK(0003)/OTA(0006) 三处共用：回调收原始 Uint8Array，
-   * 订阅失败静默（与 §2.3 无 ACK 通道一致），解绑同步生效。
+   * 命令(0001)/编排 ACK(0003)/OTA(0006) 三处共用：回调收原始 Uint8Array。
    */
   function _notifyWatcher(characteristicId, callback) {
-    const handler = (res) => callback(new Uint8Array(res.value));
-    wxApi.onBLECharacteristicValueChange(handler);
-    call(wxApi, 'notifyBLECharacteristicValueChange', {
+    const key = characteristicId.toUpperCase();
+    if (!(_notifyMap.has(key))) _notifyMap.set(key, new Set());
+    _notifyMap.get(key).add(callback);
+    // 同时用短 UUID 后4位存一份，防止微信返回短 ID 时匹配不上
+    const shortKey = key.slice(-4);
+    if (shortKey !== key) {
+      if (!(_notifyMap.has(shortKey))) _notifyMap.set(shortKey, new Set());
+      _notifyMap.get(shortKey).add(callback);
+    }
+    _ensureGlobalHandler();
+    // notify 订阅是异步的（CCCD 写入需时间）；返回 ready Promise 让调用方
+    // 能等到订阅完成后再发命令，避免设备回复在订阅就绪前到达而丢失。
+    const ready = call(wxApi, 'notifyBLECharacteristicValueChange', {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId,
       state: true,
-    }).catch(() => {});
-    return () => {
-      wxApi.offBLECharacteristicValueChange(handler);
+    });
+    const unbind = () => {
+      const cbs = _notifyMap.get(key);
+      if (cbs) {
+        cbs.delete(callback);
+        if (cbs.size === 0) _notifyMap.delete(key);
+      }
+      const scbs = _notifyMap.get(shortKey);
+      if (scbs && shortKey !== key) {
+        scbs.delete(callback);
+        if (scbs.size === 0) _notifyMap.delete(shortKey);
+      }
+      if (_notifyMap.size === 0) _removeNotifyHandler();
     };
+    unbind.ready = ready;
+    return unbind;
   }
 
   /**
@@ -210,17 +302,13 @@ function createBleClient(wxApi) {
 
   /** 订阅状态帧回调；返回解绑函数 */
   function onStatusFrame(callback) {
-    const handler = (res) => {
+    return _notifyWatcher(CHAR_STATUS, (bytes) => {
+      // 只处理 12 字节状态帧；其他长度（命令/OTA）静默丢弃
+      if (bytes.length !== 12) return;
       const { parseStatusFrame } = require('./status-frame');
-      const frame = parseStatusFrame(res.value);
+      const frame = parseStatusFrame(bytes);
       if (frame) callback(frame);
-    };
-    notifyBound = handler;
-    wxApi.onBLECharacteristicValueChange(handler);
-    return () => {
-      wxApi.offBLECharacteristicValueChange(handler);
-      notifyBound = null;
-    };
+    });
   }
 
   /**
@@ -243,11 +331,13 @@ function createBleClient(wxApi) {
   }
 
   async function disconnect() {
-    if (deviceId) {
-      await call(wxApi, 'closeBLEConnection', { deviceId }).catch(() => {});
-    }
+    // 先同步清标志，再异步关连接——避免 onHide 不 await 时重连读到旧 connected=true
+    const id = deviceId;
     connected = false;
     deviceId = null;
+    if (id) {
+      await call(wxApi, 'closeBLEConnection', { deviceId: id }).catch(() => {});
+    }
   }
 
   return {

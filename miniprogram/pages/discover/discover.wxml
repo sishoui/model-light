@@ -93,4 +93,11 @@
       </view>
     </view>
   </view>
+
+  <!-- 调试（模拟）模式横幅：开启时显示，点按关闭并重启 -->
+  <view wx:if="{{mockEnabled}}" class="debug-bar" bindtap="onTapDisableMock">
+    <text class="debug-dot">●</text>
+    <text class="debug-text">调试模式（模拟设备）</text>
+    <text class="debug-action">关闭</text>
+  </view>
 </view>

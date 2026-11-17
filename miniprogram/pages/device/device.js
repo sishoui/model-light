@@ -103,9 +103,11 @@ Page({
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
     this._reconnectTimer = null;
+    // 释放令牌（停心跳）但保持 BLE 连接——避免 SUSPENDED 60s 导致重连带不回令牌
+    if (this._tokenClient) this._tokenClient.release();
     this._cleanupBle();
     this.setData({ connected: false, reconnecting: false });
-    if (this.ble) this.ble.disconnect();
+    // 不 ble.disconnect()：保持连接，onShow 直接复用
   },
 
   async onShow() {
@@ -149,6 +151,9 @@ Page({
 
   onBleDisconnected() {
     if (this._disconnectedByUser) return;
+    // 系统回调断连时 BLE 链路已断；调 ble.disconnect() 把适配层 connected 标志
+    // 同步为 false，否则重连时 createBLEConnection 会被跳过或行为异常。
+    if (this.ble) this.ble.disconnect();
     this.setData({ connected: false, reconnecting: true });
     this._cleanupBle();
     this.scheduleReconnect();
@@ -156,13 +161,19 @@ Page({
 
   async connect() {
     if (!this.deviceId) return;
+    if (this._connecting) return; // 防重入
+    this._connecting = true;
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
     try {
-      await this.ble.connect(this.deviceId);
-      resetBackoff(this.backoff);
+      if (this.ble && this.ble.isConnected) {
+        // BLE 链路仍在（onHide 没断），直接重新订阅 + 重启令牌客户端
+      } else {
+        await this.ble.connect(this.deviceId);
+        resetBackoff(this.backoff);
+      }
       this._offStatus = this.ble.onStatusFrame((frame) => {
         this._statusCache.save(this._deviceName, frame);
         this.applyFrame(frame);
@@ -175,11 +186,14 @@ Page({
       }
       this.reloadPins();
       await this.probeDeviceCapabilities();
+      if (this._tokenTimer) clearInterval(this._tokenTimer);
       this._tokenTimer = setInterval(() => {
         if (this._tokenClient) this._tokenClient.tick();
       }, 2000);
     } catch (e) {
       this.scheduleReconnect();
+    } finally {
+      this._connecting = false;
     }
   },
 
@@ -243,20 +257,37 @@ Page({
   },
 
   async _dcRequestToken() {
-    if (!this._tokenClient) return { granted: false, reason: 'no-token' };
-    return this._tokenClient.requestToken();
+    if (!this._tokenClient) return { granted: false, reason: 'no-token', tokenReason: 'no-token' };
+    const r = await this._tokenClient.requestToken();
+    // 把 token-client 的细分 reason 透传到 _ackMessage
+    if (r && r.granted === false && r.reason) {
+      return { granted: false, reason: 'no-token', tokenReason: r.reason };
+    }
+    return r;
   },
 
   _ackMessage(r) {
     if (!r) return '设备控制失败';
     if (r.ok) {
-      if (r.result === ACK_RESULT.OK) return null;
       if (r.result === ACK_RESULT.FAILED) return '设备拒绝：未获得控制令牌或操作失败';
       if (r.result === ACK_RESULT.UNSUPPORTED) return '固件版本不支持此控制命令';
-      return `设备返回未知结果 ${r.result}`;
+      // 固件版本差异容忍：0x17 ACK 的 result 字段可能位置不一，只要 ok=true
+      // 且不是明确的失败码，就当作命令成功下发。
+      return null;
+    }
+    // no-token 细分：token-client 回的 granted:false 会带 reason
+    if (r.reason === 'no-token' && r.tokenReason) {
+      const sub = {
+        'timeout': '令牌请求超时（设备未回 GRANT）',
+        'denied': '令牌被拒绝（设备已有持有者）',
+        'busy': '令牌忙（设备正在交接中）',
+        'write-failed': '令牌请求发送失败（notify 未就绪或 write 异常）',
+        'no-token': '令牌客户端未就绪',
+      };
+      return sub[r.tokenReason] || `令牌获取失败（${r.tokenReason}）`;
     }
     const why = {
-      'no-token': '未获得控制令牌（他人占用中或设备无应答）',
+      'no-token': '未获得控制令牌（令牌客户端未就绪）',
       'timeout': '设备无响应（超时）',
       'write-failed': '命令发送失败',
       'disposed': '页面已卸载',

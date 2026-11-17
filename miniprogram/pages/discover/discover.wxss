@@ -100,3 +100,16 @@
 }
 .btn-ghost { background: #ffffff; color: #8a94a6; box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff; }
 .btn-primary { background: #60a5fa; color: #ffffff; }
+
+/* ---- 调试（模拟）模式横幅 ---- */
+.debug-bar {
+  position: fixed; left: 24rpx; right: 24rpx; bottom: calc(24rpx + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 12rpx;
+  background: #fff7e6; border: 2rpx solid #f0c36d; border-radius: 20rpx;
+  padding: 18rpx 24rpx; z-index: 40;
+  box-shadow: 4rpx 4rpx 8rpx #cfd6e0, -4rpx -4rpx 8rpx #ffffff;
+}
+.debug-bar:active { background: #ffedc2; }
+.debug-dot { color: #e6a23c; font-size: 22rpx; }
+.debug-text { flex: 1; color: #b8860b; font-size: 26rpx; font-weight: 600; }
+.debug-action { color: #d66a6a; font-size: 26rpx; font-weight: 600; }

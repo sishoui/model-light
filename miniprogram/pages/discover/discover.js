@@ -31,6 +31,7 @@ Page({
     menuDevice: null,
     renameOpen: false,
     renameDraft: '',
+    mockEnabled: false,   // 调试（模拟）模式是否开启；开启时底部显示关闭入口
   },
 
   onLoad() {
@@ -41,11 +42,26 @@ Page({
     this.scanHandle = null;
     this._online = new Set();   // 本次会话内已连接的设备（内存态，不落盘）
     this._deviceIds = new Map(); // 本次会话内已知 deviceId（§2.7：仅内存，不落盘）
+    // 从 app.globalData 恢复本会话内已知 deviceId（app.js rememberDevice 存的）
+    const app = safeGetApp();
+    if (app && app.globalData && app.globalData.knownDevices) {
+      for (const [name, info] of Object.entries(app.globalData.knownDevices)) {
+        if (info && info.lastDeviceId) this._deviceIds.set(name, info.lastDeviceId);
+      }
+    }
     this._refreshDevices();
+    this._refreshMockState();
   },
 
   onShow() {
     this._refreshDevices();
+    this._refreshMockState();
+  },
+
+  onHide() {
+    // 只停扫描，不断连——保持 BLE 链路让设备页复用或 createBLEConnection 幂等返回
+    this._stopScanTimer();
+    this.stopScan();
   },
 
   onUnload() {
@@ -233,6 +249,20 @@ Page({
 
   onRenameCancel() {
     this.setData({ renameOpen: false });
+  },
+
+  // 调试（模拟）模式：读 storage mock:enabled，底部横幅据此显示关闭入口
+  _refreshMockState() {
+    let on = false;
+    try { on = !!wx.getStorageSync('mock:enabled'); } catch (e) { on = false; }
+    this.setData({ mockEnabled: on });
+  },
+
+  // 关闭调试模式：清 storage → 重启到首页（下次 createBleClient 走真机链路）
+  onTapDisableMock() {
+    try { wx.removeStorageSync('mock:enabled'); } catch (e) { /* ignore */ }
+    wx.showToast({ title: '已关闭调试模式，正在重启', icon: 'none' });
+    setTimeout(() => wx.reLaunch({ url: '/pages/discover/discover' }), 300);
   },
 
   // 阻止面板内部点击冒泡到遮罩（WXML catchtap 目标）

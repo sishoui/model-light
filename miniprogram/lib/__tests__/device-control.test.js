@@ -81,11 +81,11 @@ describe('device-control（命令通道 ...0001）', () => {
       timeoutMs: 1000,
     });
     const dcNull = mk(async () => null);
-    await expect(dcNull.setPower(true)).resolves.toEqual({ ok: false, reason: 'no-token' });
+    await expect(dcNull.setPower(true)).resolves.toMatchObject({ ok: false, reason: 'no-token' });
     const dcDenied = mk(async () => ({ granted: false, reason: 'denied' }));
-    await expect(dcDenied.setBrightness(50)).resolves.toEqual({ ok: false, reason: 'no-token' });
+    await expect(dcDenied.setBrightness(50)).resolves.toMatchObject({ ok: false, reason: 'no-token', tokenReason: 'denied' });
     const dcQuery = mk(async () => null);
-    await expect(dcQuery.queryScene(0)).resolves.toEqual({ ok: false, reason: 'no-token' });
+    await expect(dcQuery.queryScene(0)).resolves.toMatchObject({ ok: false, reason: 'no-token' });
     expect(ble.frames.length).toBe(0);
     dcNull.dispose();
     dcDenied.dispose();

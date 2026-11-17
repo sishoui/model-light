@@ -39,18 +39,28 @@ function createTokenClient(ble, { now = ble.now ? () => ble.now() : defaultNow, 
 
   function write(cmd, payload) {
     const s = seq++ & 0xffff;
-    return ble.write(buildTokenFrame(cmd, s, payload));
+    const frame = buildTokenFrame(cmd, s, payload);
+    const p = ble.write(frame);
+    // 写失败不能静默吞——否则调用方等 GRANT 超时，误以为设备无应答
+    if (p && typeof p.catch === 'function') {
+      p.catch((e) => {
+        console.error(`[token] write cmd=0x${cmd.toString(16).padStart(2, '0')} failed:`, e);
+      });
+    }
+    return p;
   }
 
   function onFrame(raw) {
     if (!raw || raw.length < 3) return;
     const cmd = raw[0];
+    console.log(`[token] rx cmd=0x${cmd.toString(16).padStart(2, '0')} len=${raw.length} seq=${raw[1] | (raw[2] << 8)}`);
     if (cmd === CMD_TOKEN.GRANT && pendingGrant) {
       const p = pendingGrant;
       pendingGrant = null;
       const result = raw[3] ?? TOKEN_DENIED;
       holding = result === TOKEN_GRANTED;
       lastHeartbeatAt = now();
+      console.log(`[token] GRANT result=0x${result.toString(16).padStart(2, '0')} holding=${holding}`);
       p.resolve(holding ? { granted: true } : { granted: false, reason: result === TOKEN_BUSY ? 'busy' : 'denied' });
       return;
     }
@@ -63,10 +73,13 @@ function createTokenClient(ble, { now = ble.now ? () => ble.now() : defaultNow, 
   }
 
   function bind() {
-    if (unbind) return;
+    if (unbind) return unbind.ready || Promise.resolve();
     const subscribe = ble.onCommand || ble.onCommandNotify;
     const u = subscribe.call(ble, onFrame);
     unbind = typeof u === 'function' ? u : null;
+    // notify 订阅（CCCD 写入）是异步的；返回 ready 让调用方等订阅完成
+    // 订阅失败时 ready reject → requestToken 的 await 抛错 → 调用方走 write-failed
+    return (unbind && unbind.ready) || Promise.resolve();
   }
 
   /**
@@ -75,20 +88,38 @@ function createTokenClient(ble, { now = ble.now ? () => ble.now() : defaultNow, 
    */
   async function requestToken() {
     if (requesting) throw new Error('令牌请求进行中');
-    bind();
+    // 等 notify 订阅就绪再发 REQ_TOKEN，避免 GRANT 在订阅完成前到达而丢失
+    try {
+      await bind();
+    } catch (e) {
+      console.error('[token] notify bind failed:', e);
+      return { granted: false, reason: 'write-failed' };
+    }
     requesting = true;
     try {
       // 先挂 GRANT 等待，再发 REQ_TOKEN：设备应答可能先到（notify 与 write 无序保证）
       const r = await new Promise((resolve) => {
         pendingGrant = { resolve };
-        write(CMD_TOKEN.REQ_TOKEN);
+        const w = write(CMD_TOKEN.REQ_TOKEN);
+        // write 失败立即结算，不等 5 s 超时
+        if (w && typeof w.then === 'function') {
+          w.then(undefined, (e) => {
+            if (pendingGrant) {
+              pendingGrant = null;
+              console.error('[token] REQ_TOKEN write failed:', e);
+              resolve({ granted: false, reason: 'write-failed' });
+            }
+          });
+        }
         setTimeout(() => {
           if (pendingGrant) {
             pendingGrant = null;
+            console.warn(`[token] REQ_TOKEN timeout (no GRANT in ${TOKEN_GRANT_TIMEOUT_MS}ms)`);
             resolve({ granted: false, reason: 'timeout' });
           }
         }, TOKEN_GRANT_TIMEOUT_MS);
       });
+      console.log(`[token] requestToken result: ${JSON.stringify(r)}`);
       return r;
     } finally {
       requesting = false;
