@@ -306,7 +306,7 @@ function createPushCoordinator(opts = {}) {
     }
   }
 
-  return { requestPush, cancel, dispose, isBusy };
+  return { requestPush, cancel, dispose, isBusy, getTokenClient: () => tokenClient() };
 }
 
 module.exports = {

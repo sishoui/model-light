@@ -663,6 +663,22 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(h.getToasts().some((t) => String(t.title).includes('已设为 10 颗'))).toBe(true);
   });
 
+  it('给定引脚长度 0，当设为 10 颗，则同步下发 SET_LED_COUNT（0x22）命令让固件更新 n_leds', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 0 });
+    h.page.onShow();
+    await flushReal(50); // 等 BLE 链路绑定
+
+    await h.tap('onTapLength');
+    await h.tap('onLengthInput', { detail: { value: '10' } });
+    await h.tap('onLengthConfirm');
+
+    // _syncLedCount 异步：先取令牌（REQ_TOKEN 0x10），注入 GRANT，再等 SET_LED_COUNT（0x22）
+    expect(await waitUntil(() => h.getBleWrites().some((w) => w.short === '0001' && w.data.startsWith('10')), 1500)).toBe(true);
+    expect(await grantToken(h)).toBe(true);
+    expect(await waitUntil(() => h.getBleWrites().some((w) => w.short === '0001' && w.data.startsWith('22')), 1500)).toBe(true);
+  });
+
   it('给定灯珠数为 0 且无灯组，当输入非整数/越界值，则弹错误 toast 且缓存不变', async () => {
     h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
     seedPin(h.wx, { length: 0 });

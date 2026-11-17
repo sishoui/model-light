@@ -24,6 +24,7 @@
 
 const { createBleClient } = require('../../lib/ble');
 const { createPushCoordinator, describePushError } = require('../../lib/push-coordinator');
+const { createDeviceControl } = require('../../lib/device-control');
 const {
   addGroup, deleteGroup, setGroupName, getPixelStates, getGroupPixels,
   occupyGroupPixels, releaseGroupPixels, toggleGroupPixel,
@@ -164,6 +165,14 @@ Page({
       deviceId: this.deviceId,
       bleReady: () => this._bleReady,
       onResult: (name, result) => this._onPushResult(result),
+    });
+    // 设备控制通道（SET_LED_COUNT 等）：复用同一 ble 链路与令牌客户端，
+    // 改灯珠数时同步下发，固件渲染的 n_leds 才会更新（编排 TLV 里的 pin.length
+    // 只用于渲染像素归属，不影响 ml_out_led_count）
+    this._dc = createDeviceControl({
+      write: (bytes) => this.ble.write(bytes),
+      onCommandNotify: (cb) => this.ble.onCommandNotify(cb),
+      requestToken: () => this._pushCoordinator.getTokenClient().requestToken(),
     });
     this._loaded = true;
     this._ensureGroup();
@@ -445,6 +454,7 @@ Page({
   onUnload() {
     // 只释放协调器（定时器/等待者），不断 BLE 链路——链路归设备页所有
     if (this._pushCoordinator) this._pushCoordinator.dispose();
+    if (this._dc) this._dc.dispose();
   },
 
   // ---- 灯组 tab ----
@@ -573,7 +583,25 @@ Page({
     if (n === pin.length) return;
     pin.length = n;
     this._commit(arr);
+    this._syncLedCount(n);
     wx.showToast({ title: `已设为 ${n} 颗`, icon: 'success' });
+  },
+
+  /**
+   * 灯珠数变更后同步下发 SET_LED_COUNT：固件渲染的 n_leds 来自 ml_out_led_count
+   * （命令设置），编排 TLV 里的 pin.length 只用于像素归属。不同步下发则设备
+   * 仍按旧 n_leds（默认 0）渲染 → 全黑。
+   */
+  async _syncLedCount(n) {
+    if (!this._dc || this._readOnly) return;
+    try {
+      const r = await this._dc.setLedCount(this.data.pinIndex, n);
+      if (!r || !r.ok) {
+        console.warn('[pin] SET_LED_COUNT 失败:', r && r.reason);
+      }
+    } catch (e) {
+      console.warn('[pin] SET_LED_COUNT 异常:', e && e.message);
+    }
   },
 
   onRenameCancel() {
