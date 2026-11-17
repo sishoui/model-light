@@ -678,7 +678,9 @@ int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
                 if (speed == 0) speed = 1;
                 uint16_t hue = (uint16_t)(((t / speed) * 8u + i * 16u) % 1536);
                 hsv_rgb(hue, sat, val, &pr, &pg, &pb);
-            } else if (dy != NULL && mask_p != NULL && mask_p[i] > 0) {
+            } else if (dy != NULL && mask_p != NULL && mask_p[i] > 0 &&
+                       (dr > 0 || dg > 0 || db > 0)) {
+                /* dy 颜色非黑色才覆盖背景层；黑色（#000000）视为不覆盖，透出背景 */
                 uint32_t k = mask_p[i];
                 pr = (uint8_t)((dr * k) / 255);
                 pg = (uint8_t)((dg * k) / 255);

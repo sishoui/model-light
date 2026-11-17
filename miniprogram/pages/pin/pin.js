@@ -288,24 +288,44 @@ Page({
       previewStage = g.stages[0];
     }
 
-    const previewPixels = [];
-    if (previewStage && groupPixels.length > 0) {
-      groupPixels.slice(0, PREVIEW_MAX_PX).forEach((px) => {
-        const c = stageColorAt(previewStage, 0, px, pinLen, EFFECTS);
-        previewPixels.push(`rgb(${c[0]},${c[1]},${c[2]})`);
-      });
-    }
-
     this.setData({
       stages,
       totalLabel: `${g ? groupTotalMs(g) : 0} ms`,
       canAddStage: !!g && g.stages.length < MAX_STAGES,
       editStageIndex,
       editStage,
-      previewPixels,
-      previewLabel: previewStage ? `阶段 ${previewIndex + 1} · 0 ms` : '无阶段',
     });
     this._renderWheel();
+    // 叠加预览条：动态层灯效需要时间推进（tInStage 随时间变化），用定时器驱动
+    this._startPreviewTimer(previewStage, previewIndex, groupPixels, pinLen);
+  },
+
+  /** 启动/更新叠加预览条定时器：tInStage 随时间推进，动态层灯效才会移动。 */
+  _startPreviewTimer(previewStage, previewIndex, groupPixels, pinLen) {
+    if (this._previewTimer) {
+      clearInterval(this._previewTimer);
+      this._previewTimer = null;
+    }
+    if (!previewStage || groupPixels.length === 0) {
+      this.setData({ previewPixels: [], previewLabel: '无阶段' });
+      return;
+    }
+    const durationMs = Math.max(1, previewStage.durationMs || 1);
+    this._previewStartTs = Date.now();
+    const render = () => {
+      const t = (Date.now() - this._previewStartTs) % durationMs;
+      const pixels = [];
+      groupPixels.slice(0, PREVIEW_MAX_PX).forEach((px) => {
+        const c = stageColorAt(previewStage, t, px, pinLen, EFFECTS);
+        pixels.push(`rgb(${c[0]},${c[1]},${c[2]})`);
+      });
+      this.setData({
+        previewPixels: pixels,
+        previewLabel: `阶段 ${previewIndex + 1} · ${t} ms`,
+      });
+    };
+    render();
+    this._previewTimer = setInterval(render, 100);
   },
 
   /** 图层缩略：单层单独推演一个代表色（t = 时长中点、组中间那颗），熄灭显示暗格。 */
@@ -455,6 +475,7 @@ Page({
     // 只释放协调器（定时器/等待者），不断 BLE 链路——链路归设备页所有
     if (this._pushCoordinator) this._pushCoordinator.dispose();
     if (this._dc) this._dc.dispose();
+    if (this._previewTimer) { clearInterval(this._previewTimer); this._previewTimer = null; }
   },
 
   // ---- 灯组 tab ----

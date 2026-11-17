@@ -262,7 +262,7 @@ function stageColorAt(stage, tInStage, pixelIndex, pixelCount, schema) {
     if (fx.role === 0 && c) bg = c;
     if (fx.role === 1) dy = c; // dy 为 null = 本刻动态层不覆盖
   });
-  let c = dy ?? bg ?? DIM_COLOR;
+  let c = (dy && (dy[0] > 0 || dy[1] > 0 || dy[2] > 0)) ? dy : (bg ?? DIM_COLOR);
   // 淡入：阶段首段从黑线性放大（固件 mlarr.c 602–605：t < fade_in_ms 时
   // scale_rgb(k = t*255/fade_in_ms)，逐通道 channel*k/255，均整数截断）。
   const fadeInMs = stage.fadeInMs ?? 0;
