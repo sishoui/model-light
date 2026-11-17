@@ -8,7 +8,7 @@
 //     灰实心 = 他组占用不可选；单击切换归属，长按拖动框选）
 //   ＋ 当前灯组的阶段列表（卡片：序号 + 时长 + 图层缩略；点卡片就地展开编辑：
 //     时长 / 淡入 / 两个图层槽（背景 0–4、动态 5–11 各 0 或 1 个灯效）/
-//     schema 生成的参数面板 / color 参数走色环（色相环 + SV 面板 + hex/RGB 输入））
+//     schema 生成的参数面板 / color 参数走三条 HSV 横条调色（H 彩条 + S/V 渐变 + hex/RGB 输入））
 //   ＋ 叠加预览条（§4.4：动态层该珠有亮度 → 动态色；熄灭 → 透出背景层）
 //
 // 编辑即推送（新契约）：_commit 落缓存后经 lib/push-coordinator 立即下发——
@@ -44,7 +44,6 @@ const cw = require('../../lib/color-wheel');
 const ROLE_BG = 0;
 const ROLE_DY = 1;
 const PREVIEW_MAX_PX = 32;        // 叠加预览条最多画 32 颗
-const WHEEL_SV_SIZE = 160;        // SV 面板边长（rpx）
 
 // 循环模式三选一（#132）：值 = 协议 loopMode（0/1/2）
 const LOOP_OPTIONS = [
@@ -371,7 +370,7 @@ Page({
     };
   },
 
-  /** 色环编辑态：param 变更后经 _applyWheel 刷新 hex/rgb 显示（h/s/v 保留用户手感）。 */
+  /** 调色条编辑态：commit 重渲染后同步色条（h/s/v 保留用户手感，色条位置不跳）。 */
   _renderWheel() {
     const wheel = this.data.wheel;
     if (!wheel || !this.data.editStage) return;
@@ -379,15 +378,11 @@ Page({
     const field = layer && layer.panel.find((p) => p.name === wheel.param);
     const rgb = field && field.view === 'color' ? field.value : null;
     if (!rgb) return;
-    this.setData({
-      wheel: {
-        ...wheel,
-        hex: cw.rgbToHex(rgb[0], rgb[1], rgb[2]),
-        css: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
-        hueCss: cw.hsvToHex(wheel.h, 1, 1),
-        r: rgb[0], g: rgb[1], b: rgb[2],
-      },
-    });
+    const cur = this._wheelView({ ...wheel });
+    if (cur.r === rgb[0] && cur.g === rgb[1] && cur.b === rgb[2]) return; // 与参数同源，免重复 setData
+    // 参数被外部改写（非色条来源）：以参数为准重置色条
+    const hsv = cw.rgbToHsv(rgb[0], rgb[1], rgb[2]);
+    this.setData({ wheel: this._wheelView({ ...wheel, h: hsv.h, s: hsv.s, v: hsv.v }) });
   },
 
   /** 方格三态 + 框选高亮（状态来自 reload 缓存的 _states，不重复读缓存）。 */
@@ -850,6 +845,8 @@ Page({
       : setLayerEffect(arr, this.data.pinIndex, this.data.groupIndex, si, picker.layer, eff, { capabilities: this._capabilities });
     this.onCloseEffectPicker();
     if (!r.ok) { wx.showToast({ title: r.error, icon: 'none' }); return; }
+    // 换/加灯效后旧调色条可能指向新灯效没有的参数 → 收起，避免「未知参数」错误
+    this.setData({ wheel: null });
     this._commit(arr);
   },
 
@@ -895,7 +892,7 @@ Page({
     return true;
   },
 
-  // ---- 色环（色相环 + SV 面板 + hex/RGB 输入） ----
+  // ---- 调色（三条 HSV 横条：H 彩条 / S 饱和度 / V 明度 + hex/RGB 输入） ----
 
   onOpenWheel(e) {
     if (!this._editGuard()) return;
@@ -906,23 +903,45 @@ Page({
     if (!field) return;
     const v = field.value || [0, 0, 0];
     const hsv = cw.rgbToHsv(v[0], v[1], v[2]);
-    this._hueRect = null;
-    this._svRect = null;
+    this._hueBarRect = null;
+    this._satBarRect = null;
+    this._valBarRect = null;
     this._wheelRgbDraft = null;
-    this.setData({
-      wheel: {
-        layer: li, param,
-        h: hsv.h, s: hsv.s, v: hsv.v,
-        hex: field.hex, css: field.css, hueCss: cw.hsvToHex(hsv.h, 1, 1),
-        r: v[0], g: v[1], b: v[2],
-      },
-    });
+    this.setData({ wheel: this._wheelView({ layer: li, param, h: hsv.h, s: hsv.s, v: hsv.v }) });
   },
 
   onCloseWheel() {
-    this._hueRect = null;
-    this._svRect = null;
+    this._hueBarRect = null;
+    this._satBarRect = null;
+    this._valBarRect = null;
     this.setData({ wheel: null });
+  },
+
+  /**
+   * 色条视图派生（单一真源）：h/s/v → hex/rgb 当前色 + 三条 HSV 条的渐变与
+   * 游标位置。H 条背景是固定彩条（wxss），S/V 条渐变随 h/s/v 变化。
+   */
+  _wheelView(w) {
+    const h = cw.wrapHue(w.h);
+    const s = cw.clamp01(w.s);
+    const v = cw.clamp01(w.v);
+    const rgb = cw.hsvToRgb(h, s, v);
+    return {
+      layer: w.layer,
+      param: w.param,
+      h, s, v,
+      hex: cw.rgbToHex(rgb[0], rgb[1], rgb[2]),
+      css: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
+      r: rgb[0], g: rgb[1], b: rgb[2],
+      hLabel: `${Math.round(h)}°`,
+      sLabel: `${Math.round(s * 100)}%`,
+      vLabel: `${Math.round(v * 100)}%`,
+      huePos: `${(h / 360) * 100}%`,
+      satPos: `${s * 100}%`,
+      valPos: `${v * 100}%`,
+      satBarCss: `linear-gradient(90deg, ${cw.hsvToHex(h, 0, v)}, ${cw.hsvToHex(h, 1, v)})`,
+      valBarCss: `linear-gradient(90deg, #000000, ${cw.hsvToHex(h, s, 1)})`,
+    };
   },
 
   /** 首次触摸时量一次控件位置（真机异步回填；测试环境无 rect，触摸处理安全 no-op）。 */
@@ -935,51 +954,57 @@ Page({
     } catch (err) { /* 无选择器环境 */ }
   },
 
-  onHueStart(e) { this._queryRect('#hue-ring', '_hueRect'); this._onHueTouch(e); },
-  onHueMove(e) { this._onHueTouch(e); },
-  onHueEnd() { /* 拖动结束，值已实时落盘 */ },
+  onHueBarStart(e) { this._queryRect('#hue-bar', '_hueBarRect'); this._onHueBarTouch(e); },
+  onHueBarMove(e) { this._onHueBarTouch(e); },
+  onHueBarEnd() { /* 拖动结束，值已实时落盘 */ },
 
-  _onHueTouch(e) {
+  /** H 彩条：x 位置 → 色相 0–360°（条两端同为红色，首尾衔接）。 */
+  _onHueBarTouch(e) {
     const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
     const wheel = this.data.wheel;
-    const rect = this._hueRect;
+    const rect = this._hueBarRect;
     if (!t || !wheel || !rect || !rect.width) return;
-    const dx = t.clientX - (rect.left + rect.width / 2);
-    const dy = t.clientY - (rect.top + rect.height / 2);
-    const angle = (Math.atan2(dy, dx) * 180) / Math.PI; // 0 = 东
-    this._applyWheel(cw.wrapHue(angle + 90), wheel.s, wheel.v); // 0 = 北，顺时针
+    const f = (t.clientX - rect.left) / rect.width;
+    this._applyWheel(cw.wrapHue(f * 360), wheel.s, wheel.v);
   },
 
-  onSvStart(e) { this._queryRect('#sv-panel', '_svRect'); this._onSvTouch(e); },
-  onSvMove(e) { this._onSvTouch(e); },
-  onSvEnd() { /* 同上 */ },
+  onSatBarStart(e) { this._queryRect('#sat-bar', '_satBarRect'); this._onSatBarTouch(e); },
+  onSatBarMove(e) { this._onSatBarTouch(e); },
+  onSatBarEnd() { /* 同上 */ },
 
-  _onSvTouch(e) {
+  /** S 饱和度条：x 位置 → 0–1（当前 h/v 下从灰到全色）。 */
+  _onSatBarTouch(e) {
     const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
     const wheel = this.data.wheel;
-    const rect = this._svRect;
-    if (!t || !wheel || !rect || !rect.width || !rect.height) return;
-    const s = cw.clamp01((t.clientX - rect.left) / rect.width);
-    const v = cw.clamp01(1 - (t.clientY - rect.top) / rect.height);
-    this._applyWheel(wheel.h, s, v);
+    const rect = this._satBarRect;
+    if (!t || !wheel || !rect || !rect.width) return;
+    const f = (t.clientX - rect.left) / rect.width;
+    this._applyWheel(wheel.h, cw.clamp01(f), wheel.v);
+  },
+
+  onValBarStart(e) { this._queryRect('#val-bar', '_valBarRect'); this._onValBarTouch(e); },
+  onValBarMove(e) { this._onValBarTouch(e); },
+  onValBarEnd() { /* 同上 */ },
+
+  /** V 明度条：x 位置 → 0–1（当前 h/s 下从黑到全亮）。 */
+  _onValBarTouch(e) {
+    const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+    const wheel = this.data.wheel;
+    const rect = this._valBarRect;
+    if (!t || !wheel || !rect || !rect.width) return;
+    const f = (t.clientX - rect.left) / rect.width;
+    this._applyWheel(wheel.h, wheel.s, cw.clamp01(f));
   },
 
   /** h/s/v → RGB → 参数落盘（setLayerParam 校验 [r,g,b] 0–255）。 */
   _applyWheel(h, s, v) {
     const wheel = this.data.wheel;
     if (!wheel) return;
-    const rgb = cw.hsvToRgb(h, s, v);
-    this.setData({
-      wheel: {
-        ...wheel, h, s, v,
-        hex: cw.rgbToHex(rgb[0], rgb[1], rgb[2]),
-        hueCss: cw.hsvToHex(h, 1, 1),
-        css: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
-        r: rgb[0], g: rgb[1], b: rgb[2],
-      },
-    });
-    this._setParam(wheel.layer, wheel.param, rgb);
+    const next = this._wheelView({ ...wheel, h, s, v });
+    this.setData({ wheel: next });
+    this._setParam(wheel.layer, wheel.param, [next.r, next.g, next.b]);
   },
+
 
   onWheelHexInput(e) { this._wheelHexDraft = e.detail.value; },
 

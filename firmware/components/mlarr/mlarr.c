@@ -393,7 +393,7 @@ static void dy_mask(const ml_layer_t *l, uint16_t effect_id,
         /* param: color(3) density(1) decayMs(u16) — per-pixel hash decides
          * spark on/off, decay fades it. */
         uint8_t density = rd_u8p(l, 3);
-        uint16_t decay = rd_u16p(l, 5);
+        uint16_t decay = rd_u16p(l, 4);
         if (decay == 0) decay = 1;
         for (uint16_t i = 0; i < n; i++) {
             /* spark window per pixel: hash(t/decay) < density% */
@@ -466,12 +466,13 @@ static void apply_effect(const ml_layer_t *l, uint16_t stage_offset_ms,
         /* param: color(3) periodMs(u16) minLevel(1, 0-100) */
         uint16_t period = rd_u16p(l, 3);
         uint8_t minlvl = rd_u8p(l, 5);
-        if (period == 0) period = 1;
+        if (period < 2) period = 2; /* 半周期作除数，<2 会除零（TLV 外部输入） */
         /* half-sine over periodMs */
         uint32_t ph = group_t_ms % period;
         uint32_t k = (ph < period / 2)
             ? 255u * ph / (period / 2)
             : 255u * (period - ph) / (period / 2);
+        if (k > 255u) k = 255u; /* 奇数 period 的峰值越过 255，(uint8_t) 截断会回绕成闪黑 */
         /* floor at minLevel% of full */
         uint32_t flo = (uint32_t)255u * minlvl / 100u;
         if (k < flo) k = flo;
@@ -681,7 +682,7 @@ int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
                  * 流动一整圈——与小程序 preview.js 推演一致。 */
                 uint8_t sat = rd_u8p(dy, 0);
                 uint8_t val = rd_u8p(dy, 1);
-                uint16_t speed = rd_u16p(dy, 3);
+                uint16_t speed = rd_u16p(dy, 2);
                 if (speed == 0) speed = 1;
                 uint16_t hue = (uint16_t)(((uint32_t)(t % speed) * 1536u / speed
                                           + (uint32_t)i * 1536u / glen) % 1536u);

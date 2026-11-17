@@ -1352,6 +1352,24 @@ static void test_render_all_12_effects(void)
     /* dy.colorWipe at t=250 (hold window 200..300): fully wiped to B */
     render_effect(MLARR_ROLE_DY, 11, p_cwipe, 10, 250, rgb, 30);
     assert(rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 255);
+    /* dy.rainbowFlow at t=100 (speedMs=200, schema 偏移: sat[0] val[1]
+     * speed[2..3]): hue = 100*1536/200 = 768（半圈）→ 青色 (0,128,128)。
+     * 偏移读错（旧代码从 [3] 读 high byte → speed=0→1）会落到红色。 */
+    render_effect(MLARR_ROLE_DY, 8, p_rbowfl, 4, 100, rgb, 30);
+    assert(rgb[0] == 0 && rgb[1] == 128 && rgb[2] == 128);
+    /* dy.sparkle at t=22 (decayMs=44, density=100; schema 偏移:
+     * color[0..2] density[3] decay[4..5]): pixel 0 的 hash(slot=0)=0 < density
+     * 必点亮，age=22 → k=255-22*255/44=128 半亮。偏移读错（旧代码从 [5] 读
+     * high byte → decay=0→1）会让 slot=22、age=0 → 全亮 255。density 与 8 位
+     * hash 比较，100 只点亮约 39% 像素，其余熄灭为黑。 */
+    static const uint8_t p_sparkle_full[] = {255,255,255, 100, 44,0};
+    render_effect(MLARR_ROLE_DY, 9, p_sparkle_full, 6, 22, rgb, 30);
+    assert(rgb[0] == 128 && rgb[1] == 128 && rgb[2] == 128);
+    for (int i = 1; i < 30; i++) {
+        assert(rgb[i*3] == 0 || rgb[i*3] == 128);
+        assert(rgb[i*3+1] == 0 || rgb[i*3+1] == 128);
+        assert(rgb[i*3+2] == 0 || rgb[i*3+2] == 128);
+    }
 }
 
 /* ---- F4: overlay composition — dy.comet over bg.breath: tail pixels

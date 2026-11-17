@@ -530,7 +530,7 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(layers.map((l) => l.effectId)).toEqual([1, 5]);
   });
 
-  it('给定 bg.solid 的颜色参数，当用色环改色（hex/RGB 输入），则 hex 往返写入 layer.params', async () => {
+  it('给定 bg.solid 的颜色参数，当用调色条改色（hex/RGB 输入），则 hex 往返写入 layer.params', async () => {
     h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
     seedStage(h.wx, { stages: [{
       layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 128, 0] }) }],
@@ -573,6 +573,73 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(Array.from(params)).toEqual([18, 52, 86]);
   });
 
+  it('给定 bg.solid 的颜色参数，当拖动 H/S/V 三条调色横条，则色相/饱和度/明度与参数字节同步更新', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 128, 0] }) }],
+    }] });
+    h.page.onShow();
+    await h.tap('onOpenStage', { currentTarget: { dataset: { stage: 0 } } });
+    await h.tap('onOpenWheel', { currentTarget: { dataset: { layer: 0, param: 'color' } } });
+
+    // 初始 #ff8000：h≈30.12°、s=100%、v=100%
+    const w0 = h.getData().wheel;
+    expect(w0.s).toBe(1);
+    expect(w0.v).toBe(1);
+    expect(w0.huePos).toBe(`${(w0.h / 360) * 100}%`);
+
+    // harness 无 rect：直接注入控件位置（真机上由 createSelectorQuery 回填）
+    h.page._hueBarRect = { left: 0, width: 200 };
+    h.page._satBarRect = { left: 0, width: 200 };
+    h.page._valBarRect = { left: 0, width: 200 };
+
+    // H 条拖到 50% → 180°（青），s/v 保持 → #00ffff
+    await h.tap('onHueBarStart', { touches: [{ clientX: 100 }] });
+    let w = h.getData().wheel;
+    expect(w.h).toBe(180);
+    expect(w.hLabel).toBe('180°');
+    expect(w.hex).toBe('#00ffff');
+    let params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
+    expect(Array.from(params)).toEqual([0, 255, 255]);
+
+    // S 条拖到 25% → (191,255,255)
+    await h.tap('onSatBarStart', { touches: [{ clientX: 50 }] });
+    w = h.getData().wheel;
+    expect(w.s).toBe(0.25);
+    expect(w.sLabel).toBe('25%');
+    expect(w.hex).toBe('#bfffff');
+    params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
+    expect(Array.from(params)).toEqual([191, 255, 255]);
+
+    // V 条拖到 50% → (96,128,128)
+    await h.tap('onValBarStart', { touches: [{ clientX: 100 }] });
+    w = h.getData().wheel;
+    expect(w.v).toBe(0.5);
+    expect(w.hex).toBe('#608080');
+    params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
+    expect(Array.from(params)).toEqual([96, 128, 128]);
+  });
+
+  it('给定调色条打开时换灯效，则调色条收起（不再触碰灯效没有的参数）', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 128, 0] }) }],
+    }] });
+    h.page.onShow();
+    await h.tap('onOpenStage', { currentTarget: { dataset: { stage: 0 } } });
+    await h.tap('onOpenWheel', { currentTarget: { dataset: { layer: 0, param: 'color' } } });
+    expect(h.getData().wheel).not.toBe(null);
+
+    // 换到无 color 参数的 bg.rainbowLow（saturation/brightness/periodMs）
+    await h.tap('onReplaceEffect', { currentTarget: { dataset: { layer: 0 } } });
+    await h.tap('onPickEffect', { currentTarget: { dataset: { effect: 3 } } });
+
+    expect(h.getData().wheel).toBe(null);
+    const edit = h.getData().editStage;
+    expect(edit.layers[0].panel.map((p) => p.name)).toEqual(['saturation', 'brightness', 'periodMs']);
+    expect(edit.layers[0].panel.some((p) => p.view === 'color')).toBe(false);
+  });
+
   it('给定背景层 + 动态扫描线，当渲染叠加预览，则有亮度的灯珠显动态色、熄灭的透出背景色', async () => {
     h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
     seedStage(h.wx, { stages: [{
@@ -585,9 +652,10 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
 
     const px = h.getData().previewPixels;
     expect(px).toHaveLength(4); // 组占 [0,4)
-    // t=0：扫描头在 0，width=1 → 灯珠 0、1 亮（动态绿）；2、3 熄灭（透背景红）
+    // t=0：扫描头在 0，width=1 → 只有灯珠 0 亮（动态绿，固件 d < width 语义）；
+    // 1、2、3 熄灭（透背景红）
     expect(px[0]).toBe('rgb(0,255,0)');
-    expect(px[1]).toBe('rgb(0,255,0)');
+    expect(px[1]).toBe('rgb(255,0,0)');
     expect(px[2]).toBe('rgb(255,0,0)');
     expect(px[3]).toBe('rgb(255,0,0)');
   });

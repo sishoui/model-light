@@ -155,37 +155,52 @@
               data-layer="{{layer.layerIndex}}" data-param="{{p.name}}" bindchange="onParamBool" />
           </view>
 
-          <!-- 色环：色相环 + SV 面板 + hex/RGB 输入 -->
+          <!-- 调色：H 彩条 / S 饱和度 / V 明度 三条横条 + hex/RGB 输入 -->
           <view wx:if="{{wheel && wheel.layer === layer.layerIndex}}" class="wheel-box">
             <view class="wheel-head">
               <text class="wheel-title">调色 · {{wheel.hex}}</text>
               <button class="mini-btn" size="mini" bindtap="onCloseWheel">收起</button>
             </view>
-            <view
-              id="hue-ring"
-              class="hue-ring"
-              style="background: {{wheel.hueCss}}"
-              data-layer="{{layer.layerIndex}}"
-              bindtouchstart="onHueStart"
-              bindtouchmove="onHueMove"
-              bindtouchend="onHueEnd"
-            >
-              <view class="hue-arm" style="transform: rotate({{wheel.h}}deg)">
-                <view class="hue-handle"></view>
+            <view class="bar-row">
+              <text class="bar-label">H</text>
+              <view
+                id="hue-bar"
+                class="hsv-bar hue-bar"
+                bindtouchstart="onHueBarStart"
+                bindtouchmove="onHueBarMove"
+                bindtouchend="onHueBarEnd"
+              >
+                <view class="bar-cursor" style="left: {{wheel.huePos}}"></view>
               </view>
+              <text class="bar-value">{{wheel.hLabel}}</text>
             </view>
-            <view
-              id="sv-panel"
-              class="sv-panel"
-              style="background-color: {{wheel.hueCss}}"
-              data-layer="{{layer.layerIndex}}"
-              bindtouchstart="onSvStart"
-              bindtouchmove="onSvMove"
-              bindtouchend="onSvEnd"
-            >
-              <view class="sv-white"></view>
-              <view class="sv-black"></view>
-              <view class="sv-cursor" style="left: {{wheel.s * 100}}%; top: {{(1 - wheel.v) * 100}}%"></view>
+            <view class="bar-row">
+              <text class="bar-label">S</text>
+              <view
+                id="sat-bar"
+                class="hsv-bar"
+                style="background: {{wheel.satBarCss}}"
+                bindtouchstart="onSatBarStart"
+                bindtouchmove="onSatBarMove"
+                bindtouchend="onSatBarEnd"
+              >
+                <view class="bar-cursor" style="left: {{wheel.satPos}}"></view>
+              </view>
+              <text class="bar-value">{{wheel.sLabel}}</text>
+            </view>
+            <view class="bar-row">
+              <text class="bar-label">V</text>
+              <view
+                id="val-bar"
+                class="hsv-bar"
+                style="background: {{wheel.valBarCss}}"
+                bindtouchstart="onValBarStart"
+                bindtouchmove="onValBarMove"
+                bindtouchend="onValBarEnd"
+              >
+                <view class="bar-cursor" style="left: {{wheel.valPos}}"></view>
+              </view>
+              <text class="bar-value">{{wheel.vLabel}}</text>
             </view>
             <view class="wheel-inputs">
               <input class="inp hex" value="{{wheel.hex}}" bindinput="onWheelHexInput" bindblur="onWheelHexBlur" />

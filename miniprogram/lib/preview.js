@@ -126,7 +126,19 @@ function paramValues(layer, effectId, schema) {
   return out;
 }
 
-// 12 支灯效的推演函数：(v 参数, i 颗序, tInStage, n 颗数) → [r,g,b]
+// 12 支灯效的推演函数：(v 参数, i 颗序, tInStage, n 颗数) → [r,g,b]，
+// 动态层熄灭时返回 null。公式与固件 mlarr.c 的 dy_mask / apply_effect /
+// render 逐行对齐（整数除法、0 值防护、覆盖窗口、hash），页面预览 = 设备输出。
+
+/** 固件 sparkle_rand 的 JS 移植（xorshift，uint32 语义；Math.imul 保证低 32 位一致）。 */
+function sparkleRand(t, pixel) {
+  let x = (Math.imul(t >>> 0, 2654435761) ^ Math.imul(pixel, 40503)) >>> 0;
+  x = (x ^ (x >>> 13)) >>> 0;
+  x = Math.imul(x, 3266489917) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  return x & 0xFF;
+}
+
 const EFFECT_RENDER = {
   'bg.solid': (v) => v.color,
   'bg.gradient': (v, i, t, n) => {
@@ -140,87 +152,85 @@ const EFFECT_RENDER = {
     ];
   },
   'bg.breath': (v, i, t) => {
-    const p = Math.max(1, v.periodMs);
-    // 三角波：0 → period/2 上升到峰，period/2 → period 回落
-    const phase = (t % p) / (p / 2);
-    const k = (phase <= 1 ? phase : 2 - phase);
-    const lvl = (v.minLevel / 100) + k * (1 - v.minLevel / 100);
+    const p = Math.max(2, v.periodMs);
+    const half = Math.floor(p / 2);
+    const ph = t % p;
+    let k = ph < half ? (255 * ph) / half : (255 * (p - ph)) / half;
+    if (k > 255) k = 255; // 固件同钳位：奇数周期峰值不越过 255
+    const flo = Math.floor((255 * v.minLevel) / 100);
+    const lvl = Math.max(k, flo) / 255;
     return [v.color[0] * lvl, v.color[1] * lvl, v.color[2] * lvl];
   },
   'bg.rainbowLow': (v, i, t) => {
+    // 固件 apply_effect：整组单色，hue 在 periodMs 内转一整圈（无逐像素渐变）
     const p = Math.max(1, v.periodMs);
-    const hue = ((i * 3 + (t % p) / p * 360) % 360) / 360;
-    return hsv(hue, v.saturation / 255, v.brightness / 255);
+    return hsv((t % p) / p, v.saturation / 255, v.brightness / 255);
   },
   'bg.flame': (v, i, t) => {
-    const k = v.intensity / 100;
-    // 伪随机闪烁：热色与冷色插值
-    const n = Math.sin(i * 12.9898 + Math.floor(t / 80) * 78.233) * 43758.5453;
-    const f = n - Math.floor(n); // 0–1
+    // 固件 flame_color：两个噪声项加权重混 hot/cold
+    const n1 = sparkleRand(Math.floor(t / 64), i);
+    const n2 = sparkleRand(Math.floor(t / 128) + 7, i + 13);
+    let mix = Math.floor((n1 * v.intensity) / 100) + Math.floor((n2 * v.intensity) / 200);
+    if (mix > 255) mix = 255;
     return [
-      v.colorCold[0] + (v.colorHot[0] - v.colorCold[0]) * f * k,
-      v.colorCold[1] + (v.colorHot[1] - v.colorCold[1]) * f * k,
-      v.colorCold[2] + (v.colorHot[2] - v.colorCold[2]) * f * k,
+      (v.colorCold[0] * (255 - mix) + v.colorHot[0] * mix) / 255,
+      (v.colorCold[1] * (255 - mix) + v.colorHot[1] * mix) / 255,
+      (v.colorCold[2] * (255 - mix) + v.colorHot[2] * mix) / 255,
     ];
   },
   'dy.comet': (v, i, t, n) => {
     const p = Math.max(1, v.speedMs);
-    const prog = (t % p) / p;
-    const head = v.reverse ? (1 - prog) * n : prog * n;
-    const d = head - i;
-    if (d < 0 || d > v.tailLen) return null;
-    const f = 1 - d / (v.tailLen + 1);
+    const head = Math.floor(((t % p) * n) / p);
+    const d = (v.reverse ? (n - 1 - head) : head) - i;
+    if (d < 0 || d >= v.tailLen) return null; // 尾尖刚好 tailLen 处熄灭（固件 d < tail）
+    const f = 1 - d / v.tailLen;
     return [v.color[0] * f, v.color[1] * f, v.color[2] * f];
   },
   'dy.scan': (v, i, t, n) => {
     const p = Math.max(1, v.speedMs);
-    const prog = (t % p) / p;
-    const head = v.direction === 1 ? (1 - prog) * n : prog * n;
-    const d = Math.abs(head - i);
-    return d <= v.width ? v.color : null;
+    const head = Math.floor(((t % p) * n) / p);
+    const pos = v.direction === 1 ? (n - 1 - head) : head;
+    const d = Math.abs(pos - i);
+    return d < Math.max(1, v.width) ? v.color : null; // 亮 width 颗（固件 d < width）
   },
   'dy.blink': (v, i, t) => {
-    const cycle = v.onMs + v.offMs;
-    const tt = t % cycle;
-    // duty 决定亮段的亮度（100 = 全亮）
-    const k = v.duty / 100;
-    return tt < v.onMs ? [v.color[0] * k, v.color[1] * k, v.color[2] * k] : null;
+    const period = v.onMs + v.offMs;
+    if (period === 0) return null;
+    const ph = t % period;
+    if (ph >= v.onMs) return null;
+    const k = v.duty === 100 ? 255 : (v.duty === 0 ? 0 : Math.floor((255 * v.duty) / 100));
+    if (k === 0) return null; // 占空比 0 = 不覆盖（固件 k > 0 才有 mask）
+    const f = k / 255;
+    return [v.color[0] * f, v.color[1] * f, v.color[2] * f];
   },
   'dy.rainbowFlow': (v, i, t, n) => {
     const p = Math.max(1, v.speedMs);
     // 每颗灯 hue 均匀覆盖整个色轮（彩虹），整体在 speedMs 内流动一整圈
-    const hue = ((i * 360 / n + (t % p) / p * 360) % 360) / 360;
+    const hue = ((Math.floor(((t % p) * 1536) / p) + Math.floor((i * 1536) / n)) % 1536) / 1536;
     return hsv(hue, v.saturation / 255, v.brightness / 255);
   },
   'dy.sparkle': (v, i, t) => {
-    const slot = Math.floor(t / v.decayMs);
-    const n1 = Math.sin(i * 12.9898 + slot * 78.233) * 43758.5453;
-    const f1 = n1 - Math.floor(n1);
-    if (f1 * 100 >= v.density) return null;
-    const local = t - slot * v.decayMs;
-    const f = 1 - local / v.decayMs;
+    const decay = Math.max(1, v.decayMs);
+    const slot = Math.floor(t / decay);
+    if (sparkleRand(slot, i) >= v.density) return null;
+    const age = t % decay;
+    const k = 255 - Math.floor((age * 255) / decay);
+    const f = k / 255;
     return [v.color[0] * f, v.color[1] * f, v.color[2] * f];
   },
   'dy.pulse': (v, i, t, n) => {
     const p = Math.max(1, v.periodMs);
-    const prog = (t % p) / p;
-    const center = (n - 1) / 2;
-    let d;
-    if (v.fromCenter) {
-      d = Math.abs(i - center);
-    } else {
-      d = i;
-    }
-    // 环在 periodMs 内走完 0 → n+width（覆盖全部灯珠），与固件 mlarr.c 一致
-    const edge = prog * (n + v.width);
-    return Math.abs(d - edge) <= v.width ? v.color : null;
+    const width = Math.max(1, v.width);
+    const travel = Math.floor(((t % p) * (n + width)) / p);
+    const d = v.fromCenter ? Math.abs(i - Math.floor((n - 1) / 2)) : i;
+    return (travel >= d && travel < d + width) ? v.color : null;
   },
-  'dy.colorWipe': (v, i, t) => {
-    const cycle = v.wipeMs + v.holdMs;
-    const tt = t % cycle;
-    const head = Math.min(1, tt / v.wipeMs);
-    const idx = i;
-    return idx <= head ? v.colorA : v.colorB;
+  'dy.colorWipe': (v, i, t, n) => {
+    const wipe = Math.max(1, v.wipeMs);
+    const period = wipe + Math.max(0, v.holdMs);
+    const ph = t % period;
+    const front = ph >= wipe ? n : Math.floor((n * ph) / wipe);
+    return i < front ? v.colorB : v.colorA;
   },
 };
 
@@ -252,19 +262,34 @@ function hsv(h, s, v) {
  * @param {object} schema 灯效表
  * @returns {number[]} [r,g,b]（0–255）
  */
+// 固件 render 里逐像素直写、恒覆盖的 dy 灯效（不过「dy 颜色为黑」的覆盖门）。
+// colorWipe/rainbowFlow 在固件 per-pixel 分支直接写颜色；mask 类灯效
+// （彗星/扫描/闪烁/星闪/脉冲）才受「dy 原始色非黑」门控。
+const OPAQUE_DY = new Set(['dy.colorWipe', 'dy.rainbowFlow']);
+
 function stageColorAt(stage, tInStage, pixelIndex, pixelCount, schema) {
   let bg = null;
   let dy = null;
+  let dyRaw = null;     // dy 层的原始颜色参数（固件用原始色而非缩放后色判黑）
+  let dyOpaque = false; // OPAQUE_DY：恒覆盖
+  let dySeen = false;   // 固件按层锁存：第一个 dy 层生效（与是否点亮无关）
   stage.layers.forEach((l) => {
     const fx = schema[l.effectId];
     if (!fx) return; // 未知灯效忽略
     const v = paramValues(l, l.effectId, schema);
     if (!v) return;
     const c = (EFFECT_RENDER[fx.id] ?? null)?.(v, pixelIndex, tInStage, pixelCount);
-    if (fx.role === 0 && c) bg = c;
-    if (fx.role === 1) dy = c; // dy 为 null = 本刻动态层不覆盖
+    if (fx.role === 0 && bg == null && c) bg = c;
+    if (fx.role === 1 && !dySeen) {
+      dySeen = true;
+      dy = c; // c 为 null = 本刻动态层不覆盖
+      dyRaw = v.color ?? null;
+      dyOpaque = OPAQUE_DY.has(fx.id);
+    }
   });
-  let c = (dy && (dy[0] > 0 || dy[1] > 0 || dy[2] > 0)) ? dy : (bg ?? DIM_COLOR);
+  let c = (dy != null && (dyOpaque || (dyRaw && (dyRaw[0] > 0 || dyRaw[1] > 0 || dyRaw[2] > 0))))
+    ? dy
+    : (bg ?? DIM_COLOR);
   // 淡入：阶段首段从黑线性放大（固件 mlarr.c 602–605：t < fade_in_ms 时
   // scale_rgb(k = t*255/fade_in_ms)，逐通道 channel*k/255，均整数截断）。
   const fadeInMs = stage.fadeInMs ?? 0;

@@ -131,18 +131,20 @@
 .wheel-box { margin-top: 12rpx; background: #f4f6f9; border-radius: 16rpx; padding: 16rpx; }
 .wheel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12rpx; }
 .wheel-title { color: #4a5568; font-size: 26rpx; }
-.hue-ring { position: relative; width: 240rpx; height: 240rpx; border-radius: 50%; margin: 0 auto 16rpx;
-  background-image: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
-  box-shadow: 3rpx 3rpx 6rpx #cfd6e0, -3rpx -3rpx 6rpx #ffffff; }
-.hue-arm { position: absolute; inset: 0; }
-.hue-handle { position: absolute; top: -10rpx; left: 50%; width: 28rpx; height: 28rpx; margin-left: -14rpx;
-  border-radius: 50%; background: #ffffff; border: 4rpx solid #4a5568; box-sizing: border-box; }
-.sv-panel { position: relative; width: 100%; height: 320rpx; border-radius: 12rpx; overflow: hidden;
-  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0; }
-.sv-white { position: absolute; inset: 0; background: linear-gradient(to right, #ffffff, rgba(255, 255, 255, 0)); }
-.sv-black { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, 0), #000000); }
-.sv-cursor { position: absolute; width: 24rpx; height: 24rpx; border: 4rpx solid #ffffff; border-radius: 50%;
-  margin-left: -12rpx; margin-top: -12rpx; box-shadow: 0 0 4rpx rgba(0, 0, 0, 0.6); }
+
+/* 调色三条横条：H 彩条（固定七色渐变）/ S、V 渐变（随 h/s/v 变化，背景由页面下发） */
+.bar-row { display: flex; align-items: center; gap: 12rpx; margin-bottom: 12rpx; }
+.bar-label { width: 32rpx; flex: none; color: #8a94a6; font-size: 24rpx; font-weight: 600; text-align: center; }
+.hsv-bar { position: relative; flex: 1; height: 44rpx; border-radius: 22rpx;
+  box-shadow: inset 2rpx 2rpx 4rpx #cfd6e0, inset -2rpx -2rpx 4rpx #ffffff; }
+.hue-bar { background-image: linear-gradient(90deg,
+    #ff0000 0%, #ffff00 16.66%, #00ff00 33.33%, #00ffff 50%,
+    #0000ff 66.66%, #ff00ff 83.33%, #ff0000 100%); }
+.bar-cursor { position: absolute; top: -6rpx; width: 20rpx; height: 56rpx; margin-left: -10rpx;
+  border-radius: 10rpx; background: #ffffff; border: 4rpx solid #4a5568; box-sizing: border-box;
+  box-shadow: 1rpx 1rpx 3rpx rgba(0, 0, 0, 0.35); }
+.bar-value { width: 80rpx; flex: none; color: #8a94a6; font-size: 24rpx; text-align: right; }
+
 .wheel-inputs { display: flex; gap: 12rpx; margin-top: 16rpx; }
 .wheel-inputs .hex { flex: 2; }
 .wheel-inputs .rgb { flex: 1; min-width: 0; text-align: center; }

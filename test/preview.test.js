@@ -206,6 +206,112 @@ test('simulatePin: dy.blink 熄灭段露出背景层', () => {
   assert.deepEqual([...off.slice(0, 3)], [1, 2, 3]);
 });
 
+// ---- 预览推演与固件 mlarr.c 逐语义对齐（审计修复后锁死） ----
+
+test('simulatePin: dy.scan 亮 width 颗（固件 d < width，非 width+1）', () => {
+  const g = createGroup({
+    ranges: [{ start: 0, end: 10 }],
+    stages: [createStage({
+      durationMs: 1000,
+      layers: [layer(1, 6, { color: [0, 255, 0], width: 2, speedMs: 100, direction: 0 })],
+    })],
+  });
+  const arr = arrWith(0, 10, [g]);
+  // t=0：head=0 → 颗 0、1 亮（width=2 恰好 2 颗），颗 2 熄灭
+  const c = simulatePin(arr, 0, 0, { groupIndex: 0, scope: 'group' });
+  assert.deepEqual([...c.slice(0, 3)], [0, 255, 0]);
+  assert.deepEqual([...c.slice(3, 6)], [0, 255, 0]);
+  assert.deepEqual([...c.slice(6, 9)], [0, 0, 0]);
+});
+
+test('simulatePin: dy.pulse 拖尾窗口 [travel-width+1, travel]（固件语义）', () => {
+  const g = createGroup({
+    ranges: [{ start: 0, end: 10 }],
+    stages: [createStage({
+      durationMs: 1000,
+      layers: [layer(1, 10, { color: [0, 0, 255], periodMs: 100, width: 2, fromCenter: false })],
+    })],
+  });
+  const arr = arrWith(0, 10, [g]);
+  // t=50：travel = floor(50 * (10+2) / 100) = 6 → 亮 d ∈ (4, 6] → 颗 5、6
+  const c = simulatePin(arr, 0, 50, { groupIndex: 0, scope: 'group' });
+  for (let i = 0; i < 10; i++) {
+    const px = [...c.slice(i * 3, i * 3 + 3)];
+    if (i === 5 || i === 6) assert.deepEqual(px, [0, 0, 255]);
+    else assert.deepEqual(px, [0, 0, 0]);
+  }
+});
+
+test('simulatePin: dy.colorWipe 前沿扫过（t=100/200ms → 前 5 颗 B、其余 A）', () => {
+  const g = createGroup({
+    ranges: [{ start: 0, end: 10 }],
+    stages: [createStage({
+      durationMs: 1000,
+      layers: [layer(1, 11, {
+        colorA: [255, 0, 0], colorB: [0, 0, 255], wipeMs: 200, holdMs: 100,
+      })],
+    })],
+  });
+  const arr = arrWith(0, 10, [g]);
+  const mid = simulatePin(arr, 0, 100, { groupIndex: 0, scope: 'group' });
+  // front = floor(10 * 100 / 200) = 5：颗 0–4 已擦到 B，颗 5–9 仍是 A
+  for (let i = 0; i < 10; i++) {
+    const px = [...mid.slice(i * 3, i * 3 + 3)];
+    assert.deepEqual(px, i < 5 ? [0, 0, 255] : [255, 0, 0]);
+  }
+  // 擦完（hold 窗内）→ 全部 B
+  const done = simulatePin(arr, 0, 250, { groupIndex: 0, scope: 'group' });
+  for (let i = 0; i < 10; i++) assert.deepEqual([...done.slice(i * 3, i * 3 + 3)], [0, 0, 255]);
+});
+
+test('simulatePin: dy.sparkle 半亮衰减（hash 与固件 sparkle_rand 一致）', () => {
+  const g = createGroup({
+    ranges: [{ start: 0, end: 10 }],
+    stages: [createStage({
+      durationMs: 1000,
+      layers: [layer(1, 9, { color: [255, 255, 255], density: 100, decayMs: 100 })],
+    })],
+  });
+  const arr = arrWith(0, 10, [g]);
+  // pixel 0：slot=0 的 hash=0 < density 必点亮；t=50 → age=50 → k=255-floor(50*255/100)=128
+  const c = simulatePin(arr, 0, 50, { groupIndex: 0, scope: 'group' });
+  assert.deepEqual([...c.slice(0, 3)], [128, 128, 128]);
+});
+
+test('simulatePin: dy.rainbowFlow 半圈色相（speedMs=200，t=100 → 青色）', () => {
+  const g = createGroup({
+    ranges: [{ start: 0, end: 10 }],
+    stages: [createStage({
+      durationMs: 1000,
+      layers: [layer(1, 8, { saturation: 255, brightness: 128, speedMs: 200 })],
+    })],
+  });
+  const arr = arrWith(0, 10, [g]);
+  // hue = (floor(100*1536/200) + 0) % 1536 = 768（半圈）→ (0,128,128)
+  const c = simulatePin(arr, 0, 100, { groupIndex: 0, scope: 'group' });
+  assert.deepEqual([...c.slice(0, 3)], [0, 128, 128]);
+  // 下一颗偏移 1536/10 → hue 921 → 落在 sector 3（青→蓝渐变）
+  const px1 = [...c.slice(3, 6)];
+  assert.ok(px1[2] > px1[1] && px1[1] > px1[0], `像素 1 应在青→蓝渐变上: ${px1}`);
+});
+
+test('simulatePin: dy.colorWipe 全黑 colorA 也覆盖背景（固件逐像素直写）', () => {
+  const g = createGroup({
+    ranges: [{ start: 0, end: 4 }],
+    stages: [createStage({
+      durationMs: 1000,
+      layers: [
+        layer(0, 0, { color: [9, 9, 9] }),
+        layer(1, 11, { colorA: [0, 0, 0], colorB: [255, 255, 255], wipeMs: 200, holdMs: 0 }),
+      ],
+    })],
+  });
+  const arr = arrWith(0, 4, [g]);
+  // t=0：前沿在 0 → 全部 colorA（黑）——dy 直写覆盖背景，而非透出背景
+  const c = simulatePin(arr, 0, 0, { groupIndex: 0, scope: 'group' });
+  for (let i = 0; i < 4; i++) assert.deepEqual([...c.slice(i * 3, i * 3 + 3)], [0, 0, 0]);
+});
+
 test('simulatePin: 淡入从黑放大（整数运算与固件一致：k=t*255/fadeInMs 截断）', () => {
   const g = createGroup({
     ranges: [{ start: 0, end: 1 }],
