@@ -233,6 +233,30 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     expect(data.pins.every((pin) => pin.state === 'on')).toBe(true);
   });
 
+  it('给定开关命令在途，当再次点开关，则提示「设备控制中」且第二次点击不产生命令', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+    await flush();
+    h.injectStatusFrame(buildStatusFrame({ mode: 1 }));
+    await flush();
+
+    const p1 = h.tap('onTogglePower', { detail: { value: false } });
+    await flush();
+    expect(h.getData().powerOn).toBe(false);
+
+    const p2 = h.tap('onTogglePower', { detail: { value: true } });
+    await flush();
+    expect(h.getToasts().some((t) => String(t.title).includes('设备控制中'))).toBe(true);
+    expect(h.getData().powerOn).toBe(false); // 第二次点击被挡，维持第一次的乐观态
+    const reqTokens = h.getBleWrites().filter((w) => w.short === '0001' && w.data.startsWith('10'));
+    expect(reqTokens).toHaveLength(1); // 在途命令只有一条，第二次点击未发 REQ_TOKEN
+
+    expect(await grantToken(h)).toBe(true);
+    expect(await ackLastCommand(h, 0)).toBe(true);
+    await Promise.all([p1, p2]);
+    expect(h.getData().powerOn).toBe(false);
+    expect(h.getData().transferMessage).toBe('');
+  });
+
   it('给定已连接设备，当点引脚卡片，则跳转引脚页并带 deviceId + name + pin', async () => {
     h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
     await flush();

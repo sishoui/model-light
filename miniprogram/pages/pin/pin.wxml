@@ -7,7 +7,7 @@
     </view>
     <view class="row meta">
       <text>{{pinName || '未命名引脚'}}</text>
-      <text>{{length}} 颗 · {{groupTabs.length}}/8 灯组</text>
+      <text class="length-edit" bindtap="onTapLength">{{length}} 颗 · {{groupTabs.length}}/8 灯组</text>
     </view>
     <text wx:if="{{pendingPush}}" class="pending">本地已改 · 待推送</text>
   </view>
@@ -239,6 +239,18 @@
       <view class="rename-actions">
         <button class="btn-ghost" bindtap="onRenameCancel">取消</button>
         <button class="btn-primary" bindtap="onRenameConfirm">确认</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 灯珠数编辑 -->
+  <view wx:if="{{lengthOpen}}" class="rename-mask" bindtap="onLengthCancel">
+    <view class="rename-panel" catchtap="noop">
+      <view class="rename-title">灯珠数量</view>
+      <input class="rename-input" type="number" value="{{lengthDraft}}" bindinput="onLengthInput" focus />
+      <view class="rename-actions">
+        <button class="btn-ghost" bindtap="onLengthCancel">取消</button>
+        <button class="btn-primary" bindtap="onLengthConfirm">确认</button>
       </view>
     </view>
   </view>

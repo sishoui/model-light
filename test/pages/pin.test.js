@@ -585,4 +585,62 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(h.getData().pendingPush).toBe(true);
     expect(h.getBleWrites()).toEqual([]);
   });
+
+  it('给定引脚长度 0，当设为 10 颗，则缓存 length=10、矩阵出 10 格、pendingPush 且 version 递增', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 0 });
+    h.page.onShow();
+    expect(h.getData().cellCount).toBe(0);
+
+    await h.tap('onTapLength');
+    expect(h.getData().lengthOpen).toBe(true);
+    await h.tap('onLengthInput', { detail: { value: '10' } });
+    await h.tap('onLengthConfirm');
+
+    const arr = saved(h.wx);
+    expect(arr.pins[PIN].length).toBe(10);
+    expect(h.getData().length).toBe(10);
+    expect(h.getData().cellCount).toBe(10);
+    expect(h.getData().lengthOpen).toBe(false);
+    expect(arr.pendingPush).toBe(true);
+    expect(h.getToasts().some((t) => String(t.title).includes('已设为 10 颗'))).toBe(true);
+    expect(h.getBleWrites()).toEqual([]);
+  });
+
+  it('给定灯珠数为 0 且无灯组，当输入非整数/越界值，则弹错误 toast 且缓存不变', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 0 });
+    h.page.onShow();
+
+    for (const bad of ['abc', '-1', '101', '']) {
+      await h.tap('onTapLength');
+      await h.tap('onLengthInput', { detail: { value: bad } });
+      await h.tap('onLengthConfirm');
+      expect(saved(h.wx).pins[PIN].length).toBe(0);
+    }
+    const toasts = h.getToasts();
+    expect(toasts.some((t) => String(t.title).includes('0–100'))).toBe(true);
+    expect(h.getData().lengthOpen).toBe(true); // 弹层保持打开，可改可取消
+    await h.tap('onLengthCancel');
+    expect(h.getData().lengthOpen).toBe(false);
+  });
+
+  it('给定已划灯珠的灯组，当缩短到越界长度，则拒绝修改并提示', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 10, groups: [{ ranges: [[4, 8]] }] });
+    h.page.onShow();
+
+    await h.tap('onTapLength');
+    await h.tap('onLengthInput', { detail: { value: '5' } });
+    await h.tap('onLengthConfirm');
+
+    expect(saved(h.wx).pins[PIN].length).toBe(10);
+    expect(h.getToasts().some((t) => String(t.title).includes('越界'))).toBe(true);
+
+    // 合法方向仍可通过：扩到 20
+    await h.tap('onTapLength');
+    await h.tap('onLengthInput', { detail: { value: '20' } });
+    await h.tap('onLengthConfirm');
+    expect(saved(h.wx).pins[PIN].length).toBe(20);
+  });
 });

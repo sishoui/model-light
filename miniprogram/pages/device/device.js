@@ -370,7 +370,11 @@ Page({
       wx.showToast({ title: '设备未连接', icon: 'none' });
       return;
     }
-    if (this._dcBusy) return;
+    if (this._dcBusy) {
+      // 上一条控制命令还在等 ACK：给出可见反馈而不是静默吞掉这次点击
+      wx.showToast({ title: '设备控制中，请稍候', icon: 'none' });
+      return;
+    }
     this._dcBusy = true;
     try {
       this.setData({ powerOn: on, transferMessage: '' });

@@ -111,6 +111,8 @@ Page({
     renameOpen: false,
     renameGroupIndex: -1,
     renameDraft: '',
+    lengthOpen: false,        // 灯珠数编辑弹层
+    lengthDraft: '',
     // ---- #131 阶段与双层灯效 ----
     stages: [],             // [{ index, durationMs, fadeInMs, fadeLabel, thumbs: [{css,label}] }]
     totalLabel: '0 ms',
@@ -449,6 +451,44 @@ Page({
 
   onRenameInput(e) {
     this.setData({ renameDraft: e.detail.value });
+  },
+
+  // ---- 灯珠数（引脚物理长度，0–100）：写本地编排缓存，随下次推送到达设备 ----
+
+  /** 点顶栏长度 → 弹层编辑（沿用重命名弹层的交互形态）。 */
+  onTapLength() {
+    this.setData({ lengthOpen: true, lengthDraft: String(this.data.length) });
+  },
+
+  onLengthInput(e) {
+    this.setData({ lengthDraft: e.detail.value });
+  },
+
+  onLengthCancel() {
+    this.setData({ lengthOpen: false });
+  },
+
+  /** 确认：0–100 整数；缩短会让已划区间越界（encode 必败），先拦下并指路。 */
+  onLengthConfirm() {
+    const raw = String(this.data.lengthDraft ?? '').trim();
+    const n = Number(raw);
+    if (!raw || !Number.isInteger(n) || n < 0 || n > MAX_CELLS) {
+      wx.showToast({ title: `灯珠数需为 0–${MAX_CELLS} 的整数`, icon: 'none' });
+      return;
+    }
+    const arr = store.loadOrCreate(this._deviceName);
+    const pin = arr.pins[this.data.pinIndex];
+    if (!pin) return;
+    const overflow = (pin.groups || []).some((g) => (g.ranges || []).some((r) => r.end > n));
+    if (overflow) {
+      wx.showToast({ title: '缩短会让已划灯珠越界，先释放超出部分的灯珠', icon: 'none' });
+      return;
+    }
+    this.setData({ lengthOpen: false });
+    if (n === pin.length) return;
+    pin.length = n;
+    this._commit(arr);
+    wx.showToast({ title: `已设为 ${n} 颗`, icon: 'success' });
   },
 
   onRenameCancel() {

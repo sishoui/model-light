@@ -9,6 +9,7 @@
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
 .name { font-size: 36rpx; font-weight: 700; color: #4a5568; }
 .meta { margin-top: 16rpx; color: #8a94a6; font-size: 26rpx; }
+.length-edit { border-bottom: 1rpx dashed #b6c0d3; }
 .badge { font-size: 24rpx; color: #3b82f6; }
 .pending { margin-top: 10rpx; color: #b45309; font-size: 24rpx; font-weight: 600; }
 
