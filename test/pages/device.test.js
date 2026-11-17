@@ -3,7 +3,7 @@
 // 约定（见 #108）：只断言外部可观察行为（setData 输出、BLE 写、跳转目标与参数、缓存内容），
 // 不断言私有方法、内部字段、wxml/wxss 文本。
 import { describe, it, expect, afterEach } from 'vitest';
-import { createPageHarness, FAKE_DEVICE_ID, CHAR_COMMAND } from './page-harness';
+import { createPageHarness, FAKE_DEVICE_ID, CHAR_COMMAND, CHAR_SEQUENCE } from './page-harness';
 
 const PAGE = 'miniprogram/pages/device/device.js';
 const NAME = 'ML-8DCC';
@@ -16,6 +16,16 @@ function buildGrantFrame(seq) {
 // 命令 ACK 帧（cmd 0x17 + seq 2B LE + result）
 function buildAckFrame(seq, result) {
   return [0x17, seq & 0xff, (seq >> 8) & 0xff, result & 0xff];
+}
+
+// 编排 ACK 帧（cmd 0x05 + ackUpTo 2B LE + nakMask 2B LE + status），设备 → 手机 ...0003
+function buildSeqAck(ackUpTo, { nakMask = 0, status = 0 } = {}) {
+  return [
+    0x05,
+    ackUpTo & 0xff, (ackUpTo >>> 8) & 0xff,
+    nakMask & 0xff, (nakMask >>> 8) & 0xff,
+    status & 0xff,
+  ];
 }
 
 // 12 B 状态帧：mode / ver(2) / crc32(4) / limit / tokenHolder / errorCode / temperature / flags
@@ -37,22 +47,31 @@ async function flush() {
   for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
+// pushArrangement 的状态帧确认走真实 200 ms 轮询（lib 不注入 sleep），
+// 微任务 flush 推不动真实定时器——先等真实时间再排干微任务。
+async function flushReal(ms = 300) {
+  await new Promise((r) => setTimeout(r, ms));
+  await flush();
+}
+
 // 用页面同一套缓存逻辑写入种子编排（引脚 0「头部」2 灯组 / 引脚 1「底座」1 灯组）。
 // 必须在 createPageHarness 之后同步调用：onLoad 里 connect() 的 reloadPins 在微任务里才跑。
+// 灯组区间互不重叠且不超过 pin.length——encode 的结构校验要求，推送用例需要种子可编码。
 function seedArrangement(wx) {
   const { createArrangementStore } = require('../../miniprogram/lib/arrangement-store');
   const { createGroup, createStage, createLayer } = require('../../miniprogram/lib/arrangement');
   const store = createArrangementStore(wx);
   const arr = store.loadOrCreate(NAME);
-  const group = () => createGroup({
-    ranges: [{ start: 0, end: 4 }],
+  const group = (start = 0) => createGroup({
+    ranges: [{ start, end: start + 4 }],
     stages: [createStage({ durationMs: 500, layers: [createLayer({ role: 0, effectId: 0, params: [] })] })],
   });
   arr.pins[0].name = '头部';
   arr.pins[0].length = 10;
-  arr.pins[0].groups = [group(), group()];
+  arr.pins[0].groups = [group(0), group(4)];
   arr.pins[1].name = '底座';
-  arr.pins[1].groups = [group()];
+  arr.pins[1].length = 10;
+  arr.pins[1].groups = [group(0)];
   store.save(NAME, arr);
   return store;
 }
@@ -320,5 +339,38 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     expect(h.bleState.connected).toBe(false);
     expect(data.pins).toHaveLength(8);
     expect(data.pins[0].gpio).toBe('GPIO0');
+  });
+
+  it('给定已连接设备且本地编排 pendingPush=true，当连接完成，则经命令通道取令牌后向 ...0003 写编排 START/FIN 分片，且状态帧回显版本后 pendingPush 清除', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+    const store = seedArrangement(h.wx);
+    const arr = store.load(NAME);
+    arr.pendingPush = true;
+    store.save(NAME, arr);
+    await flush();
+    await flush(); // 让 connect() 走完 probe + _maybePushArrangement（取令牌写命令通道）
+
+    // 令牌 GRANT → START/DATA 分片写出；设备回编排 ACK → FIN 收尾
+    expect(await grantToken(h)).toBe(true);
+    h.injectBleFrame(CHAR_SEQUENCE, buildSeqAck(0));
+    await flush();
+
+    const seqWrites = h.getBleWrites().filter((w) => w.short === '0003');
+    expect(seqWrites.some((w) => w.data.startsWith('01'))).toBe(true); // START
+    expect(seqWrites.some((w) => w.data.startsWith('03'))).toBe(true); // FIN
+
+    // 状态帧回显同版本 → 推送确认，pendingPush 清除
+    h.injectStatusFrame(buildStatusFrame({ ver: arr.version }));
+    await flushReal();
+    expect(store.load(NAME).pendingPush).toBe(false);
+    expect(h.getData().transferMessage).toBe('推送成功，设备版本已确认');
+  });
+
+  it('给定本地编排未标 pendingPush，当连接完成，则不产生 ...0003 编排分片写', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+    seedArrangement(h.wx);
+    await flush();
+    await flush();
+    expect(h.getBleWrites().some((w) => w.short === '0003')).toBe(false);
   });
 });

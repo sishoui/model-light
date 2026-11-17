@@ -566,4 +566,23 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     }
     expect(h.getBleWrites()).toEqual([]);
   });
+
+  it('给定当前灯组，当切换循环模式，则本地编排 pendingPush=true 且 version 递增', async () => {
+    h = createPageHarness(PAGE, { query: { name: DEVICE, pin: PIN } });
+    seedStage(h.wx, { stages: [{
+      layers: [{ role: 0, effectId: 0, params: encodeParams(0, { color: [255, 0, 0] }) }],
+    }] });
+    h.page.onShow();
+
+    const v0 = saved(h.wx).version;
+
+    await h.tap('onSelectLoopMode', { currentTarget: { dataset: { loop: 0 } } });
+
+    const arr = saved(h.wx);
+    expect(h.getData().loopMode).toBe(0);
+    expect(arr.pendingPush).toBe(true);
+    expect(arr.version).toBe(((v0 || 1) + 1) & 0xffff);
+    expect(h.getData().pendingPush).toBe(true);
+    expect(h.getBleWrites()).toEqual([]);
+  });
 });

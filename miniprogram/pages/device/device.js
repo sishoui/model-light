@@ -14,11 +14,12 @@ const { nextBackoffMs, resetBackoff } = require('../../lib/backoff');
 const { MODE_LABELS, ERROR_MESSAGES, TOKEN_LABELS } = require('../../lib/labels');
 const { isReadOnlyProtocol } = require('../../lib/device-protocol');
 const { createArrangementStore } = require('../../lib/arrangement-store');
+const { pushArrangement } = require('../../lib/arrangement-push');
 const { createTokenClient } = require('../../lib/token-client');
 const { createDeviceControl } = require('../../lib/device-control');
 const { ACK_RESULT } = require('../../lib/device-control-frames');
 const { createStatusCache } = require('../../lib/status-cache');
-const { PIN_COUNT } = require('../../lib/arrangement');
+const { PIN_COUNT, encode } = require('../../lib/arrangement');
 const { setPinName } = require('../../lib/pin-editor');
 
 const PROTO_MAJOR = 1;
@@ -79,6 +80,8 @@ Page({
     this.store = createArrangementStore(wx);
     this._statusCache = createStatusCache(wx);
     this._lastStatusFrame = null;
+    this._chunkSize = 0;  // 连接时现算（probeDeviceCapabilities），编排推送分片大小
+    this._pushing = false; // 编排推送进行中，防重入
     this._tokenClient = null;
     this._tokenTimer = null;
     this._reconnectTimer = null;
@@ -190,6 +193,9 @@ Page({
       this._tokenTimer = setInterval(() => {
         if (this._tokenClient) this._tokenClient.tick();
       }, 2000);
+      // pendingPush 契约见 pin.js 文件头注释：引脚页编辑只落缓存，这里连接就绪后补推。
+      // fire-and-forget：失败只落 transferMessage，不阻塞连接流程。
+      this._maybePushArrangement().catch((e) => console.error('[device] 编排推送异常', e));
     } catch (e) {
       this.scheduleReconnect();
     } finally {
@@ -208,8 +214,69 @@ Page({
         { major: info.protoMajor, minor: info.protoMinor },
       );
       this.setData({ firmwareLabel: this._fwVersion || '—', readOnly });
+      // §2.1：chunkSize 每次连接现算（iOS 20 / Android 实测 MTU−3），编排推送分片用
+      const sys = wx.getSystemInfoSync();
+      const { chunkSize } = await this.ble.negotiateChunkSize(sys.platform);
+      this._chunkSize = chunkSize;
     } catch (e) {
       this.setData({ readOnly: true });
+    }
+  },
+
+  // 编排分片通道（§2.2）：writeSequence 串行写 ...0003，onSequenceNotify 收设备 ACK/NAK
+  _arrangementTransport() {
+    return {
+      write: (bytes) => this.ble.writeSequence(bytes),
+      onFrame: (cb) => this.ble.onSequenceNotify(cb),
+    };
+  },
+
+  // 本地编排待推送（pendingPush=true，契约见 pin.js 文件头注释）时补推：
+  // 取令牌 → 分片写 ...0003 → 等状态帧回显 arrangementVersion 与本机一致才算成功，
+  // 成功后清 pendingPush。全程不 throw（fire-and-forget，失败只落 transferMessage）。
+  async _maybePushArrangement() {
+    if (this._pushing || !this._chunkSize || !this._deviceName || this.data.readOnly) return;
+    // 用 load 不用 loadOrCreate：不给没有编排缓存的设备建空缓存
+    const arr = this.store.load(this._deviceName);
+    if (!arr || arr.pendingPush !== true) return;
+    this._pushing = true;
+    try {
+      let version;
+      let payloadBytes;
+      try {
+        version = arr.version;
+        payloadBytes = new Uint8Array(encode(arr));
+      } catch (e) {
+        this.setData({ transferMessage: `编排不完整：${e.message}（本地已保存，可继续编辑）` });
+        return;
+      }
+      const result = await pushArrangement(this.ble, {
+        chunkSize: this._chunkSize,
+        payloadBytes,
+        version,
+        getStatusFrame: () => this._lastStatusFrame,
+        token: this._tokenClient,
+        transport: this._arrangementTransport(),
+      });
+      if (result.ok) {
+        // 重新读缓存再清标记：不覆盖推送期间引脚页可能写入的新编辑
+        const fresh = this.store.load(this._deviceName);
+        if (fresh) {
+          fresh.pendingPush = false;
+          this.store.save(this._deviceName, fresh);
+        }
+        this.setData({ transferMessage: '推送成功，设备版本已确认' });
+      } else if (result.reason === 'no-token') {
+        const why = { denied: '当前持有者拒绝了令牌交接', busy: '设备正忙，稍后再试', timeout: '令牌握手超时' };
+        this.setData({ transferMessage: `未获得控制令牌：${why[result.detail] || result.detail}` });
+      } else {
+        this.setData({ transferMessage: `推送失败：${result.reason}` });
+      }
+    } catch (e) {
+      this.setData({ transferMessage: `推送失败：${e.message || '未知原因'}` });
+    } finally {
+      this._pushing = false;
+      this.reloadPins();
     }
   },
 

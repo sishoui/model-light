@@ -353,8 +353,13 @@ Page({
     });
   },
 
-  /** 落盘 + 标记待推送 + 重渲染。 */
+  /**
+   * 落盘 + 标记待推送 + 重渲染。
+   * 版本递增（v1 用例语义「arrangementVersion 同步递增」）：每次本地编辑得到新版本号，
+   * 设备 commit 后状态帧回显同版本，设备页推送确认（版本对上）才有意义。
+   */
   _commit(arr) {
+    arr.version = ((arr.version || 1) + 1) & 0xffff;
     arr.pendingPush = true;
     store.save(this._deviceName, arr);
     this.reload();
