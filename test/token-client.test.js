@@ -34,6 +34,7 @@ test('requestToken：发 REQ_TOKEN，GRANT(OK) 后开心跳；失败（DENIED/BU
   const ble = makeBle();
   const c = createTokenClient(ble);
   const p = c.requestToken();
+  await Promise.resolve(); // requestToken 先 await bind() 再写 REQ_TOKEN，等挂起 pendingGrant
   ble.deliver(grantFrame(TOKEN_GRANTED));
   const r = await p;
   assert.equal(r.granted, true);
@@ -58,6 +59,7 @@ test('requestToken：DENIED → granted=false + reason=denied，不开心跳', a
   const ble = makeBle();
   const c = createTokenClient(ble);
   const p = c.requestToken();
+  await Promise.resolve();
   ble.deliver(grantFrame(TOKEN_DENIED));
   const r = await p;
   assert.equal(r.granted, false);
@@ -71,6 +73,7 @@ test('requestToken：BUSY → granted=false + reason=busy', async () => {
   const ble = makeBle();
   const c = createTokenClient(ble);
   const p = c.requestToken();
+  await Promise.resolve();
   ble.deliver(grantFrame(TOKEN_BUSY));
   const r = await p;
   assert.equal(r.granted, false);
@@ -86,10 +89,11 @@ test('requestToken：5 s 内无 GRANT → 超时失败', async () => {
   assert.equal(r.reason, 'timeout');
 });
 
-test('礼貌交接：持令牌时收到 PROBE → 回 PROBE_YES 并停心跳（令牌让出）', () => {
+test('礼貌交接：持令牌时收到 PROBE → 回 PROBE_YES 并停心跳（令牌让出）', async () => {
   const ble = makeBle();
   const c = createTokenClient(ble);
   const p = c.requestToken();
+  await Promise.resolve();
   ble.deliver(grantFrame(TOKEN_GRANTED));
   assert.equal(c.holdsToken(), true);
   ble.written.length = 0;

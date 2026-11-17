@@ -51,6 +51,7 @@ test('pushArrangement: 推成功且状态帧 arrangementVersion 一致 → ok + 
       timeoutMs: 5000,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     });
+    await Promise.resolve(); // requestToken 先 await bind()，等 pendingGrant 挂上再投递 GRANT
     ble.grant(TOKEN_GRANTED); // 令牌握手
     await new Promise((r) => setTimeout(r, 50));
     version = 9; // 设备提交后状态帧回新版本
@@ -76,6 +77,7 @@ test('pushArrangement: 令牌 DENIED → ok=false + reason=no-token，不发编�
     version: 1,
     sleep: async () => {},
   });
+  await Promise.resolve();
   ble.grant(TOKEN_DENIED);
   const result = await p;
   assert.strictEqual(result.ok, false);
@@ -96,6 +98,7 @@ test('pushArrangement: 推成功但版本不一致 → reason=version-mismatch',
       timeoutMs: 60,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     });
+    await Promise.resolve();
     ble.grant(TOKEN_GRANTED);
     await new Promise((r) => setTimeout(r, 15));
     const result = await p;
@@ -117,6 +120,7 @@ test('pushArrangement: NAK → ok=false，本地缓存不受影响', async () =>
     timeoutMs: 5000,
     sleep: async () => {},
   });
+  await Promise.resolve();
   ble.grant(TOKEN_GRANTED);
   await new Promise((r) => setTimeout(r, 20));
   ble._cb(new Uint8Array([0x06, 0, 0, 0, 0, 0x02])); // NAK cmd=0x06 status=0x02 CRC 失败

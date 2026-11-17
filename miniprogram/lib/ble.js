@@ -203,17 +203,13 @@ function createBleClient(wxApi) {
   /**
    * 订阅某个特征的 notify，返回解绑函数。
    * 命令(0001)/编排 ACK(0003)/OTA(0006) 三处共用：回调收原始 Uint8Array。
+   * 注意：_globalNotifyHandler 是广播式分发（不按 characteristicId 匹配），
+   * 同一回调只注册一次；曾同时注册全 UUID + 短 UUID 两份，导致每帧回调两次。
    */
   function _notifyWatcher(characteristicId, callback) {
     const key = characteristicId.toUpperCase();
     if (!(_notifyMap.has(key))) _notifyMap.set(key, new Set());
     _notifyMap.get(key).add(callback);
-    // 同时用短 UUID 后4位存一份，防止微信返回短 ID 时匹配不上
-    const shortKey = key.slice(-4);
-    if (shortKey !== key) {
-      if (!(_notifyMap.has(shortKey))) _notifyMap.set(shortKey, new Set());
-      _notifyMap.get(shortKey).add(callback);
-    }
     _ensureGlobalHandler();
     // notify 订阅是异步的（CCCD 写入需时间）；返回 ready Promise 让调用方
     // 能等到订阅完成后再发命令，避免设备回复在订阅就绪前到达而丢失。
@@ -228,11 +224,6 @@ function createBleClient(wxApi) {
       if (cbs) {
         cbs.delete(callback);
         if (cbs.size === 0) _notifyMap.delete(key);
-      }
-      const scbs = _notifyMap.get(shortKey);
-      if (scbs && shortKey !== key) {
-        scbs.delete(callback);
-        if (scbs.size === 0) _notifyMap.delete(shortKey);
       }
       if (_notifyMap.size === 0) _removeNotifyHandler();
     };
