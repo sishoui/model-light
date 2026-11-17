@@ -71,28 +71,35 @@ enum {
 typedef struct mlt mlt_t;
 
 typedef void (*mlt_send_fn)(void *user, uint16_t conn, uint8_t cmd,
-                            const uint8_t *payload, uint8_t len);
+                            uint16_t seq, const uint8_t *payload,
+                            uint8_t len);
 typedef void (*mlt_change_fn)(void *user);
 typedef void (*mlt_reset_fn)(void *user);
 
 /* send: device -> one connection (PROBE / GRANT / ACK / REPORT), payload ≤ 8 B.
+ * seq: 回填请求帧的 seq（控制命令 0x20–0x25 的 0x17 ACK）；PROBE / GRANT
+ * 这类无对应请求帧的应答回 0。
  * change: token holder changed (repaint status frame / adv immediately).
  * reset: factory-reset requested and allowed (holder, guest mode off).
  * control: 设备控制命令（SET_POWER / SET_BRIGHTNESS / SET_LED_COUNT /
  * ACTIVATE_SCENE / SCENE_QUERY）的委托实现。收到控制命令时由 mltoken
  * 先做令牌门禁（SET_* 与 ACTIVATE_SCENE 要求 mlt_can_write），再交给
  * 本回调执行并返回 0（成功）/ -1（失败）。为 NULL 时统一回 ACK=2（不支持）。
+ * seq 为请求帧的 seq（buf[1..2] LE），SCENE_QUERY 回 0x25 SCENE_REPORT
+ * 时原样回填。
  * SCENE_QUERY 不受令牌门禁，且由本回调自行发 0x25 SCENE_REPORT（mltoken
  * 不再另发 ACK）。now_ms 为该帧被处理的时间戳（esp_timer ms / 虚拟 ms）。 */
 typedef int (*mlt_control_fn)(mlt_t *t, uint16_t conn, uint8_t cmd,
-                              const uint8_t *payload, uint16_t len,
-                              uint32_t now_ms);
+                              uint16_t seq, const uint8_t *payload,
+                              uint16_t len, uint32_t now_ms);
 
 mlt_t *mlt_new(mlt_send_fn send, mlt_change_fn change, mlt_reset_fn reset,
                mlt_control_fn control, void *user);
 void   mlt_free(mlt_t *t);
 
-/* Feed one ...0001 frame: buf[0]=cmd (buf[1..2]=seq, ignored here).
+/* Feed one ...0001 frame: buf[0]=cmd, buf[1..2]=seq LE.
+ * 0x10–0x16（令牌协议）不使用 seq；0x20–0x25 控制命令的 seq 回填到
+ * 0x17 ACK / 0x25 SCENE_REPORT 回包。
  * `now_ms` drives all deadlines. */
 void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
                     uint32_t now_ms);

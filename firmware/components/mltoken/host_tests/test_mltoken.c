@@ -10,7 +10,7 @@
 /* ---- capture harness: records every notification ---- */
 #define MAX_EV 32
 typedef struct {
-    uint16_t conn; uint8_t cmd; uint8_t payload[8]; uint8_t len;
+    uint16_t conn; uint8_t cmd; uint16_t seq; uint8_t payload[8]; uint8_t len;
 } ev_t;
 static ev_t evs[MAX_EV];
 static size_t ev_count;
@@ -25,13 +25,14 @@ static void reset_harness(void)
     reset_count = 0;
 }
 
-static void cap_send(void *user, uint16_t conn, uint8_t cmd,
+static void cap_send(void *user, uint16_t conn, uint8_t cmd, uint16_t seq,
                      const uint8_t *payload, uint8_t len)
 {
     (void)user;
     assert(ev_count < MAX_EV);
     evs[ev_count].conn = conn;
     evs[ev_count].cmd = cmd;
+    evs[ev_count].seq = seq;
     memcpy(evs[ev_count].payload, payload, len < sizeof evs[0].payload ? len : sizeof evs[0].payload);
     evs[ev_count].len = len;
     ev_count++;
@@ -43,6 +44,7 @@ static void cap_reset(void *user)  { (void)user; reset_count++; }
 /* ---- control 回调捕获（0x20–0x25 设备控制命令）---- */
 static int control_calls;
 static uint8_t control_last_cmd;
+static uint16_t control_last_seq;
 static uint8_t control_last_payload[8];
 static uint16_t control_last_len;
 static uint32_t control_last_now;
@@ -52,18 +54,20 @@ static void reset_control(void)
 {
     control_calls = 0;
     control_last_cmd = 0;
+    control_last_seq = 0;
     memset(control_last_payload, 0, sizeof control_last_payload);
     control_last_len = 0;
     control_last_now = 0;
     control_ret = 0;
 }
 
-static int cap_control(mlt_t *t, uint16_t conn, uint8_t cmd,
+static int cap_control(mlt_t *t, uint16_t conn, uint8_t cmd, uint16_t seq,
                        const uint8_t *payload, uint16_t len, uint32_t now)
 {
     (void)t; (void)conn;
     control_calls++;
     control_last_cmd = cmd;
+    control_last_seq = seq;
     if (payload != NULL && len > 0) {
         memcpy(control_last_payload, payload,
                len < sizeof control_last_payload ? len
@@ -134,6 +138,7 @@ static void test_first_request_granted_without_probe(void)
     const ev_t *g = find_ev(MLT_CMD_GRANT, 1);
     assert(g != NULL);
     assert(g->len == 1 && g->payload[0] == MLT_GRANT_OK);
+    assert(g->seq == 0);                               /* GRANT 不回填 seq */
     assert(find_ev(MLT_CMD_PROBE, 1) == NULL);       /* no PROBE detour */
     assert(mlt_can_write(t, 1));
     assert(mlt_perspective(t, 1) == 1);              /* 本连接持有 */
@@ -480,10 +485,12 @@ static void test_control_payload_offset_two_bytes(void)
     mlt_on_command(t, 1, f, sizeof f, 100);
     assert(control_calls == 1);
     assert(control_last_cmd == MLT_CMD_SET_LED_COUNT);
+    assert(control_last_seq == 0x1234);               /* seq 透传给回调 */
     assert(control_last_len == 2);
     assert(control_last_payload[0] == 3 && control_last_payload[1] == 60);
     const ev_t *a = find_ev(MLT_CMD_ACK, 1);
     assert(a != NULL && a->payload[0] == MLT_ACK_OK);
+    assert(a->seq == 0x1234);                         /* ACK 回填请求 seq */
     mlt_free(t);
 }
 
@@ -514,17 +521,18 @@ static void test_control_null_acks_unsupported(void)
 }
 
 /* SCENE_QUERY 不要求令牌：非持有者也能触发回调，且 mltoken 不另发 ACK
- * （0x25 报告由回调自己发）。 */
+ * （0x25 报告由回调自己发）；请求 seq 透传给回调供 0x25 回填。 */
 static void test_scene_query_not_token_gated(void)
 {
     mlt_t *t = new_mlt_ctrl();
     req(t, 1, 100);                        /* token on conn 1 */
     ev_count = 0;
     reset_control();
-    uint8_t f[4] = { MLT_CMD_SCENE_QUERY, 0, 0, 2 };
+    uint8_t f[4] = { MLT_CMD_SCENE_QUERY, 0x21, 0x00, 2 };
     mlt_on_command(t, 2, f, sizeof f, 200);         /* conn 2 has no token */
     assert(control_calls == 1);
     assert(control_last_cmd == MLT_CMD_SCENE_QUERY);
+    assert(control_last_seq == 0x21);                /* seq 透传给回调 */
     assert(control_last_len == 1 && control_last_payload[0] == 2);
     assert(find_ev(MLT_CMD_ACK, 2) == NULL);        /* no ACK for query */
     mlt_free(t);
@@ -556,6 +564,28 @@ static void test_activate_scene_token_gate(void)
     mlt_on_command(t, 1, f, sizeof f, 200);         /* holder → callback */
     assert(control_calls == 1);
     assert(find_ev(MLT_CMD_ACK, 1)->payload[0] == MLT_ACK_OK);
+    mlt_free(t);
+}
+
+/* 0x17 ACK 回填请求帧的 seq（非 0）——成功/门禁拒绝两条路径都要回填，
+ * 小程序按 seq 匹配回包防串扰（device-control.js waitCmd）。 */
+static void test_ack_seq_echoes_request_seq(void)
+{
+    mlt_t *t = new_mlt_ctrl();
+    req(t, 1, 100);
+    ev_count = 0;
+
+    uint8_t f[4] = { MLT_CMD_SET_BRIGHTNESS, 0x34, 0x12, 50 };
+    mlt_on_command(t, 1, f, sizeof f, 200);         /* holder: OK */
+    const ev_t *a = find_ev(MLT_CMD_ACK, 1);
+    assert(a != NULL && a->len == 1 && a->payload[0] == MLT_ACK_OK);
+    assert(a->seq == 0x1234);
+
+    uint8_t f2[4] = { MLT_CMD_SET_POWER, 0xCD, 0xAB, 1 };
+    mlt_on_command(t, 2, f2, sizeof f2, 300);       /* no token → ACK=1 */
+    const ev_t *a2 = find_ev(MLT_CMD_ACK, 2);
+    assert(a2 != NULL && a2->payload[0] == MLT_ACK_FAIL);
+    assert(a2->seq == 0xABCD);                      /* 拒绝路径同样回填 */
     mlt_free(t);
 }
 
@@ -599,6 +629,7 @@ int main(void)
     test_scene_query_not_token_gated();
     test_scene_query_null_control_unsupported();
     test_activate_scene_token_gate();
+    test_ack_seq_echoes_request_seq();
     test_ack_from_host_ignored();
     printf("all mltoken tests passed\n");
     return 0;

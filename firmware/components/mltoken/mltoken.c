@@ -46,17 +46,25 @@ static void send_grant(mlt_t *t, uint16_t conn, uint8_t outcome)
 {
     uint8_t p = outcome;
     if (t->send != NULL) {
-        t->send(t->user, conn, MLT_CMD_GRANT, &p, 1);
+        /* GRANT 无对应请求帧（REQ_TOKEN 的 seq 不沿用），seq 回 0。 */
+        t->send(t->user, conn, MLT_CMD_GRANT, 0, &p, 1);
     }
 }
 
-/* 0x17 ACK：控制命令结果（1 B 结果码）。 */
-static void send_result(mlt_t *t, uint16_t conn, uint8_t result)
+/* 0x17 ACK：控制命令结果（1 B 结果码），seq 回填请求帧。 */
+static void send_result(mlt_t *t, uint16_t conn, uint16_t seq,
+                        uint8_t result)
 {
     uint8_t p = result;
     if (t->send != NULL) {
-        t->send(t->user, conn, MLT_CMD_ACK, &p, 1);
+        t->send(t->user, conn, MLT_CMD_ACK, seq, &p, 1);
     }
+}
+
+/* 请求帧的 seq（buf[1..2] LE）；帧长不足 3 B（无 seq 字段）时回 0。 */
+static uint16_t cmd_seq(const uint8_t *buf, uint16_t len)
+{
+    return len >= 3 ? (uint16_t)(buf[1] | ((uint16_t)buf[2] << 8)) : 0;
 }
 
 static void set_holder(mlt_t *t, uint16_t conn, uint32_t now)
@@ -139,7 +147,8 @@ void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
                 t->requester = conn;
                 t->probe_deadline = now + MLT_PROBE_WINDOW_MS;
                 if (t->send != NULL) {
-                    t->send(t->user, t->holder, MLT_CMD_PROBE, NULL, 0);
+                    /* PROBE 是设备主动帧，无请求 seq，回 0。 */
+                    t->send(t->user, t->holder, MLT_CMD_PROBE, 0, NULL, 0);
                 }
             }
             break;
@@ -195,40 +204,42 @@ void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
         break;
 
     /* ---- 设备控制命令（0x20–0x25）：令牌门禁 + 委托 control 回调 ----
-     * 帧布局 cmd(1)+seq(2)+payload(n)，seq 在此忽略（与 0x10–0x16 一致）。
+     * 帧布局 cmd(1)+seq(2)+payload(n)，seq 回填 0x17 ACK / 0x25 回包。
      * SET_* 与 ACTIVATE_SCENE 要求 mlt_can_write（§2.4：无令牌的一切写拒
      * 绝），失败回 ACK=1；SCENE_QUERY 只读，不要求令牌。 */
     case MLT_CMD_SET_POWER:
     case MLT_CMD_SET_BRIGHTNESS:
     case MLT_CMD_SET_LED_COUNT:
     case MLT_CMD_ACTIVATE_SCENE: {
+        uint16_t seq = cmd_seq(buf, len);
         printf("mltoken: ctrl cmd=0x%02x conn=%u can_write=%d\n",
                (unsigned)buf[0], (unsigned)conn, mlt_can_write(t, conn));
         if (!mlt_can_write(t, conn)) {
-            send_result(t, conn, MLT_ACK_FAIL);
+            send_result(t, conn, seq, MLT_ACK_FAIL);
             break;
         }
         if (t->control == NULL) {
-            send_result(t, conn, MLT_ACK_UNSUPPORTED);
+            send_result(t, conn, seq, MLT_ACK_UNSUPPORTED);
             break;
         }
         const uint8_t *pl = len > 3 ? buf + 3 : NULL;
         uint16_t pl_len = len > 3 ? (uint16_t)(len - 3) : 0;
-        int rc = t->control(t, conn, buf[0], pl, pl_len, now);
-        send_result(t, conn, rc == 0 ? MLT_ACK_OK : MLT_ACK_FAIL);
+        int rc = t->control(t, conn, buf[0], seq, pl, pl_len, now);
+        send_result(t, conn, seq, rc == 0 ? MLT_ACK_OK : MLT_ACK_FAIL);
         break;
     }
 
     case MLT_CMD_SCENE_QUERY: {
         /* 只读查询：无令牌门禁；回复由 control 回调直接发 0x25
-         * SCENE_REPORT（mltoken 不另发 ACK）。 */
+         * SCENE_REPORT（mltoken 不另发 ACK），seq 经回调透传回填。 */
+        uint16_t seq = cmd_seq(buf, len);
         if (t->control == NULL) {
-            send_result(t, conn, MLT_ACK_UNSUPPORTED);
+            send_result(t, conn, seq, MLT_ACK_UNSUPPORTED);
             break;
         }
         const uint8_t *pl = len > 3 ? buf + 3 : NULL;
         uint16_t pl_len = len > 3 ? (uint16_t)(len - 3) : 0;
-        t->control(t, conn, buf[0], pl, pl_len, now);
+        t->control(t, conn, buf[0], seq, pl, pl_len, now);
         break;
     }
 

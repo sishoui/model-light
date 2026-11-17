@@ -99,11 +99,13 @@ static mlota_t *s_ota;
 static mlt_t *s_mlt;
 
 /* ---- token callbacks ---- */
-static void token_send(void *user, uint16_t conn, uint8_t cmd,
+static void token_send(void *user, uint16_t conn, uint8_t cmd, uint16_t seq,
                        const uint8_t *payload, uint8_t len)
 {
     (void)user;
-    uint8_t f[4] = { cmd, 0, 0, 0 };
+    /* cmd(1)+seq(2)+payload(1)：0x17 ACK 回填控制请求的 seq，
+     * GRANT/PROBE 无请求 seq，mltoken 侧回 0。 */
+    uint8_t f[4] = { cmd, (uint8_t)(seq & 0xFF), (uint8_t)(seq >> 8), 0 };
     uint8_t n = 3 + (len < 1 ? 0 : len);
     if (len) {
         f[3] = payload[0];
@@ -160,7 +162,8 @@ static void xfer_send(void *user, uint8_t cmd, uint16_t ack, uint16_t nak,
                       uint8_t status)
 {
     (void)user;
-    uint8_t f[7] = { cmd };
+    /* §2.2 ACK/NAK 帧共 6 B：cmd(1)+ackUpTo(2)+nakMask(2)+status(1)。 */
+    uint8_t f[6] = { cmd };
     f[1] = (uint8_t)(ack & 0xFF);
     f[2] = (uint8_t)(ack >> 8);
     f[3] = (uint8_t)(nak & 0xFF);
@@ -195,6 +198,9 @@ static int xfer_commit(void *user, const uint8_t *buf, uint16_t len,
     ESP_LOGI(TAG, "commit v%u chunks=%u len=%u", (unsigned)version,
              (unsigned)(s_rx != NULL ? mlarr_rx_chunks(s_rx) : 0),
              (unsigned)len);
+    /* 提交成功立即推状态帧：arrVersion 确认从最长 5 s（心跳）变毫秒级
+     * （与 ACTIVATE_SCENE 的处理一致，§2.9 变化立即发）。 */
+    ble_push_status();
     return 0;
 }
 
@@ -315,7 +321,8 @@ static int chr_ota_access(uint16_t conn, uint16_t attr,
  *   SET_POWER / SET_BRIGHTNESS → frame_task 的 volatile setter（掉电不持久）
  *   SET_LED_COUNT             → out_layer 的 s_strips 物理长度
  *   ACTIVATE_SCENE            → 场景槽载入 + 等价一次编排提交 + 状态帧
- *   SCENE_QUERY               → 回 0x25 SCENE_REPORT（TLV 原始字节，>247 截断）
+ *   SCENE_QUERY               → 回 0x25 SCENE_REPORT（TLV 原始字节，>247 截断；
+ *                               请求 seq 回填 out[1..2]）
  * 返回 0/-1（mltoken 映射为 ACK=0/1）。 */
 static int scene_load_cb(void *user, uint8_t slot, uint8_t *buf, uint16_t cap,
                          uint16_t *len, uint16_t *version)
@@ -324,7 +331,7 @@ static int scene_load_cb(void *user, uint8_t slot, uint8_t *buf, uint16_t cap,
     return scene_store_load(slot, buf, cap, len, version);
 }
 
-static int control_cb(mlt_t *t, uint16_t conn, uint8_t cmd,
+static int control_cb(mlt_t *t, uint16_t conn, uint8_t cmd, uint16_t seq,
                       const uint8_t *payload, uint16_t len, uint32_t now_ms)
 {
     (void)t; (void)now_ms;
@@ -366,8 +373,8 @@ static int control_cb(mlt_t *t, uint16_t conn, uint8_t cmd,
         uint8_t out[3 + MLARR_SCENE_REPORT_MAX]; /* 0x25 + seq(2) + ≤247 */
         uint16_t arr_len = 0, ver = 0, n = 0;
         out[0] = MLT_CMD_SCENE_REPORT;
-        out[1] = 0;
-        out[2] = 0;
+        out[1] = (uint8_t)(seq & 0xFF); /* 回填 SCENE_QUERY 请求的 seq */
+        out[2] = (uint8_t)(seq >> 8);
         if (scene_store_load(slot, out + 3, MLARR_SCENE_REPORT_MAX,
                              &arr_len, &ver) == 0) {
             /* 槽 len > 247：只回前 247 B（不分片），小程序按声明长度
