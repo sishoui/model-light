@@ -32,6 +32,24 @@ function callWithTimeout(wxApi, name, options, timeoutMs, label) {
   ]);
 }
 
+// ---- discovery 操作串行队列（按 wxApi 分桶）----
+// wx.startBluetoothDevicesDiscovery / wx.stopBluetoothDevicesDiscovery 是全局 API：
+// discover.onHide 的 stop 与 scan.onShow 的 start 并发调用时，stop 可能在 start 之后
+// 完成，把刚 start 的扫描停掉（删除设备后进扫描页扫不到的真凶）。所有 start/stop
+// 操作经此队列串行化，保证按调用顺序执行。
+const _discoveryChains = new WeakMap();
+
+function _enqueueDiscovery(wxApi, fn) {
+  let chain = _discoveryChains.get(wxApi);
+  if (!chain) {
+    chain = Promise.resolve();
+    _discoveryChains.set(wxApi, chain);
+  }
+  const next = chain.then(fn, fn);
+  _discoveryChains.set(wxApi, next.catch(() => {}));
+  return next;
+}
+
 // ---- notify 全局分发器（模块级、按 wxApi 分桶） ----
 // 设备页与引脚页 / OTA 页各建一个 ble 客户端实例，共用这里的 handler：
 // 回调集合按特征维护，回调收原始 Uint8Array（广播式分发，由各自 handler 按长度/cmd 过滤）。
@@ -109,15 +127,22 @@ function createBleClient(wxApi) {
     };
     wxApi.onBluetoothDeviceFound(handler);
     // §2.7：默认按服务 UUID 过滤；serviceFilter=false 时全量扫描，由 JS 层按广播名过滤（#109）
-    await call(wxApi, 'startBluetoothDevicesDiscovery', {
+    // 经串行队列：确保此 start 在本页面之前所有 stop 之后执行（跨页面竞态防护）
+    await _enqueueDiscovery(wxApi, () => call(wxApi, 'startBluetoothDevicesDiscovery', {
       ...(serviceFilter ? { services: [SERVICE_UUID] } : {}),
       allowDuplicatesKey: false,
-    });
+    }));
     return {
       async stop() {
-        await call(wxApi, 'stopBluetoothDevicesDiscovery', {}).catch(() => {});
+        await _enqueueDiscovery(wxApi, () => call(wxApi, 'stopBluetoothDevicesDiscovery', {})).catch(() => {});
         wxApi.offBluetoothDeviceFound(handler);
         return [...found.values()];
+      },
+      // 放弃此扫描但不 stopDiscovery：仅 off 自己的 handler，全局扫描交给其他
+      // 页面/client 接管时用（如 discover 丢弃残留 handle 时 scan 页已开扫，
+      // 调 stop 会把 scan 的扫描也停掉）
+      cancel() {
+        wxApi.offBluetoothDeviceFound(handler);
       },
       getDevices: () => [...found.values()],
     };

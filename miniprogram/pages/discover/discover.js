@@ -164,7 +164,7 @@ Page({
     }, { serviceFilter: false })
       .then((handle) => {
         if (this._scanPending === pending) this._scanPending = null;
-        if (gen !== this._scanGen) { handle.stop(); return; } // 上一轮残留，丢弃
+        if (gen !== this._scanGen) { handle.cancel(); return; } // 上一轮残留：只 off 自己的 handler，不停全局 Discovery（scan 页可能已接管扫描）
         this._scanStop = handle.stop;
         // 适配器此时已打开，查活跃连接才可靠
         this._refreshConnected();
