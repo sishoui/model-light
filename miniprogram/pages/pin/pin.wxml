@@ -20,6 +20,10 @@
       <text class="push-error">未下发：{{pushError}}</text>
       <text class="push-retry" bindtap="onRetryPush">重试</text>
     </view>
+    <!-- 草稿：结构未补全（如空灯组尚无区间），补全后编辑自动重推，无需重试 -->
+    <view wx:if="{{pushState === 'draft'}}" class="push-line">
+      <text class="push-error">{{pushError}}</text>
+    </view>
   </view>
 
   <!-- 灯组 tab 行：横向滚动，末尾「+」新增（达上限置灰），长按 tab → 重命名 / 删除 -->

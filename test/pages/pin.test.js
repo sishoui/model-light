@@ -750,6 +750,27 @@ describe('引脚页 pin（编辑即推送，以设备 ACK 为准）', () => {
     expect(h.getData().pushState).toBe('pushing');
   });
 
+  it('给定新增的空灯组（尚无区间），当触发推送，则显示草稿待补全而非错误，不产生 BLE 写且 pendingPush 保留', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 10, groups: [{ name: 'A', ranges: [[0, 4]] }] });
+    h.page.onShow();
+    await flushReal(50);
+
+    await h.tap('onAddGroup'); // 新增空灯组 → _commit（pendingPush=true）→ _triggerPush
+    expect(h.getData().groupIndex).toBe(1);
+
+    // 编码失败（pin[0].group[1] 无区间）→ draft 状态，无重试入口，pendingPush 保留
+    expect(await waitUntil(() => h.getData().pushState === 'draft', 1500)).toBe(true);
+    expect(h.getData().pushError).toContain('草稿');
+    const writes = h.getBleWrites().filter((w) => w.short === '0001' || w.short === '0003');
+    expect(writes.length).toBe(0);
+    expect(saved(h.wx).pendingPush).toBe(true);
+
+    // 重试入口对草稿不适用：再次手动触发仍是草稿（补全区间后的编辑才会自动重推）
+    await h.tap('onRetryPush');
+    expect(await waitUntil(() => h.getData().pushState === 'draft', 1500)).toBe(true);
+  });
+
   it('给定 readOnly=1（协议 major 不同），当进入页面并尝试编辑，则禁编辑、提示升级且不产生 BLE 写', async () => {
     h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: DEVICE, pin: PIN, readOnly: '1' } });
     seedPin(h.wx, { length: 10, groups: [{ name: 'A', ranges: [[0, 4]] }] });

@@ -41,7 +41,9 @@ function describePushError(result) {
     return `未获得控制令牌：${why[result.detail] || result.detail || '未知原因'}`;
   }
   if (result.reason === 'link-down') return 'BLE 链路不可用，未下发';
-  if (result.reason === 'encode') return `编排不完整：${result.message || '编码失败'}`;
+  // 编码失败 = 结构未补全（如新增的空灯组尚无区间），是草稿不是错误：
+  // pendingPush 保留，用户补全后下一次编辑会重新推送
+  if (result.reason === 'encode') return `编排未补全：${result.message || '编码失败'}（草稿暂存，未下发）`;
   if (result.reason === 'version-mismatch') return '设备版本未同步（状态帧未回显本机版本）';
   if (result.reason === 'nak') return `设备拒绝（NAK status=${result.status}）`;
   if (result.reason === 'timeout') return '传输超时（设备无 ACK）';
@@ -161,7 +163,8 @@ function createPushCoordinator(opts = {}) {
     try {
       payloadBytes = store.encodeForPush(name);
     } catch (e) {
-      return { ok: false, reason: 'encode', message: e && e.message };
+      // draft=true：结构未补全的草稿（空灯组等），页面应显示「待补全」而非错误+重试
+      return { ok: false, reason: 'encode', draft: true, message: e && e.message };
     }
     const version = arr.version;
 

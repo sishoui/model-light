@@ -312,6 +312,7 @@ test('push-coordinator: 编排编码失败 → reason=encode，缓存不受影�
   const result = await c.requestPush('ML-1', 'AA:BB');
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'encode');
+  assert.equal(result.draft, true); // 草稿标记：页面显示「待补全」而非错误
   assert.equal(store.load('ML-1').pendingPush, true);
   assert.equal(ble.sent.length, 0);
 });
@@ -322,7 +323,7 @@ test('push-coordinator: describePushError 人话映射', () => {
   assert.equal(describePushError({ reason: 'no-token', detail: 'timeout' }), '未获得控制令牌：令牌握手超时（设备未回 GRANT）');
   assert.equal(describePushError({ reason: 'no-token', detail: 'write-failed' }), '未获得控制令牌：令牌请求发送失败');
   assert.equal(describePushError({ reason: 'link-down' }), 'BLE 链路不可用，未下发');
-  assert.equal(describePushError({ reason: 'encode', message: 'pins 越界' }), '编排不完整：pins 越界');
+  assert.equal(describePushError({ reason: 'encode', message: 'pins 越界' }), '编排未补全：pins 越界（草稿暂存，未下发）');
   assert.equal(describePushError({ reason: 'version-mismatch' }), '设备版本未同步（状态帧未回显本机版本）');
   assert.equal(describePushError({ reason: 'nak', status: 2 }), '设备拒绝（NAK status=2）');
   assert.equal(describePushError({ reason: 'unknown-xyz' }), '推送失败：unknown-xyz');

@@ -422,6 +422,11 @@ Page({
       this.setData({ pushState: 'confirmed', pushError: '' });
       return;
     }
+    // 草稿（编码未补全，如空灯组）：温和提示，不出现重试——补全后编辑会自动重推
+    if (result.draft) {
+      this.setData({ pushState: 'draft', pushError: describePushError(result) });
+      return;
+    }
     this.setData({ pushState: 'error', pushError: describePushError(result) });
   },
 
