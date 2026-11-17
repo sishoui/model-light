@@ -6,6 +6,7 @@
  * HELD also dies on 30 s without heartbeat. */
 #include "mltoken.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 enum mlt_state {
     MLT_STATE_FREE = 0,
@@ -201,6 +202,8 @@ void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
     case MLT_CMD_SET_BRIGHTNESS:
     case MLT_CMD_SET_LED_COUNT:
     case MLT_CMD_ACTIVATE_SCENE: {
+        printf("mltoken: ctrl cmd=0x%02x conn=%u can_write=%d\n",
+               (unsigned)buf[0], (unsigned)conn, mlt_can_write(t, conn));
         if (!mlt_can_write(t, conn)) {
             send_result(t, conn, MLT_ACK_FAIL);
             break;
@@ -234,6 +237,7 @@ void mlt_on_command(mlt_t *t, uint16_t conn, const uint8_t *buf, uint16_t len,
         break;
 
     default:
+        printf("mltoken: unknown cmd=0x%02x conn=%u\n", (unsigned)buf[0], (unsigned)conn);
         break;
     }
 }
