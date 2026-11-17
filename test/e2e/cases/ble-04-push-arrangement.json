@@ -1,13 +1,7 @@
 {
   "id": "ble-04",
-  "name": "BLE-04 修改编排 → 推送 → arrangementVersion 递增",
-  "setup": [
-    {
-      "action": "evaluate",
-      "code": "if (!globalThis.__bleMock) throw new Error('ble-mock 未注入'); return globalThis.__bleMock.getState();",
-      "saveAs": "mockState"
-    }
-  ],
+  "name": "BLE-04 引脚页纯点击编排 → 推送 → arrangementVersion 递增",
+  "setup": [],
   "steps": [
     {
       "action": "evaluate",
@@ -20,23 +14,44 @@
       "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.data.flow !== null) throw new Error('添加流程未收尾：flow=' + p.data.flow + ' scanning=' + p.data.scanning + ' addError=' + (p.data.addError || '')); const devices = p.data.devices || []; if (devices.length < 1) throw new Error('设备列表为空（连接/登记失败）：devices=' + JSON.stringify(devices)); return { flow: p.data.flow, deviceCount: devices.length };"
     },
     { "action": "tap", "selector": ".device-card", "timeoutMs": 10000 },
-    { "action": "waitMs", "ms": 1500 },
+    { "action": "waitMs", "ms": 2500 },
     {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.route !== 'pages/device/device') throw new Error('未进入设备页：route=' + p.route); if (p.data.connected !== true) throw new Error('设备页未连接：data=' + JSON.stringify({ connected: p.data.connected, reconnecting: p.data.reconnecting, transferMessage: p.data.transferMessage, errorMessage: p.data.errorMessage, name: p.data.name })); return { connected: p.data.connected, powerOn: p.data.powerOn };"
-    },
-    {
-      "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const arr = p.store.loadOrCreate(p._deviceName); if (!arr || !Array.isArray(arr.pins) || !arr.pins[0]) throw new Error('编排预置失败：无 pins[0]'); arr.pins[0].length = 10; arr.pins[0].groups = [{ ranges: [{ start: 0, end: 10, reverse: false }], stages: [{ durationMs: 1000, fadeInMs: 0, layers: [{ role: 0, effectId: 0, params: [255, 0, 0] }] }], loopMode: 2 }]; p.store.save(p._deviceName, arr); return { version: arr.version, pendingPush: !!arr.pendingPush };",
-      "saveAs": "seed"
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.route !== 'pages/device/device') throw new Error('未进入设备页：route=' + p.route); if (p.data.connected !== true) throw new Error('设备页未连接：data=' + JSON.stringify({ connected: p.data.connected, reconnecting: p.data.reconnecting, transferMessage: p.data.transferMessage, name: p.data.name })); return { connected: p.data.connected, powerOn: p.data.powerOn };"
     },
     { "action": "tap", "selector": ".pin-card", "timeoutMs": 10000 },
     { "action": "waitMs", "ms": 1000 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.route !== 'pages/pin/pin') throw new Error('未进入 pin 页：route=' + p.route); return { pin: p.data.pinIndex, length: p.data.length, groupTabs: p.data.groupTabs.length };"
+    },
+    { "action": "tap", "selector": ".length-edit", "timeoutMs": 10000 },
+    { "action": "waitMs", "ms": 300 },
+    { "action": "input", "selector": ".rename-input", "value": "10" },
+    { "action": "waitMs", "ms": 200 },
+    { "action": "tap", "selector": ".btn-primary", "timeoutMs": 10000 },
+    { "action": "waitMs", "ms": 400 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.data.length !== 10) throw new Error('灯珠数未生效：length=' + p.data.length + ' lengthOpen=' + p.data.lengthOpen); if (p.data.cellCount !== 10) throw new Error('矩阵未出 10 格：cellCount=' + p.data.cellCount); return { length: p.data.length, cellCount: p.data.cellCount };"
+    },
+    { "action": "tap", "selector": ".cell", "timeoutMs": 10000 },
+    { "action": "waitMs", "ms": 300 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.data.selectedCount !== 1) throw new Error('点方格未选中 1 颗：selectedCount=' + p.data.selectedCount + ' freeCount=' + p.data.freeCount); return { selectedCount: p.data.selectedCount };"
+    },
+    { "action": "tap", "selector": ".add-btn", "timeoutMs": 10000 },
+    { "action": "waitMs", "ms": 300 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (!Array.isArray(p.data.stages) || p.data.stages.length !== 1) throw new Error('加阶段未生效：stages=' + JSON.stringify(p.data.stages || null)); return { stages: p.data.stages.length, totalLabel: p.data.totalLabel };"
+    },
     { "action": "tap", "selector": ".seg", "index": 0, "timeoutMs": 10000 },
     { "action": "waitMs", "ms": 300 },
     {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.route !== 'pages/pin/pin') throw new Error('未进入 pin 页：route=' + p.route); const raw = wx.getStorageSync('arrangement:' + p._deviceName); const arr = raw ? JSON.parse(raw) : null; if (!arr) throw new Error('读回编排失败：storage 无 arrangement:' + p._deviceName); if (!arr.pendingPush) throw new Error('切循环模式未置 pendingPush：arr=' + JSON.stringify({ version: arr.version, pendingPush: arr.pendingPush })); return { version: arr.version, pendingPush: arr.pendingPush };",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const raw = wx.getStorageSync('arrangement:' + p._deviceName); const arr = raw ? JSON.parse(raw) : null; if (!arr) throw new Error('读回编排失败：storage 无 arrangement:' + p._deviceName); if (!arr.pendingPush) throw new Error('编辑未置 pendingPush：arr=' + JSON.stringify({ version: arr.version, pendingPush: arr.pendingPush })); return { version: arr.version, pendingPush: arr.pendingPush, pinLength: arr.pins[p.data.pinIndex] && arr.pins[p.data.pinIndex].length };",
       "saveAs": "arrangement"
     },
     {
@@ -55,6 +70,7 @@
     { "type": "statusFrame", "hexLength": 12, "fields": { "arrangementVersion": "{{arrangement.version}}" }, "timeoutMs": 5000 },
     { "type": "bleWrite", "short": "0003", "data": "01", "minCount": 1 },
     { "type": "bleWrite", "short": "0003", "data": "03", "minCount": 1 },
+    { "type": "serial", "pattern": "rx chr=7c9f0001", "minCount": 1 },
     { "type": "mockState", "fields": { "connected": true } },
     { "type": "console", "level": "error" }
   ],

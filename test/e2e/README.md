@@ -163,11 +163,11 @@ Assertion（`type` 之一）：
   console 无 error、mock `connected`。
 - `ble-02-reconnect.json`：debugDisconnect → 断连处理 → `onAppShow` 用缓存 deviceId
   直连；断言固件侧出现第二次 `ble: connect #`、两次 REQ_TOKEN、mock 扫描次数不增。
-- `ble-04-push-arrangement.json`：v2 页面（discover → device → pin → 返回）：
-  连接后 evaluate 预置合法编排（v2 无灯珠数 UI 入口，见「已知边界」）→ pin 页
-  tap 循环模式（`_commit`：pendingPush + 版本递增）→ 返回触发 device.js 的
-  pendingPush 自动推送；断言串口 `commit v<n>`、状态帧 `arrangementVersion`
-  同步递增、编排写 ...0003（START 与 FIN）、console 无 error。
+- `ble-04-push-arrangement.json`：v2 页面纯点击编排（discover → device → pin）：
+  连接后进引脚页 → 顶栏长度弹层设 10 颗 → 点方格选 1 颗 → 加阶段（默认背景层）
+  → 切循环模式 → 返回触发 pendingPush 自动推送；断言串口 `commit v<n>`、
+  状态帧 `arrangementVersion` 同步、编排写 ...0003（START 与 FIN）、console 无 error。
+  全程真实 tap/input，无 evaluate 预置。
 - `ble-06-token-handover.json`（**skip**：本机单蓝牙适配器无法建第二条 GATT 链路）：
   双 daemon（A 持令牌 → B 请求 → A 停心跳 → B 获令牌）。
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
@@ -303,12 +303,10 @@ ble-mock → cloud-mock → 重扫后，用例的 setup 再显式触发登录/�
   ble-01 的「开灯」方向改用 evaluate 直调页面 `onTogglePower({detail:{value:true}})`
   （与 README 上文 dataset handler 相同的先例；开关内部 toggle 是唯一被跳过的
   部分，setData → 命令链路 → ACK 全走真实代码），其余交互仍为真实 tap。
-- **v2 无灯珠数（SetLedCount）UI 入口**：默认引脚 length=0 时 encode 校验必然失败
-  （灯组无区间），ble-04 只能 evaluate 预置 `pins[0].length/groups` 后再编辑推送。
-  产品侧补 UI 后此预置可移除。
-- **ble-04 依赖两个产品接线**（本轮补上）：device.js 连接就绪后读本地
+- **ble-04 依赖两个产品接线**：device.js 连接就绪后读本地
   `pendingPush` 自动推送（取令牌 → ...0003 分片 → 状态帧版本确认 → 清标记）；
-  pin.js `_commit` 编辑时递增 `arr.version`。
+  pin.js `_commit` 编辑时递增 `arr.version`，且引脚页顶栏长度弹层可改灯珠数
+  （0–100，随编排推送到达设备）。
 - **本机环境坑（2026-11-17 实测）**：残留的 DevTools 实例占着 9501 IDE server
   会让 `cli auto` 挂起、9420 永远起不来（杀掉「微信开发者工具」进程即可）；
   `C:\ml-e2e` junction 残留会让 daemon 启动报 EEXIST（`cmd /c rmdir C:\ml-e2e`）。
