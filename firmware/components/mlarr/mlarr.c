@@ -331,12 +331,14 @@ static void dy_mask(const ml_layer_t *l, uint16_t effect_id,
     memset(mask, 0, n);
     switch (effect_id) {
     case MLARR_FX_DY_COMET: {
-        /* param: color(3) tailLen(1) speedMs(u16) reverse(1) */
+        /* param: color(3) tailLen(1) speedMs(u16) reverse(1)
+         * speedMs = 走完全程的时间（与小程序 preview.js 推演一致）：
+         * head 在 speedMs 内走完 n 颗再重置，阶段切换不会中途重置。 */
         uint8_t tail = rd_u8p(l, 3);
         uint16_t speed = rd_u16p(l, 4);
         uint8_t rev = rd_u8p(l, 6);
         if (speed == 0) speed = 1;
-        uint32_t head = (t / speed) % n;
+        uint32_t head = (uint32_t)(t % speed) * n / speed;
         for (uint16_t i = 0; i < n; i++) {
             /* signed head→pixel distance, tail extends backwards */
             int32_t d = (int32_t)(rev ? n - 1 - head : head) - (int32_t)i;
@@ -349,13 +351,14 @@ static void dy_mask(const ml_layer_t *l, uint16_t effect_id,
         break;
     }
     case MLARR_FX_DY_SCAN: {
-        /* param: color(3) width(1) speedMs(u16) direction(1) 0=forward */
+        /* param: color(3) width(1) speedMs(u16) direction(1) 0=forward
+         * speedMs = 走完全程的时间（与小程序 preview.js 推演一致） */
         uint8_t width = rd_u8p(l, 3);
         uint16_t speed = rd_u16p(l, 4);
         uint8_t dir = rd_u8p(l, 6);
         if (speed == 0) speed = 1;
         if (width == 0) width = 1;
-        uint32_t head = (t / speed) % n;
+        uint32_t head = (uint32_t)(t % speed) * n / speed;
         for (uint16_t i = 0; i < n; i++) {
             uint16_t pos = dir ? (uint16_t)(n - 1 - head) : (uint16_t)head;
             uint16_t d = i >= pos ? (uint16_t)(i - pos) : (uint16_t)(pos - i);
@@ -406,14 +409,15 @@ static void dy_mask(const ml_layer_t *l, uint16_t effect_id,
     }
     case MLARR_FX_DY_PULSE: {
         /* param: color(3) periodMs(u16) width(1) fromCenter(1) — expanding
-         * ring of `width` logical pixels per period. */
+         * ring of `width` logical pixels. periodMs = 环走完全程
+         * （travel 0 → n+width）的时间，与小程序 preview.js 推演一致：
+         * 阶段切换不会让环中途重置。 */
         uint16_t period = rd_u16p(l, 3);
         uint8_t width = rd_u8p(l, 5);
         uint8_t center = rd_u8p(l, 6);
         if (period == 0) period = 1;
         if (width == 0) width = 1;
-        uint32_t span = period > n ? period / n : 1; /* ms per logical pixel */
-        uint32_t travel = (t / span) % (n + width);
+        uint32_t travel = (uint32_t)(t % period) * (n + width) / period;
         for (uint16_t i = 0; i < n; i++) {
             uint32_t d = center
                 ? (i >= (n - 1) / 2 ? (uint32_t)(i - (n - 1) / 2)
@@ -672,11 +676,15 @@ int mlarr_render(const ml_arrangement_t *arr, uint32_t clock_ms, uint8_t pin,
                 const uint8_t *c = i < front ? &dy->param[3] : &dy->param[0];
                 pr = c[0]; pg = c[1]; pb = c[2];
             } else if (dy != NULL && dy->effect_id == MLARR_FX_DY_RAINBOWFLOW) {
+                /* param: saturation(1) brightness(1) speedMs(u16)
+                 * 每颗灯 hue 均匀覆盖整个色轮（彩虹），整体在 speedMs 内
+                 * 流动一整圈——与小程序 preview.js 推演一致。 */
                 uint8_t sat = rd_u8p(dy, 0);
                 uint8_t val = rd_u8p(dy, 1);
                 uint16_t speed = rd_u16p(dy, 3);
                 if (speed == 0) speed = 1;
-                uint16_t hue = (uint16_t)(((t / speed) * 8u + i * 16u) % 1536);
+                uint16_t hue = (uint16_t)(((uint32_t)(t % speed) * 1536u / speed
+                                          + (uint32_t)i * 1536u / glen) % 1536u);
                 hsv_rgb(hue, sat, val, &pr, &pg, &pb);
             } else if (dy != NULL && mask_p != NULL && mask_p[i] > 0 &&
                        (dr > 0 || dg > 0 || db > 0)) {

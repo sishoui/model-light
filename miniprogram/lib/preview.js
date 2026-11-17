@@ -186,9 +186,10 @@ const EFFECT_RENDER = {
     const k = v.duty / 100;
     return tt < v.onMs ? [v.color[0] * k, v.color[1] * k, v.color[2] * k] : null;
   },
-  'dy.rainbowFlow': (v, i, t) => {
+  'dy.rainbowFlow': (v, i, t, n) => {
     const p = Math.max(1, v.speedMs);
-    const hue = ((i / 8 * 30 + (t % p) / p * 360) % 360) / 360;
+    // 每颗灯 hue 均匀覆盖整个色轮（彩虹），整体在 speedMs 内流动一整圈
+    const hue = ((i * 360 / n + (t % p) / p * 360) % 360) / 360;
     return hsv(hue, v.saturation / 255, v.brightness / 255);
   },
   'dy.sparkle': (v, i, t) => {
@@ -210,7 +211,8 @@ const EFFECT_RENDER = {
     } else {
       d = i;
     }
-    const edge = prog * (n / 2 + 1);
+    // 环在 periodMs 内走完 0 → n+width（覆盖全部灯珠），与固件 mlarr.c 一致
+    const edge = prog * (n + v.width);
     return Math.abs(d - edge) <= v.width ? v.color : null;
   },
   'dy.colorWipe': (v, i, t) => {

@@ -1379,8 +1379,9 @@ static void test_render_two_layer_overlay(void)
     assert(mlarr_parse(b, o, &a) == MLARR_OK);
 
     uint8_t rgb[30 * 3];
-    /* t=500: scan head at pixel 5; breath phase 500/1000 → peak (255,0,0) */
-    assert(mlarr_render(&a, 500, 0, rgb, 30) == MLARR_OK);
+    /* t=517: scan head at pixel 5 (speedMs=100 全程 30 颗 → head = 17*30/100 = 5);
+     * breath phase 517/1000 → near peak (255,0,0) */
+    assert(mlarr_render(&a, 517, 0, rgb, 30) == MLARR_OK);
     assert(rgb[5*3] == 0 && rgb[5*3+1] == 255 && rgb[5*3+2] == 0);   /* dy wins */
     assert(rgb[10*3] == 255 && rgb[10*3+1] == 0 && rgb[10*3+2] == 0); /* bg shows */
 }
