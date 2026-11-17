@@ -156,13 +156,18 @@ Assertion（`type` 之一）：
 
 ## 现有用例
 
-- `ble-01-scan-connect.json`：扫描 → 连接 → 状态帧 → 令牌请求。
+- `ble-01-scan-connect.json`：v2 页面（discover → device）：扫描行 tap → 连接登记 →
+  设备卡 tap → 状态帧/固件版本；整体开关关（真实 tap）→ 开（evaluate 直调页面
+  `onTogglePower`，原因见「已知边界」）。断言串口 `rx chr=7c9f0001` ≥2、
+  `token tx cmd=0x14`、0001 写 REQ_TOKEN/SET_POWER、状态帧 `mode=0`、
+  console 无 error、mock `connected`。
 - `ble-02-reconnect.json`：debugDisconnect → 断连处理 → `onAppShow` 用缓存 deviceId
   直连；断言固件侧出现第二次 `ble: connect #`、两次 REQ_TOKEN、mock 扫描次数不增。
-- `ble-04-push-arrangement.json`：等令牌空闲 → 改灯组/阶段（页面 store + encode）→
-  推送；断言串口 `commit v<base+1>`、状态帧 `arrangementVersion` 同步递增、编排写 ...0003
-  （START 与 FIN）。推送后再写一帧实时参数（pin0/group0/stage0 背景层 RGB），断言
-  mock 截获 ...0002 与串口 `rt pin=0 group=0 stage=0 applied=1`（设备真实应用实时帧）。
+- `ble-04-push-arrangement.json`：v2 页面（discover → device → pin → 返回）：
+  连接后 evaluate 预置合法编排（v2 无灯珠数 UI 入口，见「已知边界」）→ pin 页
+  tap 循环模式（`_commit`：pendingPush + 版本递增）→ 返回触发 device.js 的
+  pendingPush 自动推送；断言串口 `commit v<n>`、状态帧 `arrangementVersion`
+  同步递增、编排写 ...0003（START 与 FIN）、console 无 error。
 - `ble-06-token-handover.json`（**skip**：本机单蓝牙适配器无法建第二条 GATT 链路）：
   双 daemon（A 持令牌 → B 请求 → A 停心跳 → B 获令牌）。
   A 用 mock 写暂停钩子 `setWritePaused(true)` 停心跳但保持连接；B 用 `daemonWrite`
@@ -292,6 +297,21 @@ ble-mock → cloud-mock → 重扫后，用例的 setup 再显式触发登录/�
   行为由 `api/test/*.e2e.spec.ts` 与 `api` 单测覆盖。
 - **daemon 打开 COM6 会发 DTR 复位脉冲，设备重 boot——daemon 启动 = 设备重启**，
   每条用例都从干净状态开始（boot 日志也由该脉冲保证出现）。
+- **v2 页面下 automator 对 `<switch>` 的二次交互不可靠（本机 DevTools 实测）**：
+  页面经历过一次成功的开关命令后，对同一开关的后续 `Element.tap` 与
+  touchstart/touchend 可能完全不派发（无事件、无状态变化，探针已验证）。
+  ble-01 的「开灯」方向改用 evaluate 直调页面 `onTogglePower({detail:{value:true}})`
+  （与 README 上文 dataset handler 相同的先例；开关内部 toggle 是唯一被跳过的
+  部分，setData → 命令链路 → ACK 全走真实代码），其余交互仍为真实 tap。
+- **v2 无灯珠数（SetLedCount）UI 入口**：默认引脚 length=0 时 encode 校验必然失败
+  （灯组无区间），ble-04 只能 evaluate 预置 `pins[0].length/groups` 后再编辑推送。
+  产品侧补 UI 后此预置可移除。
+- **ble-04 依赖两个产品接线**（本轮补上）：device.js 连接就绪后读本地
+  `pendingPush` 自动推送（取令牌 → ...0003 分片 → 状态帧版本确认 → 清标记）；
+  pin.js `_commit` 编辑时递增 `arr.version`。
+- **本机环境坑（2026-11-17 实测）**：残留的 DevTools 实例占着 9501 IDE server
+  会让 `cli auto` 挂起、9420 永远起不来（杀掉「微信开发者工具」进程即可）；
+  `C:\ml-e2e` junction 残留会让 daemon 启动报 EEXIST（`cmd /c rmdir C:\ml-e2e`）。
 - `ota-01` 会通过 OTA 刷 fixture 固件并让设备重启（fixture 无 BLE），跑完必须
   重刷正式固件，并按 `test/e2e/ota-fixture/README.md` 收尾。
 
