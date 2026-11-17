@@ -3,7 +3,8 @@
     "pages/discover/discover",
     "pages/device/device",
     "pages/pin/pin",
-    "pages/ota/ota"
+    "pages/ota/ota",
+    "pages/scan/scan"
   ],
   "window": {
     "navigationBarTitleText": "模型灯效",

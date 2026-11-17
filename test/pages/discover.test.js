@@ -22,14 +22,13 @@ const flush = async () => {
 };
 
 describe('空态（无设备）', () => {
-  it('进入页面 → 空态信号为真，无设备列表，无错误', async () => {
+  it('进入页面 → 空态信号为真，无设备列表', async () => {
     h = createPageHarness(PAGE);
     await h.tap('onShow');
 
     const data = h.getData();
     expect(data.empty).toBe(true);
     expect(data.devices).toEqual([]);
-    expect(data.scanning).toBe(false);
   });
 });
 
@@ -63,76 +62,36 @@ describe('有设备：卡片列表与跳转', () => {
   });
 });
 
-describe('添加设备流程（扫描 → 连接 → 选中）', () => {
-  it('点添加 → 发起 BLE 扫描 → 发现设备 → 连接 → 回主页并选中新设备，产生 BLE 写帧与成功 toast', async () => {
+describe('添加设备入口与从扫描页返回', () => {
+  it('点「＋」卡片 → navigateTo 独立扫描页（不在当前页展开扫描 UI）', async () => {
     h = createPageHarness(PAGE);
 
-    // 点「添加设备」发起扫描
     await h.tap('onTapAdd');
-    expect(h.getData().scanning).toBe(true);
-    expect(h.getScanOptions()).toHaveLength(1);
 
-    // 推进伪定时器，模拟发现伪造设备 ML-8DCC
-    await flush();
-    h.advanceTime(300);
-    await flush();
-    expect(h.getData().discovered).toHaveLength(1);
-    expect(h.getData().discovered[0].name).toBe(FAKE_DEVICE_NAME);
+    const nav = h.getLastNavigation();
+    expect(nav.type).toBe('navigateTo');
+    expect(nav.url).toBe('/pages/scan/scan');
+    // 当前页不展开扫描流程（无 BLE 写）
+    expect(h.getBleWrites()).toHaveLength(0);
+    expect(h.getScanOptions()).toHaveLength(0);
+  });
 
-    // 点发现的设备 → 连接 → 添加成功
-    await h.tap('onTapAddDevice', {
-      currentTarget: { dataset: { deviceId: FAKE_DEVICE_ID, name: FAKE_DEVICE_NAME } },
-    });
+  it('从扫描页返回 → 读 lastConnected storage 标记在线并清缓存', async () => {
+    h = createPageHarness(PAGE);
+    // 模拟扫描页连接成功后写入（storage 直接存对象）
+    h.wx.setStorageSync('lastConnected', { name: 'ML-AAAA', deviceId: 'AA:BB', ts: 1000 });
+    h.wx.setStorageSync('devices:list', JSON.stringify([
+      { name: 'ML-AAAA', label: '客厅灯', cover: 'a', addedAt: 1000, lastSeenAt: 1000, pinCount: 8, groupCount: 2 },
+    ]));
 
-    // 产生命令通道 BLE 写帧（命令通道探测）
-    const writes = h.getBleWrites();
-    expect(writes.length).toBeGreaterThan(0);
-    expect(writes.some((w) => w.short === '0001')).toBe(true);
-
-    // 成功 toast，新设备回到主页并被选中
-    const toasts = h.getToasts();
-    expect(toasts.some((t) => /添加成功/.test(t.title))).toBe(true);
+    await h.tap('onShow');
 
     const data = h.getData();
     expect(data.empty).toBe(false);
-    expect(data.devices.some((d) => d.name === FAKE_DEVICE_NAME)).toBe(true);
-    const added = data.devices.find((d) => d.name === FAKE_DEVICE_NAME);
+    const added = data.devices.find((d) => d.name === 'ML-AAAA');
     expect(added.online).toBe(true);
-    expect(data.selected).toBe(FAKE_DEVICE_NAME);
-
-    // 设备已落盘（设备列表 + 最近设备）
-    const saved = JSON.parse(h.wx.getStorageSync('devices:list') || '[]');
-    expect(saved.some((d) => d.name === FAKE_DEVICE_NAME)).toBe(true);
-  });
-
-  it('连接失败时提示并可重试', async () => {
-    h = createPageHarness(PAGE);
-    await h.tap('onTapAdd');
-    await flush();
-    h.advanceTime(300);
-    await flush();
-    expect(h.getData().discovered).toHaveLength(1);
-
-    const ble = h.page.ble;
-    const origConnect = ble.connect;
-
-    // 模拟连接失败
-    ble.connect = async () => { throw new Error('连接超时'); };
-    await h.tap('onTapAddDevice', {
-      currentTarget: { dataset: { deviceId: FAKE_DEVICE_ID, name: FAKE_DEVICE_NAME } },
-    });
-    expect(h.getToasts().some((t) => /连接失败|连接超时/.test(t.title))).toBe(true);
-    expect(h.getData().flow).toBeNull();
-    expect(h.getData().scanning).toBe(false);
-    expect(h.getData().devices).toEqual([]);
-
-    // 恢复正常连接并重试成功
-    ble.connect = origConnect;
-    await h.tap('onTapAddDevice', {
-      currentTarget: { dataset: { deviceId: FAKE_DEVICE_ID, name: FAKE_DEVICE_NAME } },
-    });
-    expect(h.getToasts().some((t) => /添加成功/.test(t.title))).toBe(true);
-    expect(h.getData().selected).toBe(FAKE_DEVICE_NAME);
+    // storage 已清除（只消费一次）
+    expect(h.wx.getStorageSync('lastConnected')).toBe('');
   });
 });
 

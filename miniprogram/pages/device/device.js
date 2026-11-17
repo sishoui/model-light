@@ -1,4 +1,5 @@
-// 设备页 v2（#129）：顶部整体开关 + 8 引脚卡片纵向滚动。
+// 设备页 v2（#129）：顶部整体开关 + 8 引脚卡片两列网格纵向滚动；顶栏挂「固件升级 / 添加设备」两个轻量入口。
+// 「添加设备」入口 navigateTo 独立扫描页（pages/scan/scan）。
 // 整体开关关 → 下发 SET_POWER(0) 全灭，8 张卡置灰且点按/长按都被挡；开 → SET_POWER(1) 恢复。
 // 引脚状态：12 B 状态帧（§2.9）没有逐引脚字段，按设备 mode 映射到全部 8 张卡
 // （0 回放→闪烁 / 1 实时→点亮 / 2 传输中、3 错误→关闭），开关关时一律关闭。
@@ -417,6 +418,11 @@ Page({
     wx.navigateTo({
       url: `/pages/ota/ota?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}`,
     });
+  },
+
+  // 顶栏「添加设备」入口：navigateTo 独立扫描页
+  onTapAdd() {
+    wx.navigateTo({ url: '/pages/scan/scan' });
   },
 
   // 长按卡片 → 底部编辑菜单；整体关闭时不可点

@@ -1,7 +1,7 @@
-// 设备列表页（v2 主页）— 设备卡片列表 + 添加设备流程。
+// 设备列表页（v2 主页）— 设备卡片列表。
 // 空态：占位图 + 「添加设备」主按钮；有设备：卡片列表 + 末尾「+」添加卡片。
 // 点卡片 → 设备页（带设备标识）；长按 → 编辑菜单（重命名 / 换封面 / 删除二次确认）。
-// 添加设备：BLE 扫描 → 选中 → 连接 → 回主页并选中新设备；失败提示可重试。
+// 添加设备：navigateTo 独立扫描页（pages/scan/scan），连接成功后 navigateBack 回本页。
 //
 // 每台设备的编排缓存在 arrangement-store（arrangement:<name>），
 // 设备注册表在 device-list（devices:list）， BLE 走 createBleClient（mock 开关 storage: mock:enabled）。
@@ -9,9 +9,6 @@ const { createBleClient } = require('../../lib/ble');
 const { createArrangementStore } = require('../../lib/arrangement-store');
 const { createDeviceList, nextCover } = require('../../lib/device-list');
 const { createRecentDevices } = require('../../lib/recent-devices');
-const { buildSceneQueryFrame } = require('../../lib/device-control-frames');
-
-const SCAN_TIMEOUT_MS = 10000;
 
 function safeGetApp() {
   if (typeof getApp !== 'function') return null;
@@ -22,12 +19,7 @@ Page({
   data: {
     devices: [],      // 设备卡片列表：{ name, label, cover, online, pinCount, groupCount, ... }
     empty: true,      // 空态信号：devices 为空时驱动占位图 + 「添加设备」
-    selected: '',     // 刚添加并选中的设备名（高亮）
-    flow: null,       // null | 'scanning' | 'connecting'
-    scanning: false,
-    discovered: [],   // 添加流程里扫描到的设备
-    addError: '',
-    menuOpen: false,  // 长按编辑菜单（底部弹出）
+    menuOpen: false,  // 长按底部编辑菜单
     menuDevice: null,
     renameOpen: false,
     renameDraft: '',
@@ -39,7 +31,6 @@ Page({
     this.arrangementStore = createArrangementStore(wx);
     this.deviceList = createDeviceList(wx);
     this.recentDevices = createRecentDevices(wx);
-    this.scanHandle = null;
     this._online = new Set();   // 本次会话内已连接的设备（内存态，不落盘）
     this._deviceIds = new Map(); // 本次会话内已知 deviceId（§2.7：仅内存，不落盘）
     // 从 app.globalData 恢复本会话内已知 deviceId（app.js rememberDevice 存的）
@@ -54,19 +45,24 @@ Page({
   },
 
   onShow() {
+    // 从扫描页返回时，读取最近连接的设备标记在线
+    try {
+      const last = wx.getStorageSync('lastConnected');
+      if (last && last.name) {
+        this._online.add(last.name);
+        if (last.deviceId) this._deviceIds.set(last.name, last.deviceId);
+        wx.removeStorageSync('lastConnected');
+      }
+    } catch (e) { /* 忽略 */ }
     this._refreshDevices();
     this._refreshMockState();
   },
 
   onHide() {
-    // 只停扫描，不断连——保持 BLE 链路让设备页复用或 createBLEConnection 幂等返回
-    this._stopScanTimer();
-    this.stopScan();
+    // 发现页不保持 BLE 连接，无需清理
   },
 
   onUnload() {
-    this._stopScanTimer();
-    this.stopScan();
     if (this.ble) this.ble.disconnect();
   },
 
@@ -90,94 +86,9 @@ Page({
     });
   },
 
-  // 进入添加设备流程（空态按钮 / 末尾「+」卡片）；扫描中再点 = 停止，连接中再点 = 取消
-  async onTapAdd() {
-    if (this.data.flow === 'connecting') {
-      this.setData({ flow: null });
-      return;
-    }
-    if (this.data.scanning) {
-      await this.stopScan();
-      return;
-    }
-    await this.startScan();
-  },
-
-  // 全量扫描（不带 services 过滤），JS 层按广播名 ML-XXXX 过滤
-  async startScan() {
-    if (this.data.scanning) return;
-    this.setData({ flow: 'scanning', scanning: true, discovered: [], addError: '' });
-    try {
-      this.scanHandle = await this.ble.scan((name, ad) => {
-        const found = this.data.discovered.filter((d) => d.deviceId !== ad.deviceId);
-        found.push({ ...ad, name });
-        this.setData({ discovered: found });
-      }, { serviceFilter: false });
-      this._startScanTimer();
-    } catch (e) {
-      this.setData({ scanning: false, addError: e.message || '扫描失败' });
-    }
-  },
-
-  _startScanTimer() {
-    this._stopScanTimer();
-    this._scanTimer = setTimeout(() => this.stopScan(), SCAN_TIMEOUT_MS);
-  },
-
-  _stopScanTimer() {
-    clearTimeout(this._scanTimer);
-    this._scanTimer = null;
-  },
-
-  async stopScan() {
-    this._stopScanTimer();
-    if (this.scanHandle) {
-      const handle = this.scanHandle;
-      this.scanHandle = null;
-      await handle.stop().catch(() => {});
-    }
-    this.setData({ scanning: false });
-  },
-
-  // 选中扫描到的设备 → 连接 → 登记到设备列表
-  async onTapAddDevice(e) {
-    const deviceId = e.currentTarget.dataset.deviceId;
-    const name = e.currentTarget.dataset.name;
-    if (!deviceId || !name) {
-      wx.showToast({ title: '设备 ID 无效，请重新扫描', icon: 'none' });
-      return;
-    }
-    this.setData({ flow: 'connecting' });
-    await this.stopScan();
-    try {
-      await this.ble.connect(deviceId);
-      // 命令通道探测：确认可下发（失败不阻断添加，仅忽略）
-      try { await this.ble.write(buildSceneQueryFrame(0, 0)); } catch (err) { /* 探测失败忽略 */ }
-      const info = await this.ble.readDeviceInfo().catch(() => null);
-      const fwVersion = info && info.fwMajor != null ? `${info.fwMajor}.${info.fwMinor}` : null;
-      // 每台设备一份本地编排缓存（编辑不丢）
-      const arrangement = this.arrangementStore.loadOrCreate(name);
-      let groupCount = 0;
-      for (const pin of arrangement.pins) groupCount += pin.groups.length;
-      this.deviceList.upsert(name, {
-        lastSeenAt: Date.now(),
-        pinCount: arrangement.pins.length,
-        groupCount,
-      });
-      this.recentDevices.record(name, fwVersion, Date.now());
-      const app = safeGetApp();
-      if (app && typeof app.rememberDevice === 'function') {
-        try { app.rememberDevice(name, deviceId); } catch (err) { /* 忽略 */ }
-      }
-      this._online.add(name);
-      this._deviceIds.set(name, deviceId);
-      this.setData({ flow: null, scanning: false, selected: name });
-      this._refreshDevices();
-      wx.showToast({ title: '添加成功', icon: 'success' });
-    } catch (e) {
-      this.setData({ flow: null, scanning: false });
-      wx.showToast({ title: e.message || '连接失败，请重试', icon: 'none' });
-    }
+  // 进入添加设备流程：navigateTo 独立扫描页
+  onTapAdd() {
+    wx.navigateTo({ url: '/pages/scan/scan' });
   },
 
   // 长按设备卡片 → 底部编辑菜单

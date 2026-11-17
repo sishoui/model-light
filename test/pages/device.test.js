@@ -293,6 +293,17 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     expect(h.getToasts().some((t) => String(t.title).includes('无法升级'))).toBe(true);
   });
 
+  it('给定已连接设备，当点顶栏「添加设备」入口，则 navigateTo 独立扫描页', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+    await flush();
+
+    await h.tap('onTapAdd');
+
+    const nav = h.getLastNavigation();
+    expect(nav.type).toBe('navigateTo');
+    expect(nav.url).toBe('/pages/scan/scan');
+  });
+
   it('给定长按引脚卡片，当弹菜单选重命名并确认，则名字落 arrangement-store 且卡片重渲染', async () => {
     h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
     const store = seedArrangement(h.wx);

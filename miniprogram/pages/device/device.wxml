@@ -17,6 +17,10 @@
       <text class="ota-entry-version" wx:if="{{firmwareLabel !== '—'}}">当前 {{firmwareLabel}}</text>
       <text class="ota-entry-arrow">›</text>
     </view>
+    <view class="ota-entry add-entry" bindtap="onTapAdd">
+      <text class="ota-entry-title">添加设备</text>
+      <text class="ota-entry-arrow">›</text>
+    </view>
   </view>
 
   <view wx:if="{{errorMessage}}" class="error-bar">{{errorMessage}}</view>
@@ -31,25 +35,32 @@
     <text wx:if="{{transferMessage}}" class="transfer-msg">{{transferMessage}}</text>
   </view>
 
-  <scroll-view class="card-list" scroll-y>
+  <!-- 引脚卡片模板（两列网格复用）：数据经 {{...item}} 展开传入，点按/长按/置灰交互不变 -->
+  <template name="pin-card">
     <view
-      wx:for="{{pins}}"
-      wx:key="index"
-      class="pin-card {{powerOn ? '' : 'off'}}"
-      data-pin="{{item.index}}"
+      class="pin-card {{cover ? '' : 'no-cover'}}"
+      data-pin="{{index}}"
       bindtap="onTapPin"
       bindlongpress="onLongPressPin"
     >
-      <image wx:if="{{item.cover}}" class="card-image" src="{{item.cover}}" mode="aspectFill" />
-      <view wx:else class="card-image image-placeholder">{{item.gpio}}</view>
+      <image wx:if="{{cover}}" class="card-image" src="{{cover}}" mode="aspectFill" />
+      <view wx:else class="card-image image-placeholder">{{gpio}}</view>
+      <view wx:if="{{cover}}" class="card-shade"></view>
       <view class="card-body">
-        <view class="card-name">{{item.name}}</view>
+        <view class="card-name">{{name}}<text class="gpio-inline">{{gpio}}</text></view>
         <view class="card-meta">
-          <text>{{item.gpio}}</text>
-          <text class="state state-{{item.state}}">{{item.stateLabel}}</text>
-          <text>{{item.groupCount}} 灯组 · {{item.length}} 珠</text>
+          <text class="state state-{{state}}">{{stateLabel}}</text>
+          <text>{{groupCount}} 灯组 · {{length}} 珠</text>
         </view>
       </view>
+    </view>
+  </template>
+
+  <scroll-view class="card-list" scroll-y>
+    <view class="pin-grid {{powerOn ? '' : 'power-off'}}">
+      <block wx:for="{{pins}}" wx:key="index">
+        <template is="pin-card" data="{{...item}}" />
+      </block>
     </view>
   </scroll-view>
 

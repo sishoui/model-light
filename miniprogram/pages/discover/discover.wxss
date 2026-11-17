@@ -1,5 +1,5 @@
 /* 设备列表页（主页）样式 — 新拟物：底 #e0e5ec / 卡片 #ffffff / 双向阴影 / 强调 #60a5fa。
-   结构：空态 → 设备卡片列表 → 末尾添加卡片 → 添加流程 → 长按菜单 → 重命名。 */
+   结构：空态 → 设备卡片纵向列表（卡片加高、内容不填充）→ 末尾添加卡片 → 长按菜单 → 重命名。 */
 .page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; box-sizing: border-box; }
 
 /* ---- 空态 ---- */
@@ -24,13 +24,16 @@
 .cards { display: flex; flex-direction: column; gap: 20rpx; }
 .device-card {
   display: flex; align-items: center; gap: 20rpx;
-  background: #ffffff; border-radius: 24rpx; padding: 24rpx;
+  background: #ffffff; border-radius: 24rpx; padding: 24rpx; min-height: 280rpx;
   box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff;
 }
 .device-card.selected {
   box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff;
   border: 2rpx solid #60a5fa;
 }
+/* 末尾「＋」添加卡片：整体居中，只放大的加号 */
+.card-add { justify-content: center; align-items: center; cursor: pointer; }
+.card-add:active { box-shadow: inset 3rpx 3rpx 6rpx #cfd6e0, inset -3rpx -3rpx 6rpx #ffffff; }
 .cover {
   width: 104rpx; height: 104rpx; border-radius: 20rpx; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -41,7 +44,7 @@
 .cover-c { background: #fdf3e3; }
 .cover-d { background: #f3eafd; }
 .cover-icon { font-size: 52rpx; }
-.cover-add { background: #eef1f6; color: #60a5fa; font-size: 52rpx; font-weight: 300; }
+.cover-add { background: #eef1f6; color: #60a5fa; font-size: 80rpx; font-weight: 300; }
 .body { flex: 1; min-width: 0; }
 .name { color: #4a5568; font-size: 30rpx; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .summary { margin-top: 10rpx; display: flex; align-items: center; gap: 16rpx; }
@@ -50,26 +53,6 @@
 .online.off { background: #eceff3; color: #8a94a6; }
 .count { color: #8a94a6; font-size: 24rpx; }
 .add-label { color: #60a5fa; font-weight: 600; }
-
-/* ---- 添加设备流程 ---- */
-.add-flow {
-  margin-top: 24rpx; background: #ffffff; border-radius: 24rpx; padding: 24rpx;
-  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff;
-}
-.add-flow-head { display: flex; align-items: center; justify-content: space-between; }
-.add-flow-title { color: #4a5568; font-size: 30rpx; font-weight: 600; }
-.add-flow-close { color: #60a5fa; font-size: 26rpx; }
-.error { color: #d66a6a; padding: 16rpx 0; text-align: center; font-size: 26rpx; }
-.scan-list { margin-top: 16rpx; }
-.scan-empty { color: #8a94a6; font-size: 26rpx; padding: 24rpx 0; text-align: center; }
-.scan-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 20rpx 0; border-bottom: 1rpx solid #e6eaf0;
-}
-.scan-row:last-child { border-bottom: none; }
-.scan-name { color: #4a5568; font-size: 28rpx; font-weight: 600; }
-.scan-meta { color: #8a94a6; font-size: 22rpx; font-family: monospace; }
-.connecting { color: #8a94a6; font-size: 26rpx; padding: 24rpx 0; text-align: center; }
 
 /* ---- 长按编辑菜单（底部弹出） ---- */
 .sheet-mask {

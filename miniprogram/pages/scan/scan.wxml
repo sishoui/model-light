@@ -1,0 +1,30 @@
+<view class="page">
+  <view class="head">
+    <text class="title">{{connecting ? '连接中…' : '扫描附近设备'}}</text>
+    <text class="stop" bindtap="onTapStop">{{connecting ? '取消' : '停止'}}</text>
+  </view>
+
+  <view wx:if="{{error}}" class="error">{{error}}</view>
+
+  <view wx:if="{{connecting}}" class="connecting">
+    <text>正在连接设备…</text>
+  </view>
+
+  <view wx:elif="{{discovered.length === 0}}" class="scan-empty">
+    {{scanning ? '正在扫描…' : '未发现设备，点击「停止」后重试'}}
+  </view>
+
+  <view wx:else class="scan-list">
+    <view
+      wx:for="{{discovered}}"
+      wx:key="deviceId"
+      class="scan-row"
+      data-device-id="{{item.deviceId}}"
+      data-name="{{item.name}}"
+      bindtap="onTapDevice"
+    >
+      <text class="scan-name">{{item.name || '未知设备'}}</text>
+      <text class="scan-meta">{{item.deviceId}}</text>
+    </view>
+  </view>
+</view>

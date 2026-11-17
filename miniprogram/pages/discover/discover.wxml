@@ -33,42 +33,9 @@
       </view>
     </view>
 
-    <!-- 末尾追加「+」添加卡片 -->
+    <!-- 末尾追加「+」添加卡片：加号居中，点击进入扫描流程 -->
     <view class="device-card card-add" bindtap="onTapAdd">
       <view class="cover cover-add"><text class="cover-icon">＋</text></view>
-      <view class="body"><view class="name add-label">添加设备</view></view>
-    </view>
-  </view>
-
-  <!-- 添加设备流程：扫描 / 连接 -->
-  <view wx:if="{{flow}}" class="add-flow">
-    <view class="add-flow-head">
-      <text class="add-flow-title">{{flow === 'connecting' ? '连接中…' : '扫描附近设备'}}</text>
-      <text class="add-flow-close" bindtap="onTapAdd">停止</text>
-    </view>
-
-    <view wx:if="{{addError}}" class="error">{{addError}}</view>
-
-    <view wx:if="{{flow === 'scanning'}}" class="scan-list">
-      <view wx:if="{{discovered.length === 0}}" class="scan-empty">
-        {{scanning ? '正在扫描…' : '未发现设备，点击「停止」后重试'}}
-      </view>
-      <view
-        wx:for="{{discovered}}"
-        wx:for-item="found"
-        wx:key="deviceId"
-        class="scan-row"
-        data-device-id="{{found.deviceId}}"
-        data-name="{{found.name}}"
-        bindtap="onTapAddDevice"
-      >
-        <text class="scan-name">{{found.name || '未知设备'}}</text>
-        <text class="scan-meta">{{found.deviceId}}</text>
-      </view>
-    </view>
-
-    <view wx:if="{{flow === 'connecting'}}" class="connecting">
-      <text>正在连接设备…</text>
     </view>
   </view>
 

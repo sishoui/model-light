@@ -1,0 +1,23 @@
+/* 扫描页样式 — 新拟物：底 #e0e5ec / 卡片 #ffffff / 双向阴影 / 强调 #60a5fa。 */
+.page { padding: 24rpx; background: #e0e5ec; min-height: 100vh; box-sizing: border-box; }
+
+.head { display: flex; align-items: center; justify-content: space-between; }
+.title { color: #4a5568; font-size: 30rpx; font-weight: 600; }
+.stop { color: #60a5fa; font-size: 26rpx; }
+.error { color: #d66a6a; padding: 16rpx 0; text-align: center; font-size: 26rpx; }
+
+.connecting { color: #8a94a6; font-size: 26rpx; padding: 48rpx 0; text-align: center; }
+.scan-empty { color: #8a94a6; font-size: 26rpx; padding: 48rpx 0; text-align: center; }
+
+.scan-list {
+  margin-top: 24rpx; background: #ffffff; border-radius: 24rpx; padding: 8rpx 24rpx;
+  box-shadow: 5rpx 5rpx 10rpx #cfd6e0, -5rpx -5rpx 10rpx #ffffff;
+}
+.scan-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 24rpx 0; border-bottom: 1rpx solid #e6eaf0;
+}
+.scan-row:last-child { border-bottom: none; }
+.scan-row:active { background: #f5f7fa; }
+.scan-name { color: #4a5568; font-size: 28rpx; font-weight: 600; }
+.scan-meta { color: #8a94a6; font-size: 22rpx; font-family: monospace; }
