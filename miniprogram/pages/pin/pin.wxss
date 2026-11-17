@@ -11,7 +11,19 @@
 .meta { margin-top: 16rpx; color: #8a94a6; font-size: 26rpx; }
 .length-edit { border-bottom: 1rpx dashed #b6c0d3; }
 .badge { font-size: 24rpx; color: #3b82f6; }
-.pending { margin-top: 10rpx; color: #b45309; font-size: 24rpx; font-weight: 600; }
+
+/* 推送状态机（编辑即推，以设备 ACK 为准） */
+.ro-banner { margin-top: 12rpx; background: #fdf3e3; color: #b45309; font-size: 24rpx;
+  padding: 12rpx 20rpx; border-radius: 16rpx; }
+.push-badge { margin-top: 12rpx; font-size: 24rpx; font-weight: 600; }
+.push-badge.pushing { color: #3b82f6; }
+.push-badge.confirmed { color: #15803d; animation: push-fade 2.4s ease forwards; }
+@keyframes push-fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+.push-line { margin-top: 12rpx; display: flex; align-items: center; gap: 16rpx; }
+.push-error { flex: 1; color: #d66a6a; font-size: 24rpx; }
+.push-retry { color: #3b82f6; font-size: 24rpx; font-weight: 600;
+  border: 1rpx solid #60a5fa; border-radius: 999rpx; padding: 6rpx 24rpx; }
+.rename-note { color: #8a94a6; font-size: 22rpx; margin-bottom: 12rpx; display: block; }
 
 /* 灯组 tab 行（横向滚动，末尾「+」） */
 .tab-bar { margin-bottom: 16rpx; white-space: nowrap; }

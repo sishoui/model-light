@@ -51,8 +51,14 @@
 .online { font-size: 24rpx; padding: 2rpx 14rpx; border-radius: 999rpx; }
 .online.on { background: #e6f0fd; color: #3b82f6; }
 .online.off { background: #eceff3; color: #8a94a6; }
+.card-offline { opacity: 0.45; }
 .count { color: #8a94a6; font-size: 24rpx; }
 .add-label { color: #60a5fa; font-weight: 600; }
+
+/* ---- 扫描失败提示条 ---- */
+.scan-error { margin: 8rpx 0 20rpx; }
+.scan-error-text { color: #d66a6a; text-align: center; font-size: 26rpx; padding: 16rpx 0 8rpx; }
+.scan-error-tip { color: #8a94a6; text-align: center; font-size: 24rpx; padding: 0 0 16rpx; }
 
 /* ---- 长按编辑菜单（底部弹出） ---- */
 .sheet-mask {

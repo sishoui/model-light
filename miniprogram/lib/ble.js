@@ -32,6 +32,34 @@ function callWithTimeout(wxApi, name, options, timeoutMs, label) {
   ]);
 }
 
+// ---- notify 全局分发器（模块级、按 wxApi 分桶） ----
+// 设备页与引脚页 / OTA 页各建一个 ble 客户端实例，共用这里的 handler：
+// 回调集合按特征维护，回调收原始 Uint8Array（广播式分发，由各自 handler 按长度/cmd 过滤）。
+const _dispatchers = new WeakMap(); // wxApi → { map: Map<cidUpper, Set<cb>>, bound: boolean, handler }
+
+function _dispatcherFor(wxApi) {
+  let d = _dispatchers.get(wxApi);
+  if (!d) {
+    d = { map: new Map(), bound: false, handler: null };
+    _dispatchers.set(wxApi, d);
+  }
+  return d;
+}
+
+function _globalNotifyHandler(dispatcher, res) {
+  const cid = (res.characteristicId || '').toUpperCase();
+  const bytes = res.value ? new Uint8Array(res.value) : new Uint8Array(0);
+  console.log(`[ble] notify cid=${cid} len=${bytes.length} head=[${Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
+  // 广播模式：所有 notify 帧发给所有已订阅的回调，由各自 handler 自己按长度/cmd 过滤。
+  // 避免微信对 characteristicId 返回短/长 UUID 不一致导致帧漏发。
+  for (const [, cbs] of dispatcher.map) {
+    if (cbs.size === 0) continue;
+    for (const cb of Array.from(cbs)) {
+      try { cb(bytes); } catch (e) { /* ignore */ }
+    }
+  }
+}
+
 // 模拟模式开关（storage: mock:enabled）。仅当 wx 提供 getStorageSync 时生效。
 function isMockEnabled(wxApi) {
   try {
@@ -166,51 +194,23 @@ function createBleClient(wxApi) {
     return parseDeviceInfo(r.value ?? r);
   }
 
-  /**
-   * 全局 BLE notify 分发器：wx.onBLECharacteristicValueChange 只能注册一个
-   * handler（多次调用会互相覆盖），所以这里维护一个 Map，所有订阅共用一个
-   * 全局 handler，按 characteristicId 分发到对应的回调集合。
-   */
-  const _notifyMap = new Map(); // characteristicId(upper) → Set<callback>
-  let _globalHandlerBound = false;
+  // ---- notify 全局分发器（模块级、按 wxApi 分桶） ----
+  // wx.onBLECharacteristicValueChange 以最后一次注册为准：设备页与引脚页 / OTA 页
+  // 各建一个 ble 客户端实例，若各自注册全局 handler，后注册的会覆盖先注册的，
+  // 先注册的页面从此收不到 notify。这里把分发器抬到模块级（测试里每个 fake wx
+  // 独立分桶），所有实例共用一个全局 handler，回调集合按特征维护；某实例退订
+  // 最后一个回调时才解绑 wx 层 handler。公开 API 不变。
 
-  function _globalNotifyHandler(res) {
-    const cid = (res.characteristicId || '').toUpperCase();
-    const bytes = res.value ? new Uint8Array(res.value) : new Uint8Array(0);
-    console.log(`[ble] notify cid=${cid} len=${bytes.length} head=[${Array.from(bytes.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
-    // 广播模式：所有 notify 帧发给所有已订阅的回调，由各自 handler 自己按长度/cmd 过滤。
-    // 避免微信对 characteristicId 返回短/长 UUID 不一致导致帧漏发。
-    for (const [, cbs] of _notifyMap) {
-      if (cbs.size === 0) continue;
-      for (const cb of Array.from(cbs)) {
-        try { cb(bytes); } catch (e) { /* ignore */ }
-      }
-    }
-  }
-
-  function _ensureGlobalHandler() {
-    if (_globalHandlerBound) return;
-    wxApi.onBLECharacteristicValueChange(_globalNotifyHandler);
-    _globalHandlerBound = true;
-  }
-
-  function _removeNotifyHandler() {
-    if (!_globalHandlerBound) return;
-    wxApi.offBLECharacteristicValueChange(_globalNotifyHandler);
-    _globalHandlerBound = false;
-  }
-
-  /**
-   * 订阅某个特征的 notify，返回解绑函数。
-   * 命令(0001)/编排 ACK(0003)/OTA(0006) 三处共用：回调收原始 Uint8Array。
-   * 注意：_globalNotifyHandler 是广播式分发（不按 characteristicId 匹配），
-   * 同一回调只注册一次；曾同时注册全 UUID + 短 UUID 两份，导致每帧回调两次。
-   */
   function _notifyWatcher(characteristicId, callback) {
+    const dispatcher = _dispatcherFor(wxApi);
     const key = characteristicId.toUpperCase();
-    if (!(_notifyMap.has(key))) _notifyMap.set(key, new Set());
-    _notifyMap.get(key).add(callback);
-    _ensureGlobalHandler();
+    if (!(dispatcher.map.has(key))) dispatcher.map.set(key, new Set());
+    dispatcher.map.get(key).add(callback);
+    if (!dispatcher.bound) {
+      dispatcher.handler = (res) => _globalNotifyHandler(dispatcher, res);
+      wxApi.onBLECharacteristicValueChange(dispatcher.handler);
+      dispatcher.bound = true;
+    }
     // notify 订阅是异步的（CCCD 写入需时间）；返回 ready Promise 让调用方
     // 能等到订阅完成后再发命令，避免设备回复在订阅就绪前到达而丢失。
     const ready = call(wxApi, 'notifyBLECharacteristicValueChange', {
@@ -220,12 +220,16 @@ function createBleClient(wxApi) {
       state: true,
     });
     const unbind = () => {
-      const cbs = _notifyMap.get(key);
+      const cbs = dispatcher.map.get(key);
       if (cbs) {
         cbs.delete(callback);
-        if (cbs.size === 0) _notifyMap.delete(key);
+        if (cbs.size === 0) dispatcher.map.delete(key);
       }
-      if (_notifyMap.size === 0) _removeNotifyHandler();
+      if (dispatcher.map.size === 0 && dispatcher.bound) {
+        wxApi.offBLECharacteristicValueChange(dispatcher.handler);
+        dispatcher.bound = false;
+        dispatcher.handler = null;
+      }
     };
     unbind.ready = ready;
     return unbind;

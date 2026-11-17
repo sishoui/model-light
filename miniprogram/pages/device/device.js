@@ -5,8 +5,11 @@
 // （0 回放→闪烁 / 1 实时→点亮 / 2 传输中、3 错误→关闭），开关关时一律关闭。
 // 状态帧同时写 status-cache（#111 跨页契约）；arrangementVersion 记在 data 供顶栏展示。
 // 连接：onHide 让出（断连 + 停令牌心跳），onShow 用 query 的 deviceId 直连重连（#111）；
-// 意外断连按 1/2/4/8 s 退避重连（§2.5）。deviceId 跨会话可能为空 → 不连接，只渲染本地卡片。
-// 卡片数据来自 arrangement-store（arrangement:<name>）的 8 引脚；长按菜单改名的落点也是它。
+// 意外断连按 1/2/4/8 s 退避重连，累计 30 s 封顶——超时放弃（connected=false、
+// reconnecting=false、reconnectFailed=true），顶栏显示「已断开」+「重连」按钮（onTapReconnect）。
+// deviceId 跨会话可能为空 → 不连接，只渲染本地卡片。
+// 卡片数据来自 arrangement-store（arrangement:<name>）的 8 引脚；长按菜单改名的落点也是它，
+// 改名后走 push-coordinator 立即下发（引脚名进 TLV；封面仅本机保存，不下发）。
 // 「固件升级」轻量入口（#133 / spec §2）：顶栏点按 navigateTo OTA 子页（不占主导航），
 // 已知固件版本时入口显示版本号（来自设备信息特征 ...0005，与顶栏同一读数）。
 
@@ -15,16 +18,18 @@ const { nextBackoffMs, resetBackoff } = require('../../lib/backoff');
 const { MODE_LABELS, ERROR_MESSAGES, TOKEN_LABELS } = require('../../lib/labels');
 const { isReadOnlyProtocol } = require('../../lib/device-protocol');
 const { createArrangementStore } = require('../../lib/arrangement-store');
-const { pushArrangement } = require('../../lib/arrangement-push');
+const { createPushCoordinator, describePushError } = require('../../lib/push-coordinator');
 const { createTokenClient } = require('../../lib/token-client');
 const { createDeviceControl } = require('../../lib/device-control');
 const { ACK_RESULT } = require('../../lib/device-control-frames');
 const { createStatusCache } = require('../../lib/status-cache');
-const { PIN_COUNT, encode } = require('../../lib/arrangement');
+const { PIN_COUNT } = require('../../lib/arrangement');
 const { setPinName } = require('../../lib/pin-editor');
 
 const PROTO_MAJOR = 1;
 const PROTO_MINOR = 1;
+
+const RECONNECT_WINDOW_MS = 30000; // 掉线重连窗口总长（30 s 封顶，超时放弃、等手动重连）
 
 // 引脚卡片状态（关闭 / 点亮 / 闪烁）的人话标签
 const STATE_LABELS = { off: '关闭', on: '点亮', blink: '闪烁' };
@@ -58,6 +63,7 @@ Page({
     name: '',
     connected: false,
     reconnecting: false,
+    reconnectFailed: false,   // 重连窗口（30 s）耗尽后放弃：顶栏显示「已断开」+「重连」按钮
     powerOn: true,          // 整体开关；false = 全灭 + 卡片置灰不可点
     readOnly: false,        // 协议 major 不同 → 只读（#111 信息分层）
     firmwareLabel: '—',
@@ -82,14 +88,28 @@ Page({
     this._statusCache = createStatusCache(wx);
     this._lastStatusFrame = null;
     this._chunkSize = 0;  // 连接时现算（probeDeviceCapabilities），编排推送分片大小
-    this._pushing = false; // 编排推送进行中，防重入
     this._tokenClient = null;
     this._tokenTimer = null;
     this._reconnectTimer = null;
+    this._reconnectElapsed = 0;  // 本轮断连已重试的累计时长（30 s 窗口判定用）
     this._lastFrameJson = null;
     this._disconnectedByUser = false;
     this.backoff = { attempt: 0 };
     this.setData({ name: this._deviceName });
+
+    // 推送协调器：本页持有 BLE / 令牌客户端 / 分片大小 / 状态帧，
+    // 连接尾部与重命名等本地编辑都经它下发（见 lib/push-coordinator.js）。
+    this._pushCoordinator = createPushCoordinator({
+      ble: this.ble,
+      store: this.store,
+      deviceName: this._deviceName,
+      deviceId: this.deviceId,
+      wx,
+      token: () => this._tokenClient,
+      chunkSize: () => this._chunkSize,
+      getStatusFrame: () => this._lastStatusFrame,
+      onResult: (name, result) => this._onPushResult(result),
+    });
 
     this.dc = createDeviceControl({
       write: (bytes) => this._dcWrite(bytes),
@@ -107,6 +127,7 @@ Page({
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
     this._reconnectTimer = null;
+    this._pushCoordinator.cancel(); // 不再排队；已在跑的一轮自然收尾
     // 释放令牌（停心跳）但保持 BLE 连接——避免 SUSPENDED 60s 导致重连带不回令牌
     if (this._tokenClient) this._tokenClient.release();
     this._cleanupBle();
@@ -129,6 +150,7 @@ Page({
     this._disconnectedByUser = true;
     clearTimeout(this._reconnectTimer);
     this._cleanupBle();
+    this._pushCoordinator.dispose();
     if (this.dc) this.dc.dispose();
     if (this._offConnectionState) this._offConnectionState();
     if (this.ble) this.ble.disconnect();
@@ -176,14 +198,16 @@ Page({
         // BLE 链路仍在（onHide 没断），直接重新订阅 + 重启令牌客户端
       } else {
         await this.ble.connect(this.deviceId);
-        resetBackoff(this.backoff);
       }
+      // 连接成功：清重连退避与窗口，复位「已断开」标记
+      resetBackoff(this.backoff);
+      this._reconnectElapsed = 0;
       this._offStatus = this.ble.onStatusFrame((frame) => {
         this._statusCache.save(this._deviceName, frame);
         this.applyFrame(frame);
       });
       this._tokenClient = createTokenClient(this.ble);
-      this.setData({ connected: true, reconnecting: false });
+      this.setData({ connected: true, reconnecting: false, reconnectFailed: false });
       const app = safeGetApp();
       if (app && typeof app.rememberDevice === 'function') {
         app.rememberDevice(this._deviceName, this.deviceId);
@@ -194,7 +218,8 @@ Page({
       this._tokenTimer = setInterval(() => {
         if (this._tokenClient) this._tokenClient.tick();
       }, 2000);
-      // pendingPush 契约见 pin.js 文件头注释：引脚页编辑只落缓存，这里连接就绪后补推。
+      // pendingPush 契约见 pin.js 文件头注释：本地编辑标了待推送就立即下发
+      // （统一走 push-coordinator；只读协议不下发）。
       // fire-and-forget：失败只落 transferMessage，不阻塞连接流程。
       this._maybePushArrangement().catch((e) => console.error('[device] 编排推送异常', e));
     } catch (e) {
@@ -224,61 +249,23 @@ Page({
     }
   },
 
-  // 编排分片通道（§2.2）：writeSequence 串行写 ...0003，onSequenceNotify 收设备 ACK/NAK
-  _arrangementTransport() {
-    return {
-      write: (bytes) => this.ble.writeSequence(bytes),
-      onFrame: (cb) => this.ble.onSequenceNotify(cb),
-    };
+  // 本地编排待推送（pendingPush=true，契约见 pin.js 文件头注释）时下发：
+  // 统一走 push-coordinator——取令牌 → 分片写 ...0003 → 等状态帧回显
+  // arrangementVersion 与本机一致才算成功，成功后清 pendingPush。
+  // 全程不 throw（fire-and-forget，结果经 onResult 落 transferMessage）。
+  _maybePushArrangement() {
+    if (this.data.readOnly) return Promise.resolve(); // 只读协议：不下发
+    return this._pushCoordinator
+      .requestPush(this._deviceName, this.deviceId)
+      .catch((e) => console.error('[device] 编排推送异常', e));
   },
 
-  // 本地编排待推送（pendingPush=true，契约见 pin.js 文件头注释）时补推：
-  // 取令牌 → 分片写 ...0003 → 等状态帧回显 arrangementVersion 与本机一致才算成功，
-  // 成功后清 pendingPush。全程不 throw（fire-and-forget，失败只落 transferMessage）。
-  async _maybePushArrangement() {
-    if (this._pushing || !this._chunkSize || !this._deviceName || this.data.readOnly) return;
-    // 用 load 不用 loadOrCreate：不给没有编排缓存的设备建空缓存
-    const arr = this.store.load(this._deviceName);
-    if (!arr || arr.pendingPush !== true) return;
-    this._pushing = true;
-    try {
-      let version;
-      let payloadBytes;
-      try {
-        version = arr.version;
-        payloadBytes = new Uint8Array(encode(arr));
-      } catch (e) {
-        this.setData({ transferMessage: `编排不完整：${e.message}（本地已保存，可继续编辑）` });
-        return;
-      }
-      const result = await pushArrangement(this.ble, {
-        chunkSize: this._chunkSize,
-        payloadBytes,
-        version,
-        getStatusFrame: () => this._lastStatusFrame,
-        token: this._tokenClient,
-        transport: this._arrangementTransport(),
-      });
-      if (result.ok) {
-        // 重新读缓存再清标记：不覆盖推送期间引脚页可能写入的新编辑
-        const fresh = this.store.load(this._deviceName);
-        if (fresh) {
-          fresh.pendingPush = false;
-          this.store.save(this._deviceName, fresh);
-        }
-        this.setData({ transferMessage: '推送成功，设备版本已确认' });
-      } else if (result.reason === 'no-token') {
-        const why = { denied: '当前持有者拒绝了令牌交接', busy: '设备正忙，稍后再试', timeout: '令牌握手超时' };
-        this.setData({ transferMessage: `未获得控制令牌：${why[result.detail] || result.detail}` });
-      } else {
-        this.setData({ transferMessage: `推送失败：${result.reason}` });
-      }
-    } catch (e) {
-      this.setData({ transferMessage: `推送失败：${e.message || '未知原因'}` });
-    } finally {
-      this._pushing = false;
-      this.reloadPins();
-    }
+  /** 协调器结果 → transferMessage（语义 = 协调器结果回报，展示保留）。 */
+  _onPushResult(result) {
+    if (!result || result.skipped) return;
+    this.setData({
+      transferMessage: result.ok ? '推送成功，设备版本已确认' : describePushError(result),
+    });
   },
 
   // 固定 8 张卡：编排缓存优先，无缓存 / 无设备名用默认视图模型
@@ -398,13 +385,13 @@ Page({
     }
   },
 
-  // 点卡片 → 引脚页（带设备 + 引脚标识）；整体关闭时不可点
+  // 点卡片 → 引脚页（带设备 + 引脚标识 + 只读标记）；整体关闭时不可点
   onTapPin(e) {
     if (!this.data.powerOn) return;
     const pin = Number(e.currentTarget.dataset.pin);
     if (!Number.isInteger(pin) || pin < 0 || pin >= PIN_COUNT) return;
     wx.navigateTo({
-      url: `/pages/pin/pin?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&pin=${pin}`,
+      url: `/pages/pin/pin?deviceId=${encodeURIComponent(this.deviceId)}&name=${encodeURIComponent(this._deviceName)}&pin=${pin}&readOnly=${this.data.readOnly ? 1 : 0}`,
     });
   },
 
@@ -455,7 +442,9 @@ Page({
     }
   },
 
-  // 更换图片（v2 占位）：有 wx.chooseImage 就选图存临时路径（客户端专属字段，encode 忽略），否则 toast
+  // 更换图片（v2 占位）：有 wx.chooseImage 就选图存临时路径（客户端专属字段，encode 忽略，
+  // 仅本机保存），否则 toast。封面不进 TLV，不改版本号——仍走一次 push-coordinator
+  // 触发（若有其它待推送内容则一并下发）。
   _chooseCover(pin) {
     this.setData({ menuOpen: false });
     if (!this._deviceName) {
@@ -476,7 +465,8 @@ Page({
         arr.pins[pin].cover = path;
         this.store.save(this._deviceName, arr);
         this.reloadPins();
-        wx.showToast({ title: '图片已更换', icon: 'success' });
+        wx.showToast({ title: '图片已更换（仅本机保存）', icon: 'success' });
+        this._maybePushArrangement();
       },
       fail: () => { /* 用户取消 / 选择失败不打扰 */ },
     });
@@ -490,7 +480,8 @@ Page({
     this.setData({ renameOpen: false, renamePin: -1 });
   },
 
-  // 重命名：校验（≤16 B UTF-8）→ 落 arrangement-store → 重渲染卡片
+  // 重命名：校验（≤16 B UTF-8）→ 落 arrangement-store（引脚名进 TLV）→
+  // 版本递增 + pendingPush → push-coordinator 立即下发（不再等下次 onShow）。
   onRenameConfirm() {
     const pin = this.data.renamePin;
     const draft = (this.data.renameDraft || '').trim();
@@ -508,22 +499,46 @@ Page({
       wx.showToast({ title: r.error, icon: 'none' });
       return;
     }
+    arr.version = ((arr.version || 1) + 1) & 0xffff;
+    arr.pendingPush = true;
     this.store.save(this._deviceName, arr);
     this.setData({ renameOpen: false, renamePin: -1 });
     this.reloadPins();
     wx.showToast({ title: '已重命名', icon: 'success' });
+    this._maybePushArrangement();
   },
 
   // 阻止面板内部点击冒泡到遮罩（WXML catchtap 目标）
   noop() {},
 
+  // 掉线重连：1/2/4/8 s 退避，累计 30 s 封顶（RECONNECT_WINDOW_MS）。
+  // 超时放弃：connected=false、reconnecting=false、reconnectFailed=true，
+  // 顶栏显示「已断开」+「重连」按钮；30 s 内重连成功则恢复正常。
   scheduleReconnect() {
     if (this._disconnectedByUser) return;
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
     const delay = nextBackoffMs(this.backoff.attempt);
     this.backoff.attempt += 1;
-    this.setData({ connected: false, reconnecting: true });
-    this._reconnectTimer = setTimeout(() => this.connect(), delay);
+    this._reconnectElapsed = (this._reconnectElapsed || 0) + delay;
+    if (this._reconnectElapsed > RECONNECT_WINDOW_MS) {
+      this._reconnectElapsed = 0;
+      this.setData({ connected: false, reconnecting: false, reconnectFailed: true });
+      return;
+    }
+    this.setData({ connected: false, reconnecting: true, reconnectFailed: false });
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect();
+    }, delay);
+  },
+
+  /** 「已断开」后的手动重连：重置退避与窗口，重新发起连接。 */
+  onTapReconnect() {
+    if (this._connecting) return;
+    this._reconnectElapsed = 0;
+    resetBackoff(this.backoff);
+    this.setData({ reconnectFailed: false, reconnecting: true });
+    this.connect();
   },
 
   // 12 B 状态帧 → 顶栏信息 + 卡片引脚状态；同帧不重复重渲染卡片

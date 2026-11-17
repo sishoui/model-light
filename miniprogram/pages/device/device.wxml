@@ -2,8 +2,12 @@
   <view class="topbar">
     <view class="row">
       <text class="name">{{name || '设备'}}</text>
-      <view class="badge {{connected ? 'ok' : (reconnecting ? 'warn' : 'bad')}}">
-        {{connected ? '已连接' : (reconnecting ? '重连中…' : '未连接')}}
+      <view class="row status-right">
+        <view class="badge {{connected ? 'ok' : (reconnecting ? 'warn' : (reconnectFailed ? 'bad' : ''))}}">
+          {{connected ? '已连接' : (reconnecting ? '重连中…' : (reconnectFailed ? '已断开' : '未连接'))}}
+        </view>
+        <!-- 重连窗口（30 s）耗尽后放弃：手动「重连」 -->
+        <button wx:if="{{reconnectFailed}}" class="reconnect-btn" size="mini" bindtap="onTapReconnect">重连</button>
       </view>
     </view>
     <view class="row meta">
@@ -69,6 +73,7 @@
     <view class="sheet" catchtap="noop">
       <view class="sheet-item" data-action="rename" catchtap="onMenuAction">重命名</view>
       <view class="sheet-item" data-action="cover" catchtap="onMenuAction">更换图片</view>
+    <view class="sheet-note">更换图片仅本机保存（不下发设备）</view>
       <view class="sheet-cancel" catchtap="onMenuClose">取消</view>
     </view>
   </view>

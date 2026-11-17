@@ -1,6 +1,6 @@
 {
   "id": "ble-02",
-  "name": "BLE-02 断连 → onAppShow 缓存直连（不重扫）",
+  "name": "BLE-02 设备页断连 → 退避自动重连（不重扫列表）→ 返回 discover 轮次重扫仍在线",
   "setup": [
     {
       "action": "evaluate",
@@ -9,37 +9,41 @@
     }
   ],
   "steps": [
-    { "action": "waitMs", "ms": 1200 },
+    { "action": "navigate", "url": "/pages/scan/scan" },
     {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p.data.devices[0]; if (!d) throw new Error('设备列表为空：扫描未发现 ML-8DCC'); return p.onTapDevice({ currentTarget: { dataset: { deviceId: d.deviceId, name: d.name } } });"
+      "code": "const deadline = Date.now() + 8000; for (;;) { const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (!p || p.route !== 'pages/scan/scan') throw new Error('当前不在 scan 页：route=' + (p && p.route)); const hit = (p.data.discovered || []).find((d) => d && (d.name === 'ML-8DCC' || d.deviceId === 'CC:8D:A2:C2:56:62')); if (hit) return { deviceId: hit.deviceId, name: hit.name }; if (Date.now() >= deadline) throw new Error('扫描结果无 ML-8DCC：discovered=' + JSON.stringify(p.data.discovered || []) + ' scanning=' + p.data.scanning + ' error=' + (p.data.error || '')); await new Promise((r) => setTimeout(r, 200)); }",
+      "saveAs": "scanHit"
     },
-    { "action": "waitMs", "ms": 2000 },
     {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { route: p.route, deviceId: p.data.deviceId, connected: !!p.data.connected, error: p.data.error || '' };",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const hit = (p.data.discovered || []).find((d) => d && d.name === 'ML-8DCC'); if (!hit) throw new Error('扫描结果丢失，无法连接：discovered=' + JSON.stringify(p.data.discovered || [])); return await p.onTapDevice({ currentTarget: { dataset: { deviceId: hit.deviceId, name: hit.name } } });"
+    },
+    { "action": "waitMs", "ms": 1000 },
+    {
+      "action": "evaluate",
+      "code": "const deadline = Date.now() + 8000; for (;;) { const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p && p.route === 'pages/discover/discover' ? (p.data.devices || []).find((x) => x && x.name === 'ML-8DCC') : null; if (d && d.online) { if (p.data.scanError) throw new Error('discover 重扫报错：' + p.data.scanError); return { deviceId: d.deviceId, name: d.name, online: d.online }; } if (Date.now() >= deadline) throw new Error('discover 卡片未点亮：route=' + ((pages[pages.length - 1] || {}).route) + ' devices=' + JSON.stringify(((pages[pages.length - 1] || {}).data || {}).devices || []) + ' scanError=' + (((pages[pages.length - 1] || {}).data || {}).scanError || '')); await new Promise((r) => setTimeout(r, 200)); }",
+      "saveAs": "card"
+    },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = (p.data.devices || []).find((x) => x && x.name === 'ML-8DCC'); if (!d) throw new Error('设备卡缺失：devices=' + JSON.stringify(p.data.devices || [])); return p.onTapCard({ currentTarget: { dataset: { name: d.name, deviceId: d.deviceId || '' } } });"
+    },
+    { "action": "waitMs", "ms": 2500 },
+    {
+      "action": "evaluate",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; if (p.route !== 'pages/device/device') throw new Error('未进入设备页：route=' + p.route); if (p.data.connected !== true) throw new Error('设备页未连接：connected=' + p.data.connected + ' reconnecting=' + p.data.reconnecting); return { deviceId: p.deviceId, connected: p.data.connected };",
       "saveAs": "deviceInfo"
     },
     {
-      "action": "navigate",
-      "url": "/pages/device/device?deviceId={{deviceInfo.deviceId}}&name=ML-8DCC"
-    },
-    { "action": "waitMs", "ms": 3000 },
-    {
-      "action": "waitForStatus",
-      "fields": {},
-      "timeoutMs": 5000,
-      "saveAs": "before"
-    },
-    {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p.requestToken(); return { granted: !!r.granted, reason: r.reason || '' };",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p._dcRequestToken(); return { granted: !!r.granted, reason: r.reason || '' };",
       "saveAs": "tokenBefore"
     },
     { "action": "waitForSerial", "pattern": "rx chr=7c9f0001", "timeoutMs": 5000 },
     {
       "action": "evaluate",
-      "code": "const st = globalThis.__bleMock.getState(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { scanCount: st.scanCount, connectionCount: st.connectionCount, connected: !!p.data.connected };",
+      "code": "const st = globalThis.__bleMock.getState(); const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { scanCount: st.scanCount, connectionCount: st.connectionCount, connected: st.connected, pageConnected: !!p.data.connected };",
       "saveAs": "beforeDisconnect"
     },
     {
@@ -53,27 +57,31 @@
       "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; return { connected: !!p.data.connected, reconnecting: !!p.data.reconnecting };",
       "saveAs": "afterDisconnect"
     },
-    {
-      "action": "evaluate",
-      "code": "getApp().onAppShow(); return true;",
-      "saveAs": "onAppShow"
-    },
     { "action": "waitForSerial", "pattern": "ble: connect #", "timeoutMs": 20000, "minCount": 2 },
     { "action": "waitForBle", "timeoutMs": 20000 },
     { "action": "waitMs", "ms": 500 },
     {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p.requestToken(); return { granted: !!r.granted, reason: r.reason || '', connected: !!p.data.connected };",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const r = await p._dcRequestToken(); return { granted: !!r.granted, reason: r.reason || '', connected: !!p.data.connected };",
       "saveAs": "tokenAfter"
     },
-    { "action": "waitForSerial", "pattern": "rx chr=7c9f0001", "timeoutMs": 5000, "minCount": 2 }
+    { "action": "waitForSerial", "pattern": "rx chr=7c9f0001", "timeoutMs": 5000, "minCount": 2 },
+    {
+      "action": "evaluate",
+      "code": "const r = await new Promise((resolve) => { wx.navigateBack({ success: () => resolve({ ok: true }), fail: () => resolve({ ok: false }) }); }); return r;"
+    },
+    { "action": "waitMs", "ms": 1200 },
+    {
+      "action": "evaluate",
+      "code": "const deadline = Date.now() + 8000; for (;;) { const pages = getCurrentPages(); const p = pages[pages.length - 1]; const d = p && p.route === 'pages/discover/discover' ? (p.data.devices || []).find((x) => x && x.name === 'ML-8DCC') : null; if (d && d.online) { const st = globalThis.__bleMock.getState(); if (st.scanCount < 3) throw new Error('返回列表未自动重扫（轮次扫描）：scanCount=' + st.scanCount); if (p.data.scanError) throw new Error('discover 重扫报错：' + p.data.scanError); return { name: d.name, online: d.online, deviceId: d.deviceId, scanCount: st.scanCount }; } if (Date.now() >= deadline) throw new Error('返回列表后卡片未点亮：route=' + ((pages[pages.length - 1] || {}).route) + ' devices=' + JSON.stringify(((pages[pages.length - 1] || {}).data || {}).devices || []) + ' scanError=' + (((pages[pages.length - 1] || {}).data || {}).scanError || '')); await new Promise((r) => setTimeout(r, 200)); }",
+      "saveAs": "backOnDiscover"
+    }
   ],
   "assertions": [
     { "type": "serial", "pattern": "ble: connect #", "minCount": 2 },
     { "type": "serial", "pattern": "rx chr=7c9f0001", "minCount": 2 },
-    { "type": "mockState", "fields": { "connected": true, "scanCount": "{{beforeDisconnect.scanCount}}" } },
-    { "type": "console", "level": "error" },
-    { "type": "bleWrite", "short": "0001", "data": "10", "minCount": 2 }
+    { "type": "bleWrite", "short": "0001", "data": "10", "minCount": 2 },
+    { "type": "console", "level": "error" }
   ],
   "teardown": [
     {

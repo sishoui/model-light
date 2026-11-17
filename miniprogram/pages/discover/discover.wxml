@@ -1,6 +1,12 @@
 <view class="page">
+  <!-- 扫描失败提示条（蓝牙未开/无权限等）；新一轮扫描开始或下拉重试时清除 -->
+  <view wx:if="{{scanError}}" class="scan-error">
+    <view class="scan-error-text">{{scanError}}</view>
+    <view class="scan-error-tip">请检查手机蓝牙与定位权限，下拉刷新重试</view>
+  </view>
+
   <!-- 空态：占位图 + 「添加设备」主按钮 -->
-  <view wx:if="{{devices.length === 0 && !flow}}" class="empty">
+  <view wx:if="{{devices.length === 0}}" class="empty">
     <view class="empty-illustration">
       <view class="empty-illustration-inner">💡</view>
     </view>
@@ -15,7 +21,7 @@
       wx:for="{{devices}}"
       wx:for-item="device"
       wx:key="name"
-      class="device-card {{selected === device.name ? 'selected' : ''}}"
+      class="device-card {{selected === device.name ? 'selected' : ''}} {{device.online ? '' : 'card-offline'}}"
       data-name="{{device.name}}"
       data-device-id="{{device.deviceId || ''}}"
       bindtap="onTapCard"

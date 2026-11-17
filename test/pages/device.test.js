@@ -2,7 +2,7 @@
 // 沿用 #111 的连接让出/信息分层断言；#127 的折叠卡（folds）与 OTA 徽标断言随重写移除。
 // 约定（见 #108）：只断言外部可观察行为（setData 输出、BLE 写、跳转目标与参数、缓存内容），
 // 不断言私有方法、内部字段、wxml/wxss 文本。
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createPageHarness, FAKE_DEVICE_ID, CHAR_COMMAND, CHAR_SEQUENCE } from './page-harness';
 
 const PAGE = 'miniprogram/pages/device/device.js';
@@ -52,6 +52,16 @@ async function flush() {
 async function flushReal(ms = 300) {
   await new Promise((r) => setTimeout(r, ms));
   await flush();
+}
+
+// 轮询等待条件成立（真实定时器；推送经 300ms 去抖，需要等 REQ_TOKEN 出现）
+async function waitUntil(fn, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fn()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return fn();
 }
 
 // 用页面同一套缓存逻辑写入种子编排（引脚 0「头部」2 灯组 / 引脚 1「底座」1 灯组）。
@@ -257,7 +267,7 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     expect(h.getData().transferMessage).toBe('');
   });
 
-  it('给定已连接设备，当点引脚卡片，则跳转引脚页并带 deviceId + name + pin', async () => {
+  it('给定已连接设备，当点引脚卡片，则跳转引脚页并带 deviceId + name + pin + readOnly', async () => {
     h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
     await flush();
 
@@ -266,7 +276,7 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     const nav = h.getLastNavigation();
     expect(nav.type).toBe('navigateTo');
     expect(nav.url).toBe(
-      `/pages/pin/pin?deviceId=${encodeURIComponent(FAKE_DEVICE_ID)}&name=${encodeURIComponent(NAME)}&pin=2`,
+      `/pages/pin/pin?deviceId=${encodeURIComponent(FAKE_DEVICE_ID)}&name=${encodeURIComponent(NAME)}&pin=2&readOnly=0`,
     );
   });
 
@@ -383,7 +393,10 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     arr.pendingPush = true;
     store.save(NAME, arr);
     await flush();
-    await flush(); // 让 connect() 走完 probe + _maybePushArrangement（取令牌写命令通道）
+    await flush(); // 让 connect() 走完 probe + _maybePushArrangement
+
+    // 连接尾部触发推送（去抖 300ms）→ 取令牌
+    expect(await waitUntil(() => h.getBleWrites().some((w) => w.short === '0001' && w.data.startsWith('10')), 1500)).toBe(true);
 
     // 令牌 GRANT → START/DATA 分片写出；设备回编排 ACK → FIN 收尾
     expect(await grantToken(h)).toBe(true);
@@ -396,7 +409,7 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
 
     // 状态帧回显同版本 → 推送确认，pendingPush 清除
     h.injectStatusFrame(buildStatusFrame({ ver: arr.version }));
-    await flushReal();
+    await flushReal(400);
     expect(store.load(NAME).pendingPush).toBe(false);
     expect(h.getData().transferMessage).toBe('推送成功，设备版本已确认');
   });
@@ -406,6 +419,78 @@ describe('设备页 device（整体开关 + 8 引脚卡片）', () => {
     seedArrangement(h.wx);
     await flush();
     await flush();
+    await flushReal(500); // 越过 300ms 去抖窗口
     expect(h.getBleWrites().some((w) => w.short === '0003')).toBe(false);
+  });
+
+  // 新契约：本地编辑（长按重命名，引脚名进 TLV）后立即下发，不再等返回引脚页
+  it('给定已连接设备且本地编排可编码，当长按重命名引脚并确认，则版本递增 + pendingPush 且立即推送、状态帧确认后清除', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+    const store = seedArrangement(h.wx);
+    await flush();
+    await flushReal(50);
+
+    const v0 = store.load(NAME).version;
+    await h.tap('onLongPressPin', { currentTarget: { dataset: { pin: 1 } } });
+    await h.tap('onMenuAction', { currentTarget: { dataset: { action: 'rename' } } });
+    await h.tap('onRenameInput', { detail: { value: '新底座' } });
+    await h.tap('onRenameConfirm');
+
+    // 落缓存 + 版本递增 + 标记待推送
+    const arr = store.load(NAME);
+    expect(arr.pins[1].name).toBe('新底座');
+    expect(arr.version).toBe(((v0 || 1) + 1) & 0xffff);
+    expect(arr.pendingPush).toBe(true);
+
+    // 立即推送（不等返回引脚页 / 下次 onShow）
+    expect(await waitUntil(() => h.getBleWrites().some((w) => w.short === '0001' && w.data.startsWith('10')), 1500)).toBe(true);
+    expect(await grantToken(h)).toBe(true);
+    h.injectBleFrame(CHAR_SEQUENCE, buildSeqAck(0));
+    await flush();
+    expect(h.getBleWrites().filter((w) => w.short === '0003').some((w) => w.data.startsWith('03'))).toBe(true);
+
+    h.injectStatusFrame(buildStatusFrame({ ver: arr.version }));
+    expect(await waitUntil(() => store.load(NAME).pendingPush === false, 2000)).toBe(true);
+    expect(h.getData().transferMessage).toBe('推送成功，设备版本已确认');
+  });
+
+  // 重连窗口：被动断连 → 退避重试（30 s 封顶）→ 超时放弃显示「已断开」+「重连」
+  it('给定被动断连且 30s 窗口内一直连不上，当超出窗口，则放弃重连（reconnectFailed）；点「重连」后恢复', async () => {
+    vi.useFakeTimers();
+    try {
+      h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: NAME } });
+      await flush();
+      await flush();
+      expect(h.getData().connected).toBe(true);
+
+      h.bleState.connectFails = true; // 模拟链路不可用：重连一直失败
+      h.disconnect();                 // 被动断连 → onBleDisconnected → scheduleReconnect
+      await flush();
+      let data = h.getData();
+      expect(data.connected).toBe(false);
+      expect(data.reconnecting).toBe(true);
+      expect(data.reconnectFailed).toBe(false);
+
+      // 退避 1/2/4/8/8…：推进时间让重连反复失败，累计超 30 s 窗口
+      for (let i = 0; i < 10; i++) {
+        vi.advanceTimersByTime(8000);
+        await flush();
+      }
+      data = h.getData();
+      expect(data.reconnecting).toBe(false);
+      expect(data.reconnectFailed).toBe(true);
+      expect(h.bleState.connected).toBe(false);
+
+      // 恢复链路后点「重连」：重新发起连接并复位
+      h.bleState.connectFails = false;
+      await h.tap('onTapReconnect');
+      expect(h.getData().reconnectFailed).toBe(false);
+      await flush();
+      await flush();
+      expect(h.getData().connected).toBe(true);
+      expect(h.bleState.connected).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

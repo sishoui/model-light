@@ -12,6 +12,10 @@
 .badge.ok { background: #e6f0fd; color: #3b82f6; }
 .badge.warn { background: #fdf3e3; color: #b45309; }
 .badge.bad { background: #fdeaea; color: #d66a6a; }
+.status-right { display: flex; align-items: center; gap: 16rpx; }
+.reconnect-btn { margin: 0; height: 52rpx; line-height: 52rpx; padding: 0 24rpx; font-size: 24rpx;
+  color: #3b82f6; background: #ffffff; border-radius: 26rpx;
+  box-shadow: 2rpx 2rpx 4rpx #cfd6e0, -2rpx -2rpx 4rpx #ffffff; }
 /* 「固件升级」轻量入口（#133）：顶栏内一条次行动，不占主导航 */
 .ota-entry { display: flex; align-items: center; gap: 16rpx; margin-top: 20rpx; padding-top: 20rpx;
   border-top: 1rpx solid #eceff3; }
@@ -89,6 +93,7 @@
   width: 100%; background: #e0e5ec; border-radius: 28rpx 28rpx 0 0; padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
 }
 .sheet-item { text-align: center; color: #4a5568; font-size: 30rpx; padding: 30rpx 0; border-bottom: 1rpx solid #cfd6e0; }
+.sheet-note { text-align: center; color: #8a94a6; font-size: 22rpx; padding: 8rpx 0 16rpx; border-bottom: 1rpx solid #cfd6e0; }
 .sheet-cancel { text-align: center; color: #8a94a6; font-size: 28rpx; padding: 24rpx 0; }
 
 /* ---- 重命名 ---- */

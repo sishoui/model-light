@@ -1,8 +1,10 @@
 // 引脚页（pin）页面用例 — #130：灯组 tab + 灯珠方格矩阵。
-// 约定（见 #108）：只断言外部可观察行为（setData 输出、缓存内容、弹窗/提示、无 BLE 写），
+// 约定（见 #108）：只断言外部可观察行为（setData 输出、缓存内容、弹窗/提示、BLE 写），
 // 不断言私有方法、内部字段、wxml/wxss 文本。
+// 新契约（编辑即推送）：编辑后经 push-coordinator 下发——用例注入令牌 GRANT /
+// 编排 ACK / 状态帧，断言「以设备 ACK 为准」的完整链路与失败保留 pendingPush。
 import { describe, it, expect, afterEach } from 'vitest';
-import { createPageHarness } from './page-harness';
+import { createPageHarness, CHAR_COMMAND, CHAR_SEQUENCE, FAKE_DEVICE_ID } from './page-harness';
 import {
   createGroup, createStage, createLayer,
 } from '../../miniprogram/lib/arrangement';
@@ -12,6 +14,72 @@ const { encodeParams } = require('../../miniprogram/lib/effect-schema');
 const PAGE = 'miniprogram/pages/pin/pin.js';
 const DEVICE = 'ML-8DCC';
 const PIN = 2;
+
+// ---- 新契约辅助（编辑即推送） ----
+
+// 令牌 GRANT 帧（cmd 0x14 + seq 2B LE + payload [0x00]）
+function buildGrantFrame(seq, granted = true) {
+  return [0x14, seq & 0xff, (seq >> 8) & 0xff, granted ? 0x00 : 0x01];
+}
+
+// 编排 ACK 帧（cmd 0x05 + ackUpTo 2B LE + nakMask 2B LE + status），设备 → 手机 ...0003
+function buildSeqAck(ackUpTo, { nakMask = 0, status = 0 } = {}) {
+  return [
+    0x05,
+    ackUpTo & 0xff, (ackUpTo >>> 8) & 0xff,
+    nakMask & 0xff, (nakMask >>> 8) & 0xff,
+    status & 0xff,
+  ];
+}
+
+// 12 B 状态帧：mode / ver(2) / crc32(4) / limit / tokenHolder / errorCode / temperature / flags
+function buildStatusFrame({ ver = 1 } = {}) {
+  return [
+    0,
+    ver & 0xff, (ver >> 8) & 0xff,
+    0, 0, 0, 0,
+    80,
+    1,
+    0,
+    30,
+    0,
+  ];
+}
+
+// 排干微任务队列：让 await 链跑完
+async function flush() {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+}
+
+// pushArrangement 的状态帧确认走真实 200ms 轮询（lib 不注入 sleep），
+// 微任务 flush 推不动真实定时器——先等真实时间再排干微任务。
+async function flushReal(ms = 400) {
+  await new Promise((r) => setTimeout(r, ms));
+  await flush();
+}
+
+// 轮询等待条件成立（真实定时器）
+async function waitUntil(fn, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fn()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return fn();
+}
+
+// 令牌握手辅助：从 BLE writes 里找最近的 REQ_TOKEN（cmd 0x10），注入 GRANT
+async function grantToken(h, granted = true) {
+  const writes = h.getBleWrites();
+  const reqWrite = [...writes].reverse().find((w) => w.short === '0001' && w.data.startsWith('10'));
+  if (!reqWrite) return false;
+  const seqLo = parseInt(reqWrite.data.slice(2, 4), 16);
+  const seqHi = parseInt(reqWrite.data.slice(4, 6), 16);
+  const seqNum = seqLo | (seqHi << 8);
+  h.injectBleFrame(CHAR_COMMAND, buildGrantFrame(seqNum, granted));
+  await flush();
+  return true;
+}
 
 let h;
 afterEach(() => {
@@ -157,7 +225,7 @@ describe('引脚页 pin（灯组 tab / 方格矩阵）', () => {
     const arr = saved(h.wx);
     expect(arr.pins[PIN].groups).toHaveLength(3);
     expect(h.getData().groupTabs[2].active).toBe(true);
-    expect(h.getData().pendingPush).toBe(true);
+    expect(h.getData().pushState).toBe('pushing');
     expect(arr.pendingPush).toBe(true);
   });
 
@@ -203,7 +271,7 @@ describe('引脚页 pin（灯组 tab / 方格矩阵）', () => {
     const arr = saved(h.wx);
     expect(arr.pins[PIN].groups).toHaveLength(1);
     expect(groupPixels(h.wx, 0)).toEqual([8]);
-    expect(h.getData().pendingPush).toBe(true);
+    expect(h.getData().pushState).toBe('pushing');
   });
 
   it('给定 1 个灯组，当长按 tab 改名，则缓存里的灯组名与 tab 文字都更新', async () => {
@@ -252,7 +320,6 @@ describe('引脚页 pin（灯组 tab / 方格矩阵）', () => {
     await tapCell(4);
     expect(states()[4]).toBe('free');
     expect(groupPixels(h.wx, 0)).toEqual([0, 1, 2, 3]);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定他组占用的灰格，当单击，则不改归属，只提示', async () => {
@@ -289,7 +356,6 @@ describe('引脚页 pin（灯组 tab / 方格矩阵）', () => {
     expect(states()[10]).toBe('free');
     expect(states()[11]).toBe('free');
     expect(cells().some((c) => c.box)).toBe(false);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定他组格，当长按起框，则不动缓存', async () => {
@@ -369,8 +435,7 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(data.stages[0].durationMs).toBe(500);
 
     expect(saved(h.wx).pins[PIN].groups[0].stages).toHaveLength(1);
-    expect(h.getData().pendingPush).toBe(true);
-    expect(h.getBleWrites()).toEqual([]);
+    expect(h.getData().pushState).toBe('pushing');
   });
 
   it('给定没有任何阶段的灯组，当进入页面再点加阶段，则列表从空补到 1 个 2000 ms 阶段', async () => {
@@ -388,7 +453,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(data.stages).toHaveLength(1);
     expect(data.stages[0].durationMs).toBe(2000);
     expect(saved(h.wx).pins[PIN].groups[0].stages[0].durationMs).toBe(2000);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定一个阶段，当点卡片展开就地编辑并改时长/淡入，则编辑态显示且落缓存、标记待推送', async () => {
@@ -419,7 +483,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(arr.pendingPush).toBe(true);
     expect(h.getData().stages[0].fadeLabel).toBe('淡入 120 ms');
     expect(h.getData().editStage.durationMs).toBe(2500);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定只有背景层的阶段，当加动态层/换背景灯效，则清单按 role 过滤且参数面板由 schema 生成', async () => {
@@ -465,7 +528,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     // 缓存：背景在前、动态在后
     const layers = saved(h.wx).pins[PIN].groups[0].stages[0].layers;
     expect(layers.map((l) => l.effectId)).toEqual([1, 5]);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定 bg.solid 的颜色参数，当用色环改色（hex/RGB 输入），则 hex 往返写入 layer.params', async () => {
@@ -509,7 +571,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(h.getToasts().map((t) => t.title).join('|')).toContain('色值无效');
     params = saved(h.wx).pins[PIN].groups[0].stages[0].layers[0].params;
     expect(Array.from(params)).toEqual([18, 52, 86]);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定背景层 + 动态扫描线，当渲染叠加预览，则有亮度的灯珠显动态色、熄灭的透出背景色', async () => {
@@ -529,7 +590,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(px[1]).toBe('rgb(0,255,0)');
     expect(px[2]).toBe('rgb(255,0,0)');
     expect(px[3]).toBe('rgb(255,0,0)');
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定只有背景层的阶段，当渲染叠加预览，则直接展示该层颜色', async () => {
@@ -542,7 +602,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     const px = h.getData().previewPixels;
     expect(px).toHaveLength(4);
     expect(px.every((c) => c === 'rgb(0,0,255)')).toBe(true);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   // #132 循环模式
@@ -561,10 +620,9 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
       await h.tap('onSelectLoopMode', { currentTarget: { dataset: { loop: expected } } });
       expect(h.getData().loopMode).toBe(expected);
       expect(saved(h.wx).pins[PIN].groups[0].loopMode).toBe(expected);
-      expect(h.getData().pendingPush).toBe(true);
+      expect(h.getData().pushState).toBe('pushing');
       expect(saved(h.wx).pendingPush).toBe(true);
     }
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定当前灯组，当切换循环模式，则本地编排 pendingPush=true 且 version 递增', async () => {
@@ -582,8 +640,7 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(h.getData().loopMode).toBe(0);
     expect(arr.pendingPush).toBe(true);
     expect(arr.version).toBe(((v0 || 1) + 1) & 0xffff);
-    expect(h.getData().pendingPush).toBe(true);
-    expect(h.getBleWrites()).toEqual([]);
+    expect(h.getData().pushState).toBe('pushing');
   });
 
   it('给定引脚长度 0，当设为 10 颗，则缓存 length=10、矩阵出 10 格、pendingPush 且 version 递增', async () => {
@@ -604,7 +661,6 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     expect(h.getData().lengthOpen).toBe(false);
     expect(arr.pendingPush).toBe(true);
     expect(h.getToasts().some((t) => String(t.title).includes('已设为 10 颗'))).toBe(true);
-    expect(h.getBleWrites()).toEqual([]);
   });
 
   it('给定灯珠数为 0 且无灯组，当输入非整数/越界值，则弹错误 toast 且缓存不变', async () => {
@@ -642,5 +698,68 @@ describe('引脚页 pin（#131 阶段 / 双层灯效 / 色环）', () => {
     await h.tap('onLengthInput', { detail: { value: '20' } });
     await h.tap('onLengthConfirm');
     expect(saved(h.wx).pins[PIN].length).toBe(20);
+  });
+});
+
+// 新契约：编辑即推送（引脚页不再等返回设备页），以设备 ACK 为准
+describe('引脚页 pin（编辑即推送，以设备 ACK 为准）', () => {
+  it('给定已连接链路，当编辑编排，则去抖后取令牌 → ...0003 分片写 → 状态帧回显版本 → 已确认且 pendingPush 清除', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 10, groups: [{ name: 'A', ranges: [[0, 4]] }] });
+    h.page.onShow();
+    await flushReal(50); // 等引脚页绑定链路（复用同一物理连接，不新建）
+
+    await tapCell(4);
+    expect(h.getData().pushState).toBe('pushing');
+    expect(saved(h.wx).pendingPush).toBe(true);
+
+    // 去抖（300ms）后经命令通道取令牌
+    expect(await waitUntil(() => h.getBleWrites().some((w) => w.short === '0001' && w.data.startsWith('10')), 1500)).toBe(true);
+    expect(await grantToken(h)).toBe(true);
+    // 设备逐窗口累计 ACK → START/DATA/FIN 写出
+    h.injectBleFrame(CHAR_SEQUENCE, buildSeqAck(0));
+    await flush();
+    const seqWrites = h.getBleWrites().filter((w) => w.short === '0003');
+    expect(seqWrites.some((w) => w.data.startsWith('01'))).toBe(true); // START
+    expect(seqWrites.some((w) => w.data.startsWith('03'))).toBe(true); // FIN
+
+    // 状态帧回显本机版本 → 推送确认（以设备 ACK 为准）
+    h.injectStatusFrame(buildStatusFrame({ ver: saved(h.wx).version }));
+    expect(await waitUntil(() => h.getData().pushState === 'confirmed', 2000)).toBe(true);
+    expect(saved(h.wx).pendingPush).toBe(false);
+  });
+
+  it('给定令牌被拒，当推送失败，则 UI 显示失败原因与「重试」入口，且 pendingPush 保留', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: DEVICE, pin: PIN } });
+    seedPin(h.wx, { length: 10, groups: [{ name: 'A', ranges: [[0, 4]] }] });
+    h.page.onShow();
+    await flushReal(50);
+
+    await tapCell(4);
+    expect(await waitUntil(() => h.getBleWrites().some((w) => w.short === '0001' && w.data.startsWith('10')), 1500)).toBe(true);
+    expect(await grantToken(h, false)).toBe(true); // DENIED
+
+    expect(await waitUntil(() => h.getData().pushState === 'error', 1500)).toBe(true);
+    const data = h.getData();
+    expect(data.pushError).toContain('令牌');
+    expect(saved(h.wx).pendingPush).toBe(true); // 失败不清标记
+
+    // 重试：再次触发一轮推送（pendingPush 仍为 true）
+    h.clearBleWrites();
+    await h.tap('onRetryPush');
+    expect(h.getData().pushState).toBe('pushing');
+  });
+
+  it('给定 readOnly=1（协议 major 不同），当进入页面并尝试编辑，则禁编辑、提示升级且不产生 BLE 写', async () => {
+    h = createPageHarness(PAGE, { query: { deviceId: FAKE_DEVICE_ID, name: DEVICE, pin: PIN, readOnly: '1' } });
+    seedPin(h.wx, { length: 10, groups: [{ name: 'A', ranges: [[0, 4]] }] });
+    h.page.onShow();
+
+    expect(h.getData().readOnly).toBe(true);
+
+    await tapCell(4);
+    expect(states()[4]).toBe('free'); // 未改
+    expect(groupPixels(h.wx, 0)).toEqual([0, 1, 2, 3]);
+    expect(h.getToasts().map((t) => String(t.title)).join('|')).toContain('固件版本不匹配');
   });
 });

@@ -1,6 +1,6 @@
 {
   "id": "ble-04",
-  "name": "BLE-04 引脚页纯点击编排 → 推送 → arrangementVersion 递增",
+  "name": "BLE-04 引脚页纯点击编排 → 编辑即推送（不等返回）→ arrangementVersion 递增",
   "setup": [],
   "steps": [
     {
@@ -51,23 +51,19 @@
     { "action": "waitMs", "ms": 300 },
     {
       "action": "evaluate",
-      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const raw = wx.getStorageSync('arrangement:' + p._deviceName); const arr = raw ? JSON.parse(raw) : null; if (!arr) throw new Error('读回编排失败：storage 无 arrangement:' + p._deviceName); if (!arr.pendingPush) throw new Error('编辑未置 pendingPush：arr=' + JSON.stringify({ version: arr.version, pendingPush: arr.pendingPush })); return { version: arr.version, pendingPush: arr.pendingPush, pinLength: arr.pins[p.data.pinIndex] && arr.pins[p.data.pinIndex].length };",
+      "code": "const pages = getCurrentPages(); const p = pages[pages.length - 1]; const deadline = Date.now() + 8000; for (;;) { const raw = wx.getStorageSync('arrangement:' + p._deviceName); const arr = raw ? JSON.parse(raw) : null; if (arr && arr.pendingPush === false && p.data.pushState === 'confirmed') return { version: arr.version, pinLength: arr.pins[p.data.pinIndex] && arr.pins[p.data.pinIndex].length, pushState: p.data.pushState }; if (Date.now() >= deadline) throw new Error('编辑后推送未在 8s 内确认：pushState=' + p.data.pushState + ' pushError=' + (p.data.pushError || '') + ' pendingPush=' + (arr && arr.pendingPush)); await new Promise((r) => setTimeout(r, 200)); }",
       "saveAs": "arrangement"
-    },
-    {
-      "action": "evaluate",
-      "code": "const r = await new Promise((resolve) => { wx.navigateBack({ success: () => resolve({ ok: true }), fail: () => resolve({ ok: false }) }); }); return r;"
     },
     {
       "action": "waitForSerial",
       "pattern": "commit v{{arrangement.version}} chunks=",
-      "timeoutMs": 20000,
+      "timeoutMs": 8000,
       "minCount": 1
     }
   ],
   "assertions": [
     { "type": "serial", "pattern": "commit v{{arrangement.version}} chunks=", "minCount": 1 },
-    { "type": "statusFrame", "hexLength": 12, "fields": { "arrangementVersion": "{{arrangement.version}}" }, "timeoutMs": 5000 },
+    { "type": "statusFrame", "hexLength": 12, "fields": { "arrangementVersion": "{{arrangement.version}}" }, "timeoutMs": 3000 },
     { "type": "bleWrite", "short": "0003", "data": "01", "minCount": 1 },
     { "type": "bleWrite", "short": "0003", "data": "03", "minCount": 1 },
     { "type": "serial", "pattern": "rx chr=7c9f0001", "minCount": 1 },

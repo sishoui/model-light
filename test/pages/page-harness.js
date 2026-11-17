@@ -19,6 +19,7 @@
 //   - injectBleFrame(charId, bytes) / injectStatusFrame(bytes) 模拟设备下行帧
 //   - getNavigations() / getToasts() / getModals() 捕获跳转、toast、modal
 //   - getScanOptions() 捕获 startBluetoothDevicesDiscovery 的入参（断言全量扫描）
+//   - getPullDownStopCount() 捕获 stopPullDownRefresh 调用次数（下拉刷新收尾）
 //   - disconnect() 模拟断连
 //   - advanceTime(ms) 推进 fake wx 定时器
 
@@ -99,6 +100,7 @@ function createFakeWx() {
     connected: false,
     deviceId: null,
     mtu: null,
+    connectFails: false,   // 测试注入：true 时 createBLEConnection 失败（重连窗口用例）
     notifySubs: new Set(), // norm(uuid) → 已订阅 notify 的特征
     capturedWrites: [],    // { characteristic, short, data(hex), ts }
     deviceFoundHandlers: new Set(),
@@ -113,6 +115,7 @@ function createFakeWx() {
     toasts: [],       // showToast 入参
     modals: [],       // showModal 入参
     scanOptions: [],  // startBluetoothDevicesDiscovery 入参
+    pullDownStops: 0, // stopPullDownRefresh 调用次数
   };
 
   // 扫描行为可配置：autoFound=false 模拟"未发现设备"
@@ -185,6 +188,7 @@ function createFakeWx() {
     // ---- 连接 ----
     createBLEConnection(opts = {}) {
       if (!opts.deviceId) { fail(opts, new Error('deviceId 必传')); return; }
+      if (bleState.connectFails) { fail(opts, new Error('ble: 连接失败（测试注入）')); return; }
       bleState.connected = true;
       bleState.deviceId = opts.deviceId;
       bleState.mtu = null;
@@ -329,6 +333,15 @@ function createFakeWx() {
       // 默认"用户确认"；用例可先设 wx._modalResponse = { confirm: false } 模拟取消
       const resp = wx._modalResponse || { confirm: true, cancel: false };
       if (typeof opts.success === 'function') opts.success({ confirm: !!resp.confirm, cancel: !!resp.cancel });
+    },
+
+    // ---- 下拉刷新 ----
+    stopPullDownRefresh() { captured.pullDownStops += 1; },
+
+    // ---- 已连接设备查询（discover 活跃连接判定用；wx._connectedDeviceIds 配置返回的 deviceId 列表）----
+    getConnectedBluetoothDevices(opts = {}) {
+      const ids = Array.isArray(wx._connectedDeviceIds) ? wx._connectedDeviceIds : [];
+      succeed(opts, { devices: ids.map((deviceId) => ({ deviceId })) });
     },
 
     // ---- 文件系统（OTA 用）----
@@ -585,6 +598,11 @@ function createPageHarness(pagePath, options = {}) {
     /** startBluetoothDevicesDiscovery 的入参（断言全量扫描 vs 按服务过滤） */
     getScanOptions() {
       return captured.scanOptions.map((o) => ({ ...o }));
+    },
+
+    /** stopPullDownRefresh 调用次数（下拉刷新收尾断言） */
+    getPullDownStopCount() {
+      return captured.pullDownStops;
     },
 
     /** 获取页面 data 快照 */

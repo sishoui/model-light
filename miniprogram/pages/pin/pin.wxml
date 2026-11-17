@@ -1,5 +1,5 @@
 <view class="page">
-  <!-- 顶栏：设备 + 引脚标识 + 本地待推送标记 -->
+  <!-- 顶栏：设备 + 引脚标识 + 推送状态机（编辑即推，以设备 ACK 为准） -->
   <view class="topbar">
     <view class="row">
       <text class="name">{{deviceName || '设备'}}</text>
@@ -9,7 +9,17 @@
       <text>{{pinName || '未命名引脚'}}</text>
       <text class="length-edit" bindtap="onTapLength">{{length}} 颗 · {{groupTabs.length}}/8 灯组</text>
     </view>
-    <text wx:if="{{pendingPush}}" class="pending">本地已改 · 待推送</text>
+    <!-- 只读协议（固件 major 不同）：禁编辑，等升级 -->
+    <view wx:if="{{readOnly}}" class="ro-banner">固件版本不匹配，等待升级后编辑</view>
+    <!-- 推送中… -->
+    <view wx:if="{{pushState === 'pushing'}}" class="push-badge pushing">推送中…</view>
+    <!-- 设备确认（状态帧回显本机 version）：短暂展示后 CSS 淡出 -->
+    <view wx:if="{{pushState === 'confirmed'}}" class="push-badge confirmed">已确认</view>
+    <!-- 失败：显示原因 + 重试（pendingPush 仍为 true，重试即重新推送） -->
+    <view wx:if="{{pushState === 'error'}}" class="push-line">
+      <text class="push-error">未下发：{{pushError}}</text>
+      <text class="push-retry" bindtap="onRetryPush">重试</text>
+    </view>
   </view>
 
   <!-- 灯组 tab 行：横向滚动，末尾「+」新增（达上限置灰），长按 tab → 重命名 / 删除 -->
@@ -235,6 +245,7 @@
   <view wx:if="{{renameOpen}}" class="rename-mask" bindtap="onRenameCancel">
     <view class="rename-panel" catchtap="noop">
       <view class="rename-title">重命名灯组</view>
+      <text class="rename-note">灯组名仅本机保存，不下发设备</text>
       <input class="rename-input" value="{{renameDraft}}" bindinput="onRenameInput" focus />
       <view class="rename-actions">
         <button class="btn-ghost" bindtap="onRenameCancel">取消</button>

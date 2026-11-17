@@ -11,13 +11,19 @@
 //     schema 生成的参数面板 / color 参数走色环（色相环 + SV 面板 + hex/RGB 输入））
 //   ＋ 叠加预览条（§4.4：动态层该珠有亮度 → 动态色；熄灭 → 透出背景层）
 //
-// 编辑只落本地缓存（lib/arrangement-store，arrangement:<name>），并把编排标记为待推送；
-// 本页不发 BLE，下发归设备页。
+// 编辑即推送（新契约）：_commit 落缓存后经 lib/push-coordinator 立即下发——
+// 本页自建 BLE 客户端（复用设备页 onHide 保持的链路，已连接则跳过
+// createBLEConnection），推送期间自订阅 ...0004 状态帧确认 arrangementVersion
+// 回显一致（以设备 ACK 为准），成功清 pendingPush；失败保留标记并在顶栏显示
+// 原因 + 「重试」。只读协议（设备页 major 不同时经 query 传 readOnly=1）禁编辑。
 //
 // 客户端专属字段（编排 TLV 没有，encode 只读 length/name/groups 的已知字段，故只进缓存）：
-//   group.name      灯组名（tab 文字）
-//   arr.pendingPush 本地已改、待推送（设备页读它决定何时下发）
+//   group.name      灯组名（tab 文字，仅本机保存，不下发设备）
+//   pin.cover       引脚封面（仅本机保存，不下发设备）
+//   arr.pendingPush 本地已改、待设备确认（推送成功才清零；失败保留）
 
+const { createBleClient } = require('../../lib/ble');
+const { createPushCoordinator, describePushError } = require('../../lib/push-coordinator');
 const {
   addGroup, deleteGroup, setGroupName, getPixelStates, getGroupPixels,
   occupyGroupPixels, releaseGroupPixels, toggleGroupPixel,
@@ -105,7 +111,9 @@ Page({
     freeCount: 0,
     otherCount: 0,
     empty: false,           // 该引脚还没有灯组
-    pendingPush: false,     // 本地已改、待推送（#131 / 设备页读缓存里的同名标记）
+    pushState: 'idle',      // 推送状态机：idle 未编辑 / pushing 推送中 / confirmed 已确认（短暂展示后淡出） / error 失败
+    pushError: '',          // 失败原因（人话，配合「重试」按钮）
+    readOnly: false,        // 协议 major 不同（设备页 query 传入）：禁编辑，提示升级
     menuOpen: false,
     menuGroupIndex: -1,
     renameOpen: false,
@@ -128,18 +136,41 @@ Page({
 
   // 每引脚默认 1 个灯组（spec §4.1）；进页面时没有就建一个空灯组，用户随后往矩阵里点灯珠
   onLoad(query) {
-    this.deviceId = decodeURIComponent(query.deviceId || ''); // 本页不用，#131 推送时用
+    this.deviceId = decodeURIComponent(query.deviceId || '');
     this._deviceName = decodeURIComponent(query.name || '');
     const pin = clamp(Number(query.pin || 0) || 0, 0, PIN_COUNT - 1);
+    this._readOnly = query.readOnly === '1' || query.readOnly === 'true';
     this.setData({
       deviceName: this._deviceName,
       pinIndex: pin,
       pinLabel: `GPIO${pin}`,
       groupIndex: 0,
+      readOnly: this._readOnly,
+    });
+    // 推送通道：自建 BLE 客户端 + 协调器。设备页 onHide 只停 notify 不断链路，
+    // 这里 connect() 复用同一物理连接（已连接则跳过 createBLEConnection），
+    // 只补服务 / notify 订阅；绑定失败不阻塞编辑（推送时回报 link-down）。
+    this.ble = createBleClient(wx);
+    this._bleReady = this.deviceId
+      ? this.ble.connect(this.deviceId).catch((e) => {
+        console.warn('[pin] 绑定 BLE 链路失败，推送将回报 link-down:', e && e.message);
+      })
+      : Promise.resolve();
+    this._pushCoordinator = createPushCoordinator({
+      ble: this.ble,
+      store,
+      wx,
+      deviceName: this._deviceName,
+      deviceId: this.deviceId,
+      bleReady: () => this._bleReady,
+      onResult: (name, result) => this._onPushResult(result),
     });
     this._loaded = true;
     this._ensureGroup();
     this.reload();
+    // 上次未确认的修改（推送失败退出页面等）：再进来立即补推（只读协议不推）
+    const cached = store.load(this._deviceName);
+    if (cached && cached.pendingPush === true && !this._readOnly) this._triggerPush();
   },
 
   // #131 的阶段页 / 色环回填后回到本页：重读缓存（幂等，首次 onShow 前 onLoad 已加载过）
@@ -190,7 +221,6 @@ Page({
       currentGroupLabel: tabs[groupIndex] ? tabs[groupIndex].name : '',
       loopMode,
       empty: groups.length === 0,
-      pendingPush: !!arr.pendingPush,
     });
     this._renderMatrix();
     this._renderStages(arr);
@@ -356,21 +386,67 @@ Page({
   },
 
   /**
-   * 落盘 + 标记待推送 + 重渲染。
+   * 落盘 + 标记待推送 + 重渲染 + 立即触发下发（新契约：编辑即推）。
    * 版本递增（v1 用例语义「arrangementVersion 同步递增」）：每次本地编辑得到新版本号，
-   * 设备 commit 后状态帧回显同版本，设备页推送确认（版本对上）才有意义。
+   * 设备 commit 后状态帧回显同版本，协调器确认（版本对上）才算成功。
    */
   _commit(arr) {
     arr.version = ((arr.version || 1) + 1) & 0xffff;
     arr.pendingPush = true;
     store.save(this._deviceName, arr);
     this.reload();
+    this._triggerPush();
+  },
+
+  // ---- 推送状态机（以设备 ACK 为准，见 lib/push-coordinator.js） ----
+
+  /** 编辑后触发推送（去抖合并，300ms 内的多次编辑合并为一次，最后一次生效）。 */
+  _triggerPush() {
+    if (this._readOnly) return;
+    this.setData({ pushState: 'pushing', pushError: '' });
+    const coordinator = this._pushCoordinator;
+    if (!coordinator) {
+      this.setData({ pushState: 'error', pushError: '推送通道未就绪' });
+      return;
+    }
+    coordinator.requestPush(this._deviceName, this.deviceId).catch((e) => {
+      // requestPush 不 reject（失败经 onResult 回报）；这里只兜底防漏
+      this._onPushResult({ ok: false, reason: 'error', message: e && e.message });
+    });
+  },
+
+  /** 协调器每轮结果 → 顶栏状态机（成功 = 状态帧回显本机 version，以设备 ACK 为准）。 */
+  _onPushResult(result) {
+    if (!result || result.skipped) return;
+    if (result.ok) {
+      this.setData({ pushState: 'confirmed', pushError: '' });
+      return;
+    }
+    this.setData({ pushState: 'error', pushError: describePushError(result) });
+  },
+
+  /** 「重试」：pendingPush 仍为 true 时重试就是重新走一轮推送。 */
+  onRetryPush() {
+    this._triggerPush();
+  },
+
+  /** 只读协议（固件 major 不同）：拦下编辑并提示，等升级后再改。 */
+  _editGuard() {
+    if (!this._readOnly) return true;
+    wx.showToast({ title: '固件版本不匹配，等待升级后编辑', icon: 'none' });
+    return false;
+  },
+
+  onUnload() {
+    // 只释放协调器（定时器/等待者），不断 BLE 链路——链路归设备页所有
+    if (this._pushCoordinator) this._pushCoordinator.dispose();
   },
 
   // ---- 灯组 tab ----
 
   /** #132：切换当前灯组循环模式（三选一），落缓存并置待推送。 */
   onSelectLoopMode(e) {
+    if (!this._editGuard()) return;
     const value = Number(e.currentTarget.dataset.loop);
     if (!Number.isInteger(value) || value < LOOP_NONE || value > LOOP_ALL) return;
     if (value === this.data.loopMode) return;
@@ -392,6 +468,7 @@ Page({
   },
 
   onAddGroup() {
+    if (!this._editGuard()) return;
     const arr = store.loadOrCreate(this._deviceName);
     const r = addGroup(arr, this.data.pinIndex);
     if (!r.ok) {
@@ -426,6 +503,7 @@ Page({
 
   /** 删除灯组：提示「将释放 N 颗灯珠」并二次确认，确认后才动缓存。 */
   confirmDeleteGroup(gi) {
+    if (!this._editGuard()) return;
     const arr = store.loadOrCreate(this._deviceName);
     const pin = arr.pins[this.data.pinIndex];
     const group = pin && pin.groups[gi];
@@ -457,6 +535,7 @@ Page({
 
   /** 点顶栏长度 → 弹层编辑（沿用重命名弹层的交互形态）。 */
   onTapLength() {
+    if (!this._editGuard()) return;
     this.setData({ lengthOpen: true, lengthDraft: String(this.data.length) });
   },
 
@@ -470,6 +549,7 @@ Page({
 
   /** 确认：0–100 整数；缩短会让已划区间越界（encode 必败），先拦下并指路。 */
   onLengthConfirm() {
+    if (!this._editGuard()) return;
     const raw = String(this.data.lengthDraft ?? '').trim();
     const n = Number(raw);
     if (!raw || !Number.isInteger(n) || n < 0 || n > MAX_CELLS) {
@@ -496,6 +576,7 @@ Page({
   },
 
   onRenameConfirm() {
+    if (!this._editGuard()) return;
     const gi = this.data.renameGroupIndex;
     const arr = store.loadOrCreate(this._deviceName);
     const r = setGroupName(arr, this.data.pinIndex, gi, (this.data.renameDraft || '').trim());
@@ -511,6 +592,7 @@ Page({
 
   /** 单击：空闲 → 本组 / 本组 → 空闲；他组占用 → toast 且不改缓存。 */
   onCellTap(e) {
+    if (!this._editGuard()) return;
     if (this._suppressTap) { this._suppressTap = false; return; }
     const index = Number(e.currentTarget.dataset.index);
     const arr = store.loadOrCreate(this._deviceName);
@@ -534,6 +616,7 @@ Page({
 
   /** 长按起框：起点格状态决定拖动是占用还是擦除。 */
   onCellLongPress(e) {
+    if (!this._editGuard()) return;
     this._suppressTap = true;
     const index = Number(e.currentTarget.dataset.index);
     const start = this._states || [];
@@ -586,6 +669,7 @@ Page({
   // ---- #131 阶段列表 ----
 
   onAddStage() {
+    if (!this._editGuard()) return;
     const arr = store.loadOrCreate(this._deviceName);
     const r = addStage(arr, this.data.pinIndex, this.data.groupIndex);
     if (!r.ok) { wx.showToast({ title: r.error, icon: 'none' }); return; }
@@ -595,6 +679,7 @@ Page({
   },
 
   onDeleteStage(e) {
+    if (!this._editGuard()) return;
     const i = Number(e.currentTarget.dataset.stage);
     wx.showModal({
       title: '删除阶段',
@@ -621,6 +706,7 @@ Page({
   },
 
   _moveStageTo(from, to) {
+    if (!this._editGuard()) return;
     const arr = store.loadOrCreate(this._deviceName);
     const r = moveStage(arr, this.data.pinIndex, this.data.groupIndex, from, to);
     if (!r.ok) { wx.showToast({ title: r.error, icon: 'none' }); return; }
@@ -646,6 +732,7 @@ Page({
   onDurationInput(e) { this._draftDuration = e.detail.value; },
 
   onDurationBlur() {
+    if (!this._editGuard()) return;
     const si = this.data.editStage ? this.data.editStage.index : -1;
     if (si < 0) return;
     const arr = store.loadOrCreate(this._deviceName);
@@ -659,6 +746,7 @@ Page({
   onFadeInInput(e) { this._draftFadeIn = e.detail.value; },
 
   onFadeInBlur() {
+    if (!this._editGuard()) return;
     const si = this.data.editStage ? this.data.editStage.index : -1;
     if (si < 0) return;
     const arr = store.loadOrCreate(this._deviceName);
@@ -697,6 +785,7 @@ Page({
   onCloseEffectPicker() { this.setData({ effectPicker: { open: false } }); },
 
   onPickEffect(e) {
+    if (!this._editGuard()) return;
     const eff = Number(e.currentTarget.dataset.effect);
     const picker = this.data.effectPicker;
     const si = this.data.editStage ? this.data.editStage.index : -1;
@@ -711,6 +800,7 @@ Page({
   },
 
   onRemoveLayer(e) {
+    if (!this._editGuard()) return;
     const li = Number(e.currentTarget.dataset.layer);
     const si = this.data.editStage ? this.data.editStage.index : -1;
     if (si < 0) return;
@@ -739,6 +829,7 @@ Page({
   },
 
   _setParam(layerIndex, paramName, value) {
+    if (!this._editGuard()) return false;
     const si = this.data.editStage ? this.data.editStage.index : -1;
     if (si < 0) return false;
     const arr = store.loadOrCreate(this._deviceName);
@@ -753,6 +844,7 @@ Page({
   // ---- 色环（色相环 + SV 面板 + hex/RGB 输入） ----
 
   onOpenWheel(e) {
+    if (!this._editGuard()) return;
     const li = Number(e.currentTarget.dataset.layer);
     const param = e.currentTarget.dataset.param;
     const layer = this.data.editStage && this.data.editStage.layers[li];
