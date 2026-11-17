@@ -283,6 +283,14 @@ Page({
         confirmColor: '#d66a6a',
         success: (res) => {
           if (!res || !res.confirm) return;
+          // 先断开可能的 BLE 连接：设备被连接时广播会停，导致 scan 页扫不到
+          // （device 页切后台后连接可能还在，删除时主动释放）
+          const deviceId = this._deviceIds.get(device.name) || device.deviceId;
+          if (deviceId) {
+            try {
+              wx.closeBLEConnection({ deviceId, fail: () => {} });
+            } catch (e) { /* 忽略 */ }
+          }
           this.deviceList.remove(device.name);
           this.arrangementStore.remove(device.name);
           this._online.delete(device.name);
